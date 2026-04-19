@@ -94,9 +94,13 @@ func (tsHelper *Helper) NarrowByScope(matched []model.Symbol, call model.RawCall
 	return matched
 }
 
-// ResolveReceiverFallback — TS/JS receiver is typically a module import or object;
-// the generic resolver handles most cases via TypeEnv.
-func (tsHelper *Helper) ResolveReceiverFallback(_ model.RawCall, _ []model.Symbol, _ map[string]*model.TypeEnv, _ string, _ *resolver.SymbolTable) ([]model.ResolvedRelation, bool) {
+// ResolveReceiverFallback — for TS/JS, when the receiver is a known global object
+// (console, Math, JSON, etc.), return handled=true to prevent fallthrough to
+// project-level matching (name_unique, same_file) which would produce false positives.
+func (tsHelper *Helper) ResolveReceiverFallback(call model.RawCall, _ []model.Symbol, _ map[string]*model.TypeEnv, _ string, _ *resolver.SymbolTable) ([]model.ResolvedRelation, bool) {
+	if IsGlobalObject(call.ReceiverExpr) {
+		return nil, true // handled: skip fallthrough, no CALLS edge
+	}
 	return nil, false
 }
 

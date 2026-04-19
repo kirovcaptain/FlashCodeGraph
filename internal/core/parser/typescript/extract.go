@@ -140,8 +140,12 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 	}
 
 	// Heritage: extends / implements
+	// TS AST: class_heritage → extends_clause → identifier
+	// JS AST: class_heritage → identifier (no extends_clause wrapper)
 	heritageNode := astutil.FindChildByKind(node, "class_heritage")
 	if heritageNode != nil {
+		sawExtends := false
+		sawImplements := false
 		for i := uint(0); i < heritageNode.ChildCount(); i++ {
 			clause := heritageNode.Child(i)
 			switch clause.Kind() {
@@ -173,8 +177,27 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 						}
 					}
 				}
+			case "extends":
+				sawExtends = true
+			case "implements":
+				sawImplements = true
+			case "identifier":
+				// JS AST: identifier directly under class_heritage (no clause wrapper)
+				parentName := clause.Utf8Text(content)
+				if parentName != "" {
+					kind := "extends"
+					if sawImplements {
+						kind = "implements"
+					}
+					result.Heritage = append(result.Heritage, model.RawHeritage{
+						ChildName: className, ChildQualified: qualifiedName,
+						ParentName: parentName,
+						Kind: kind, FilePath: file.RelPath,
+					})
+				}
 			}
 		}
+		_ = sawExtends
 	}
 
 	result.Symbols = append(result.Symbols, model.Symbol{

@@ -5,6 +5,7 @@ import (
 	"unsafe"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
+	tree_sitter_javascript "github.com/tree-sitter/tree-sitter-javascript/bindings/go"
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 	"github.com/liuymcn/flash-code-graph/internal/core/scanner"
 	"github.com/liuymcn/flash-code-graph/internal/model"
@@ -182,4 +183,56 @@ function process() {
 		t.Errorf("alias: expected copy, got %q", kinds["alias"])
 	}
 	t.Log("✅ TypeScript PendingAssignment: 4 kinds extracted")
+}
+
+func TestExtract_JavaScriptClassHeritage(t *testing.T) {
+	// JS AST has no extends_clause wrapper — class_heritage children are directly
+	// "extends" keyword + identifier, unlike TS which wraps them in extends_clause.
+	code := []byte(`class BaseRepository {
+    save(data) { console.log('Saving:', data); }
+    log(message) { console.log('[LOG]', message); }
+}
+
+class ChildService extends BaseRepository {
+    validate(data) { if (!data) throw new Error('empty'); }
+}
+
+class GrandChild extends ChildService {
+    doWork(data) {
+        this.validate(data);
+        this.save(data);
+        this.log('done');
+    }
+}
+`)
+	// Parse as JavaScript
+	jsParser := tree_sitter.NewParser()
+	defer jsParser.Close()
+	jsLang := tree_sitter.NewLanguage(unsafe.Pointer(tree_sitter_javascript.Language()))
+	jsParser.SetLanguage(jsLang)
+	jsTree := jsParser.Parse(code, nil)
+	defer jsTree.Close()
+
+	result := &model.ParseResult{FilePath: "services.js", Language: "javascript"}
+	file := scanner.ScannedFile{Path: "/test/services.js", RelPath: "services.js", Language: "javascript"}
+	Extract(jsTree.RootNode(), code, file, result)
+
+	// Verify heritage extraction
+	heritageMap := map[string]string{}
+	for _, h := range result.Heritage {
+		heritageMap[h.ChildName] = h.ParentName
+	}
+
+	if heritageMap["ChildService"] != "BaseRepository" {
+		t.Errorf("expected ChildService extends BaseRepository, got heritage: %v", heritageMap)
+	}
+	if heritageMap["GrandChild"] != "ChildService" {
+		t.Errorf("expected GrandChild extends ChildService, got heritage: %v", heritageMap)
+	}
+	t.Logf("✅ JS heritage: %v", heritageMap)
+}
+
+func TestExtract_JavaScriptGlobalObjectNotResolved(t *testing.T) {
+	// This test belongs in resolver/typescript package — see TestJSGlobalObject there
+	t.Skip("moved to resolver/typescript")
 }
