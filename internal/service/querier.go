@@ -27,15 +27,13 @@ func (querier *Querier) QuerySymbol(ctx context.Context, name string, opts model
 
 // QueryByAnnotation returns symbols that have a specific annotation.
 func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string, kind string, limit int) ([]model.Node, error) {
-	anns, err := querier.graphStore.QueryAllByKind(ctx, "Annotation", 0)
+	anns, err := querier.graphStore.QueryNodesByName(ctx, annotation, model.QueryOpts{Kinds: []string{"Annotation"}})
 	if err != nil {
 		return nil, err
 	}
 	var matched []string
 	for _, a := range anns {
-		if propString(a.Properties, "name") == annotation {
-			matched = append(matched, a.ID)
-		}
+		matched = append(matched, a.ID)
 	}
 	if len(matched) == 0 {
 		return nil, nil

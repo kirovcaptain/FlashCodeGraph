@@ -107,7 +107,7 @@ func (store *Store) Migrate(ctx context.Context) error {
 		store.query(ctx, cypher)
 	}
 	// Index name for QueryNodesByName
-	for _, label := range []string{"Function", "Class", "Interface"} {
+	for _, label := range []string{"Function", "Class", "Interface", "Annotation"} {
 		cypher := fmt.Sprintf("CREATE INDEX ON :%s(name)", label)
 		store.query(ctx, cypher)
 	}
@@ -461,10 +461,15 @@ func (store *Store) QueryNodesByName(ctx context.Context, name string, opts mode
 		limit = opts.Limit
 	}
 
+	labels := []string{"Function", "Class", "Interface"}
+	if len(opts.Kinds) > 0 {
+		labels = opts.Kinds
+	}
+
 	// Use schema-driven column list + labels for kind detection
 	allCols := "n.id, labels(n)[0]"
 	seen := map[string]bool{}
-	for _, kind := range []string{"Function", "Class", "Interface"} {
+	for _, kind := range labels {
 		for _, col := range model.ColumnNames(kind) {
 			if !seen[col] {
 				allCols += ", n." + col
@@ -475,7 +480,7 @@ func (store *Store) QueryNodesByName(ctx context.Context, name string, opts mode
 
 	// UNION across labels to hit name index
 	var parts []string
-	for _, label := range []string{"Function", "Class", "Interface"} {
+	for _, label := range labels {
 		parts = append(parts, fmt.Sprintf(
 			"MATCH (n:%s) WHERE n.name = '%s' RETURN %s",
 			label, escapeCypher(name), allCols))
@@ -727,9 +732,13 @@ func (store *Store) QueryAllByKind(ctx context.Context, kind string, limit int) 
 
 // SearchFTS performs full-text search on node names.
 func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) ([]storage.SearchResult, error) {
-	cypher := fmt.Sprintf(
-		"MATCH (n) WHERE n.name CONTAINS '%s' RETURN n.id, labels(n)[0], n.name, n.file_path, n.qualified_name LIMIT %d",
-		escapeCypher(queryText), limit)
+	var parts []string
+	for _, label := range []string{"Function", "Class", "Interface"} {
+		parts = append(parts, fmt.Sprintf(
+			"MATCH (n:%s) WHERE n.name CONTAINS '%s' RETURN n.id, '%s', n.name, n.file_path, n.qualified_name",
+			label, escapeCypher(queryText), label))
+	}
+	cypher := strings.Join(parts, " UNION ") + fmt.Sprintf(" LIMIT %d", limit)
 
 	rows, err := store.query(ctx, cypher)
 	if err != nil {
