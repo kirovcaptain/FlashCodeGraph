@@ -1,0 +1,975 @@
+package java
+
+import (
+	"encoding/json"
+	"strings"
+
+	tree_sitter "github.com/tree-sitter/go-tree-sitter"
+	"github.com/liuymcn/flash-code-graph/internal/core/scanner"
+	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/liuymcn/flash-code-graph/internal/constants"
+	"github.com/liuymcn/flash-code-graph/internal/core/parser/astutil"
+)
+
+// extractJava extracts symbols from Java/Kotlin AST.
+func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFile, result *model.ParseResult) {
+	packageName := ""
+	var currentClass string
+
+	astutil.WalkNamedChildren(rootNode, func(node *tree_sitter.Node) bool {
+		switch node.Kind() {
+		case "package_declaration":
+			packageName = extractPackageName(node, content)
+			return false
+
+		case "import_declaration":
+			extractImport(node, content, file.RelPath, result)
+			return false
+
+		case "class_declaration", "interface_declaration", "enum_declaration":
+			extractClass(node, content, file.RelPath, packageName, result)
+			className := astutil.NodeFieldText(node, "name", content)
+			currentClass = className
+			// Extract class annotations for route prefix
+			var classAnnotations []string
+			for i := uint(0); i < node.ChildCount(); i++ {
+				child := node.Child(i)
+				if child.Kind() == "modifiers" {
+					classAnnotations = ExtractAnnotations(child, content)
+					break
+				}
+			}
+			extractClassBody(node, content, file.RelPath, packageName, className, classAnnotations, result)
+
+			// Feign client detection
+			if HasFeignClient(classAnnotations) {
+				ExtractFeignClient(classAnnotations, node, content, className, file.RelPath, result)
+			}
+
+			currentClass = ""
+			return false
+
+		case "method_declaration", "constructor_declaration":
+			// Top-level methods (shouldn't happen in Java, but handle gracefully)
+			extractMethod(node, content, file.RelPath, packageName, "", nil, result)
+			return false
+		}
+		return true
+	})
+
+	_ = currentClass
+}
+
+// extractPackageName extracts the package name from a package_declaration.
+func extractPackageName(node *tree_sitter.Node, content []byte) string {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "scoped_identifier" || child.Kind() == "identifier" {
+			return child.Utf8Text(content)
+		}
+	}
+	return ""
+}
+
+// extractJavaImport extracts an import declaration.
+func extractImport(node *tree_sitter.Node, content []byte, filePath string, result *model.ParseResult) {
+	importPath := ""
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "scoped_identifier" || child.Kind() == "identifier" {
+			importPath = child.Utf8Text(content)
+		}
+	}
+	if importPath == "" {
+		return
+	}
+
+	// Extract symbol name (last segment)
+	parts := strings.Split(importPath, ".")
+	symbolName := parts[len(parts)-1]
+
+	result.Imports = append(result.Imports, model.RawImport{
+		ModulePath: importPath,
+		SymbolName: symbolName,
+		FilePath:   filePath,
+		Line:       int(node.StartPosition().Row) + 1,
+	})
+}
+
+// extractJavaClass extracts a class/interface/enum declaration.
+func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName string, result *model.ParseResult) {
+	nameNode := node.ChildByFieldName("name")
+	if nameNode == nil {
+		return
+	}
+	className := nameNode.Utf8Text(content)
+	qualifiedName := className
+	if packageName != "" {
+		qualifiedName = packageName + "." + className
+	}
+
+	classType := constants.ClassTypeClass
+	isAbstract := false
+	isExported := false
+	var annotations []string
+
+	switch node.Kind() {
+	case "interface_declaration":
+		classType = constants.ClassTypeInterface
+	case "enum_declaration":
+		classType = constants.ClassTypeEnum
+	}
+
+	// Extract modifiers and annotations
+	modifiers := node.ChildByFieldName("modifiers")
+	if modifiers == nil {
+		// Try first child
+		for i := uint(0); i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child.Kind() == "modifiers" {
+				modifiers = child
+				break
+			}
+		}
+	}
+	if modifiers != nil {
+		modText := modifiers.Utf8Text(content)
+		if strings.Contains(modText, "abstract") {
+			isAbstract = true
+			classType = constants.ClassTypeAbstract
+		}
+		if strings.Contains(modText, "public") {
+			isExported = true
+		}
+		annotations = ExtractAnnotations(modifiers, content)
+	}
+
+	// Extract heritage (extends/implements)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "superclass":
+			parentType := extractTypeFromHeritage(child, content)
+			if parentType != "" {
+				result.Heritage = append(result.Heritage, model.RawHeritage{
+					ChildName:      className,
+					ChildQualified: qualifiedName,
+					ParentName:     parentType,
+					Kind:           "extends",
+					FilePath:       filePath,
+				})
+			}
+		case "super_interfaces":
+			typeList := child.ChildByFieldName("type_list")
+			if typeList == nil {
+				for j := uint(0); j < child.ChildCount(); j++ {
+					c := child.Child(j)
+					if c.Kind() == "type_list" {
+						typeList = c
+						break
+					}
+				}
+			}
+			if typeList != nil {
+				for j := uint(0); j < typeList.ChildCount(); j++ {
+					iface := typeList.Child(j)
+					if iface.IsNamed() {
+						ifaceName := ExtractTypeName(iface, content)
+						if ifaceName != "" {
+							result.Heritage = append(result.Heritage, model.RawHeritage{
+								ChildName:      className,
+								ChildQualified: qualifiedName,
+								ParentName:     ifaceName,
+								Kind:           "implements",
+								FilePath:       filePath,
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	annotationsJSON, _ := json.Marshal(annotations)
+
+	// Extract generic type parameters: class Foo<T, U> → ["T", "U"]
+	var typeParams []string
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "type_parameters" {
+			for j := uint(0); j < child.ChildCount(); j++ {
+				tp := child.Child(j)
+				if tp.Kind() == "type_parameter" {
+					typeParams = append(typeParams, tp.Utf8Text(content))
+				}
+			}
+		}
+	}
+
+	result.Symbols = append(result.Symbols, model.Symbol{
+		ID:            astutil.GenerateSymbolID(filePath, qualifiedName, int(node.StartPosition().Row)+1),
+		Name:          className,
+		QualifiedName: qualifiedName,
+		Kind:          classType,
+		FilePath:      filePath,
+		StartLine:     int(node.StartPosition().Row) + 1,
+		EndLine:       int(node.EndPosition().Row) + 1,
+		ClassType:     classType,
+		TypeParams:    typeParams,
+		IsAbstract:    isAbstract,
+		IsExported:    isExported,
+		Annotations:   string(annotationsJSON),
+	})
+}
+
+// extractJavaClassBody walks the class body for methods and fields.
+func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, packageName, className string, classAnnotations []string, result *model.ParseResult) {
+	body := classNode.ChildByFieldName("body")
+	if body == nil {
+		return
+	}
+
+	// Track fields for Lombok accessor generation
+	var fields []fieldInfo
+
+	for i := uint(0); i < body.ChildCount(); i++ {
+		child := body.Child(i)
+		if !child.IsNamed() {
+			continue
+		}
+		switch child.Kind() {
+		case "method_declaration", "constructor_declaration":
+			extractMethod(child, content, filePath, packageName, className, classAnnotations, result)
+		case "field_declaration":
+			extractField(child, content, filePath, packageName, className, result)
+			ExtractDubboReference(child, content, className, filePath, result)
+			// Collect field info for Lombok
+			if typeNode := child.ChildByFieldName("type"); typeNode != nil {
+				ft := ExtractTypeName(typeNode, content)
+				for j := uint(0); j < child.ChildCount(); j++ {
+					if vd := child.Child(j); vd.Kind() == "variable_declarator" {
+						if nn := vd.ChildByFieldName("name"); nn != nil {
+							fields = append(fields, fieldInfo{nn.Utf8Text(content), ft, int(child.StartPosition().Row) + 1})
+						}
+					}
+				}
+			}
+		case "class_declaration", "interface_declaration", "enum_declaration":
+			// Inner class — recurse
+			innerName := astutil.NodeFieldText(child, "name", content)
+			if innerName != "" {
+				extractClass(child, content, filePath, packageName+"."+className, result)
+				var innerAnnotations []string
+				for j := uint(0); j < child.ChildCount(); j++ {
+					if child.Child(j).Kind() == "modifiers" {
+						innerAnnotations = ExtractAnnotations(child.Child(j), content)
+						break
+					}
+				}
+				extractClassBody(child, content, filePath, packageName+"."+className, innerName, innerAnnotations, result)
+			}
+		}
+	}
+
+	// Generate Lombok accessor symbols
+	generateLombokAccessors(classAnnotations, fields, filePath, packageName, className, result)
+}
+
+// extractJavaMethod extracts a method/constructor declaration.
+func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName, className string, classAnnotations []string, result *model.ParseResult) {
+	nameNode := node.ChildByFieldName("name")
+	methodName := ""
+	if nameNode != nil {
+		methodName = nameNode.Utf8Text(content)
+	} else if node.Kind() == "constructor_declaration" {
+		methodName = className
+	}
+	if methodName == "" {
+		return
+	}
+
+	qualifiedName := methodName
+	if className != "" {
+		qualifiedName = className + "." + methodName
+	}
+	if packageName != "" {
+		qualifiedName = packageName + "." + qualifiedName
+	}
+
+	// Return type
+	var returnTypes []string
+	typeNode := node.ChildByFieldName("type")
+	if typeNode != nil {
+		returnTypes = []string{ExtractTypeName(typeNode, content)}
+	}
+
+	// Parameters
+	var paramTypes []map[string]string
+	paramsNode := node.ChildByFieldName("parameters")
+	if paramsNode != nil {
+		for j := uint(0); j < paramsNode.ChildCount(); j++ {
+			param := paramsNode.Child(j)
+			if param.Kind() == "formal_parameter" || param.Kind() == "spread_parameter" {
+				paramName := ""
+				paramType := ""
+				pNameNode := param.ChildByFieldName("name")
+				if pNameNode != nil {
+					paramName = pNameNode.Utf8Text(content)
+				}
+				pTypeNode := param.ChildByFieldName("type")
+				if pTypeNode != nil {
+					paramType = ExtractTypeName(pTypeNode, content)
+				}
+				// spread_parameter: Object... args → extract from children if field names fail
+				if param.Kind() == "spread_parameter" && (paramName == "" || paramType == "") {
+					for k := uint(0); k < param.ChildCount(); k++ {
+						child := param.Child(k)
+						if child.Kind() == "identifier" && paramName == "" {
+							paramName = child.Utf8Text(content)
+						}
+						if (child.Kind() == "type_identifier" || child.Kind() == "generic_type" || child.Kind() == "scoped_type_identifier") && paramType == "" {
+							paramType = ExtractTypeName(child, content)
+						}
+					}
+					paramType += "..."
+				}
+				paramTypes = append(paramTypes, map[string]string{"name": paramName, "type": paramType})
+				// Add type hint for parameter (enables TypeInfer to resolve receiver types)
+				if paramType != "" && paramName != "" {
+					result.TypeHints = append(result.TypeHints, model.TypeBinding{
+						VarName:  paramName,
+						TypeName: paramType,
+						TypeArgs: ExtractTypeArgs(pTypeNode, content),
+						Tier:     0,
+						Scope:    qualifiedName,
+						FilePath: filePath,
+					})
+				}
+			}
+		}
+	}
+	paramsJSON, _ := json.Marshal(paramTypes)
+
+	// Modifiers and annotations
+	isStatic := false
+	isExported := false
+	isAbstract := false
+	isConstructor := node.Kind() == "constructor_declaration"
+	var annotations []string
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "modifiers" {
+			modText := child.Utf8Text(content)
+			isStatic = strings.Contains(modText, "static")
+			isExported = strings.Contains(modText, "public")
+			isAbstract = strings.Contains(modText, "abstract")
+			annotations = ExtractAnnotations(child, content)
+		}
+	}
+	annotationsJSON, _ := json.Marshal(annotations)
+
+	// Complexity (count branches)
+	complexity := 1
+	bodyNode := node.ChildByFieldName("body")
+	if bodyNode != nil {
+		complexity = countComplexity(bodyNode, content)
+		// Extract calls from body
+		extractCalls(bodyNode, content, filePath, methodName, className, packageName, result)
+		// Extract gRPC stub calls
+		ExtractGRPCStubCalls(bodyNode, content, qualifiedName, filePath, result)
+		// Extract RestTemplate remote calls (needs type env from class fields)
+		classQN := className
+		if packageName != "" {
+			classQN = packageName + "." + className
+		}
+		typeEnv := buildTypeEnv(result.TypeHints, classQN, result.Imports)
+		ExtractRestTemplateCalls(bodyNode, content, qualifiedName, filePath, typeEnv, result)
+	}
+
+	result.Symbols = append(result.Symbols, model.Symbol{
+		ID:            astutil.GenerateSymbolID(filePath, qualifiedName, int(node.StartPosition().Row)+1),
+		Name:          methodName,
+		QualifiedName: qualifiedName,
+		Kind:          constants.KindFunction,
+		FilePath:      filePath,
+		StartLine:     int(node.StartPosition().Row) + 1,
+		EndLine:       int(node.EndPosition().Row) + 1,
+		Params:        string(paramsJSON),
+		ReturnTypes:   returnTypes,
+		IsStatic:      isStatic,
+		IsExported:    isExported,
+		IsConstructor: isConstructor,
+		IsAbstract:    isAbstract,
+		Annotations:   string(annotationsJSON),
+		Complexity:    complexity,
+	})
+
+	// Extract routes from Spring annotations
+	ExtractRoutes(annotations, classAnnotations, methodName, className, filePath, int(node.StartPosition().Row)+1, result)
+
+	// Extract GraphQL routes from annotations
+	ExtractGraphQLRoutes(annotations, methodName, className, filePath, int(node.StartPosition().Row)+1, result)
+
+	// Extract ORM queries
+	ExtractORM(annotations, bodyNode, content, qualifiedName, filePath, int(node.StartPosition().Row)+1, result)
+}
+
+// extractJavaField extracts a field declaration.
+type fieldInfo struct {
+	name     string
+	typeName string
+	line     int
+}
+
+// generateLombokAccessors creates synthetic getter/setter symbols for @Data/@Getter/@Setter classes.
+func generateLombokAccessors(classAnnotations []string, fields []fieldInfo, filePath, packageName, className string, result *model.ParseResult) {
+	hasGetter := false
+	hasSetter := false
+	for _, ann := range classAnnotations {
+		if strings.Contains(ann, "Data") {
+			hasGetter = true
+			hasSetter = true
+		}
+		if strings.Contains(ann, "Getter") {
+			hasGetter = true
+		}
+		if strings.Contains(ann, "Setter") {
+			hasSetter = true
+		}
+	}
+	if !hasGetter && !hasSetter {
+		return
+	}
+
+	for _, f := range fields {
+		prefix := "get"
+		if f.typeName == "boolean" {
+			prefix = "is"
+		}
+		capName := strings.ToUpper(f.name[:1]) + f.name[1:]
+		qnBase := className + "." 
+		if packageName != "" {
+			qnBase = packageName + "." + qnBase
+		}
+
+		if hasGetter {
+			getterName := prefix + capName
+			result.Symbols = append(result.Symbols, model.Symbol{
+				ID:            filePath + ":" + className + "." + getterName,
+				Name:          getterName,
+				QualifiedName: qnBase + getterName,
+				Kind:          constants.KindFunction,
+				FilePath:      filePath,
+				StartLine:     f.line,
+				ReturnTypes:   []string{f.typeName},
+				Params:        "[]",
+				IsSynthetic:   true,
+				IsExported:    true,
+			})
+		}
+		if hasSetter {
+			setterName := "set" + capName
+			result.Symbols = append(result.Symbols, model.Symbol{
+				ID:            filePath + ":" + className + "." + setterName,
+				Name:          setterName,
+				QualifiedName: qnBase + setterName,
+				Kind:          constants.KindFunction,
+				FilePath:      filePath,
+				StartLine:     f.line,
+				Params:        `[{"name":"` + f.name + `","type":"` + f.typeName + `"}]`,
+				IsSynthetic:   true,
+				IsExported:    true,
+			})
+		}
+	}
+}
+
+func extractField(node *tree_sitter.Node, content []byte, filePath, packageName, className string, result *model.ParseResult) {
+	typeNode := node.ChildByFieldName("type")
+	fieldType := ""
+	if typeNode != nil {
+		fieldType = ExtractTypeName(typeNode, content)
+	}
+
+	// Find variable declarators
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "variable_declarator" {
+			nameNode := child.ChildByFieldName("name")
+			if nameNode == nil {
+				continue
+			}
+			fieldName := nameNode.Utf8Text(content)
+			qualifiedName := fieldName
+			if className != "" {
+				qualifiedName = className + "." + fieldName
+			}
+			if packageName != "" {
+				qualifiedName = packageName + "." + qualifiedName
+			}
+
+			// Type hint for TypeEnv
+			if fieldType != "" {
+				classQualifiedName := className
+				if packageName != "" {
+					classQualifiedName = packageName + "." + className
+				}
+				result.TypeHints = append(result.TypeHints, model.TypeBinding{
+					VarName:  fieldName,
+					TypeName: fieldType,
+					TypeArgs: ExtractTypeArgs(typeNode, content),
+					Tier:     0,
+					Scope:    classQualifiedName,
+					FilePath: filePath,
+				})
+			}
+		}
+	}
+}
+
+// extractJavaCalls walks a method body and extracts function calls.
+func extractCalls(bodyNode *tree_sitter.Node, content []byte, filePath, callerName, callerClass, packageName string, result *model.ParseResult) {
+	scope := callerName
+	if callerClass != "" {
+		scope = callerClass + "." + callerName
+	}
+	if packageName != "" {
+		scope = packageName + "." + scope
+	}
+	astutil.WalkNamedChildren(bodyNode, func(node *tree_sitter.Node) bool {
+		if node.Kind() == "method_invocation" {
+			extractMethodInvocation(node, content, filePath, scope, result)
+			return true
+		}
+		if node.Kind() == "object_creation_expression" {
+			extractConstructorCall(node, content, filePath, scope, result)
+			return true
+		}
+		if node.Kind() == "local_variable_declaration" {
+			extractLocalVarTypeHint(node, content, scope, filePath, result)
+			extractPendingAssignment(node, content, scope, result)
+		}
+		if node.Kind() == "enhanced_for_statement" {
+			typeNode := node.ChildByFieldName("type")
+			nameNode := node.ChildByFieldName("name")
+			if typeNode != nil && nameNode != nil {
+				typeName := ExtractTypeName(typeNode, content)
+				varName := nameNode.Utf8Text(content)
+				if typeName != "" && varName != "" {
+					result.TypeHints = append(result.TypeHints, model.TypeBinding{
+						VarName: varName, TypeName: typeName,
+						Tier: 0, Scope: scope, FilePath: filePath,
+					})
+				}
+			}
+		}
+		if node.Kind() == "catch_clause" {
+			// catch (Exception e) → TypeHint for e
+			for i := uint(0); i < node.ChildCount(); i++ {
+				child := node.Child(i)
+				if child.Kind() == "catch_formal_parameter" {
+					// catch_formal_parameter children: catch_type + identifier (name)
+					var pTypeNode *tree_sitter.Node
+					pNameNode := child.ChildByFieldName("name")
+					for j := uint(0); j < child.ChildCount(); j++ {
+						if child.Child(j).Kind() == "catch_type" {
+							pTypeNode = child.Child(j)
+							break
+						}
+					}
+					if pTypeNode != nil && pNameNode != nil {
+						typeName := ExtractTypeName(pTypeNode, content)
+						varName := pNameNode.Utf8Text(content)
+						if typeName != "" && varName != "" {
+							result.TypeHints = append(result.TypeHints, model.TypeBinding{
+								VarName:  varName,
+								TypeName: typeName,
+								Tier:     0,
+								Scope:    scope,
+								FilePath: filePath,
+							})
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+}
+
+// extractLocalVarTypeHint generates Tier 0 TypeHints from local variable declarations with explicit types.
+// e.g. "UserService svc = new UserService();" → TypeHint{VarName:"svc", TypeName:"UserService", Scope:"Foo.bar"}
+func extractLocalVarTypeHint(node *tree_sitter.Node, content []byte, scope, filePath string, result *model.ParseResult) {
+	typeNode := node.ChildByFieldName("type")
+	if typeNode == nil {
+		return
+	}
+	typeName := ExtractTypeName(typeNode, content)
+	if typeName == "" || typeName == "var" {
+		return
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() != "variable_declarator" {
+			continue
+		}
+		nameNode := child.ChildByFieldName("name")
+		if nameNode == nil {
+			continue
+		}
+		result.TypeHints = append(result.TypeHints, model.TypeBinding{
+			VarName:  nameNode.Utf8Text(content),
+			TypeName: typeName,
+			TypeArgs: ExtractTypeArgs(typeNode, content),
+			Tier:     0,
+			Scope:    scope,
+			FilePath: filePath,
+		})
+	}
+}
+
+// extractPendingAssignment extracts assignment patterns for fixpoint type propagation.
+func extractPendingAssignment(node *tree_sitter.Node, content []byte, scope string, result *model.ParseResult) {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() != "variable_declarator" {
+			continue
+		}
+		nameNode := child.ChildByFieldName("name")
+		valueNode := child.ChildByFieldName("value")
+		if nameNode == nil || valueNode == nil {
+			continue
+		}
+		lhs := nameNode.Utf8Text(content)
+
+		switch valueNode.Kind() {
+		case "identifier":
+			// copy: User alias = user
+			result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+				Kind: "copy", LHS: lhs, Scope: scope, RHS: valueNode.Utf8Text(content),
+			})
+		case "field_access":
+			// fieldAccess: String name = addr.name
+			obj := valueNode.ChildByFieldName("object")
+			field := valueNode.ChildByFieldName("field")
+			if obj != nil && field != nil && obj.Kind() == "identifier" {
+				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+					Kind: "field_access", LHS: lhs, Scope: scope, Receiver: obj.Utf8Text(content), Field: field.Utf8Text(content),
+				})
+			}
+		case "method_invocation":
+			obj := valueNode.ChildByFieldName("object")
+			name := valueNode.ChildByFieldName("name")
+			if name == nil {
+				break
+			}
+			if obj == nil {
+				// callResult: User user = getUser()
+				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+					Kind: "call_result", LHS: lhs, Scope: scope, Callee: name.Utf8Text(content),
+				})
+			} else if obj.Kind() == "identifier" {
+				// methodCallResult: Address addr = user.getAddress()
+				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+					Kind: "method_call_result", LHS: lhs, Scope: scope, Receiver: obj.Utf8Text(content), Method: name.Utf8Text(content),
+				})
+			}
+		}
+	}
+}
+
+// extractMethodInvocation extracts a method_invocation node.
+func extractMethodInvocation(node *tree_sitter.Node, content []byte, filePath, qualifiedCallerName string, result *model.ParseResult) {
+	// method_invocation has: object.method(args) or method(args)
+	methodName := ""
+	receiverExpr := ""
+
+	nameNode := node.ChildByFieldName("name")
+	if nameNode != nil {
+		methodName = nameNode.Utf8Text(content)
+	}
+
+	objectNode := node.ChildByFieldName("object")
+	if objectNode != nil {
+		receiverExpr = objectNode.Utf8Text(content)
+	}
+
+	// Count arguments and infer types
+	argCount := 0
+	var argTypes []string
+	var argExprs []string
+	argsNode := node.ChildByFieldName("arguments")
+	if argsNode != nil {
+		for i := uint(0); i < argsNode.ChildCount(); i++ {
+			child := argsNode.Child(i)
+			if child.IsNamed() {
+				argCount++
+				argTypes = append(argTypes, inferArgType(child, content))
+				argExprs = append(argExprs, child.Utf8Text(content))
+			}
+		}
+	}
+
+	if methodName == "" {
+		return
+	}
+
+	callerContext := qualifiedCallerName
+
+	fc := astutil.DetectFlowContext(node, content)
+	result.Calls = append(result.Calls, model.RawCall{
+		CalledName:   methodName,
+		CallerName:   callerContext,
+		CallerKind:   constants.KindFunction,
+		FilePath:     filePath,
+		Line:         int(node.StartPosition().Row) + 1,
+		ArgCount:     argCount,
+		ArgTypes:     argTypes,
+		ArgExprs:     argExprs,
+		ReceiverExpr: receiverExpr,
+		FlowContext:  fc.Kind,
+		FlowLine:     fc.Line,
+	})
+}
+
+// inferArgType infers a type hint from a call argument AST node.
+// Returns empty string for unknown types (conservative).
+func inferArgType(node *tree_sitter.Node, content []byte) string {
+	switch node.Kind() {
+	case "string_literal":
+		return "String"
+	case "decimal_integer_literal":
+		return "int"
+	case "decimal_floating_point_literal":
+		return "double"
+	case "true", "false":
+		return "boolean"
+	case "null_literal":
+		return "null"
+	case "object_creation_expression":
+		typeNode := node.ChildByFieldName("type")
+		if typeNode != nil {
+			return ExtractTypeName(typeNode, content)
+		}
+	case "field_access":
+		obj := node.ChildByFieldName("object")
+		if obj == nil {
+			return ""
+		}
+		// Single-level: ResponseCode.FAIL → type is "ResponseCode"
+		if obj.Kind() == "identifier" {
+			name := obj.Utf8Text(content)
+			if len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' {
+				return name
+			}
+		}
+		// Multi-level: ResponseCode.FAIL.code → definitely NOT the object's type
+		// Prefix with "!" to signal exclusion
+		if obj.Kind() == "field_access" {
+			outerObj := obj.ChildByFieldName("object")
+			if outerObj != nil && outerObj.Kind() == "identifier" {
+				name := outerObj.Utf8Text(content)
+				if len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' {
+					return "!" + name // "!ResponseCode" means NOT ResponseCode
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// extractConstructorCall extracts a new Xxx() expression.
+func extractConstructorCall(node *tree_sitter.Node, content []byte, filePath, qualifiedCallerName string, result *model.ParseResult) {
+	typeNode := node.ChildByFieldName("type")
+	if typeNode == nil {
+		return
+	}
+	typeName := ExtractTypeName(typeNode, content)
+	if typeName == "" {
+		return
+	}
+
+	// Count arguments
+	argCount := 0
+	var argTypes []string
+	var argExprs []string
+	argsNode := node.ChildByFieldName("arguments")
+	if argsNode != nil {
+		for i := uint(0); i < argsNode.ChildCount(); i++ {
+			child := argsNode.Child(i)
+			if child.IsNamed() {
+				argCount++
+				argTypes = append(argTypes, inferArgType(child, content))
+				argExprs = append(argExprs, child.Utf8Text(content))
+			}
+		}
+	}
+
+	callerContext := qualifiedCallerName
+
+	fc := astutil.DetectFlowContext(node, content)
+	result.Calls = append(result.Calls, model.RawCall{
+		CalledName:  typeName,
+		CallerName:  callerContext,
+		CallerKind:  constants.KindFunction,
+		FilePath:    filePath,
+		Line:        int(node.StartPosition().Row) + 1,
+		ArgCount:    argCount,
+		ArgTypes:    argTypes,
+		ArgExprs:    argExprs,
+		FlowContext: fc.Kind,
+		FlowLine:    fc.Line,
+	})
+}
+
+// Helper functions
+
+// extractAnnotations extracts annotation names from a modifiers node.
+func ExtractAnnotations(modifiers *tree_sitter.Node, content []byte) []string {
+	var annotations []string
+	for i := uint(0); i < modifiers.ChildCount(); i++ {
+		child := modifiers.Child(i)
+		if child.Kind() == "marker_annotation" || child.Kind() == "annotation" {
+			nameNode := child.ChildByFieldName("name")
+			if nameNode == nil {
+				// Try first named child
+				for j := uint(0); j < child.ChildCount(); j++ {
+					c := child.Child(j)
+					if c.Kind() == "identifier" {
+						nameNode = c
+						break
+					}
+				}
+			}
+			if nameNode != nil {
+				name := nameNode.Utf8Text(content)
+				args := ""
+				for j := uint(0); j < child.ChildCount(); j++ {
+					part := child.Child(j)
+					if part.Kind() == "annotation_argument_list" {
+						args = part.Utf8Text(content)
+					}
+				}
+				annotations = append(annotations, "@"+name+args)
+			}
+		}
+	}
+	return annotations
+}
+
+// buildTypeEnv builds a variable→type map from TypeHints for a given class scope.
+// Uses imports to resolve short type names to fully qualified names.
+func buildTypeEnv(hints []model.TypeBinding, className string, imports []model.RawImport) map[string]string {
+	// Build short name → FQN map from imports
+	importMap := make(map[string]string)
+	for _, imp := range imports {
+		importMap[imp.SymbolName] = imp.ModulePath
+	}
+
+	env := make(map[string]string)
+	for _, h := range hints {
+		if h.Scope == className || h.Scope == "" {
+			typeName := h.TypeName
+			if fqn, ok := importMap[typeName]; ok {
+				typeName = fqn
+			}
+			env[h.VarName] = typeName
+		}
+	}
+	return env
+}
+
+// extractTypeName extracts a type name, handling generics.
+func ExtractTypeName(node *tree_sitter.Node, content []byte) string {
+	switch node.Kind() {
+	case "type_identifier", "identifier":
+		return node.Utf8Text(content)
+	case "generic_type":
+		// Get base type (first child)
+		for i := uint(0); i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child.Kind() == "type_identifier" {
+				return child.Utf8Text(content)
+			}
+		}
+	case "scoped_type_identifier":
+		return node.Utf8Text(content)
+	case "array_type":
+		elemType := node.ChildByFieldName("element")
+		if elemType != nil {
+			return ExtractTypeName(elemType, content) + "[]"
+		}
+	}
+	// Fallback: primitive types
+	text := node.Utf8Text(content)
+	if len(text) < 30 {
+		return text
+	}
+	return ""
+}
+
+// ExtractTypeArgs extracts generic type arguments from a type node.
+// e.g. List<User> → ["User"], Map<String, User> → ["String", "User"]
+func ExtractTypeArgs(node *tree_sitter.Node, content []byte) []string {
+	if node.Kind() != "generic_type" && node.Kind() != "parameterized_type" {
+		return nil
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "type_arguments" {
+			var args []string
+			for j := uint(0); j < child.ChildCount(); j++ {
+				arg := child.Child(j)
+				if arg.IsNamed() {
+					args = append(args, ExtractTypeName(arg, content))
+				}
+			}
+			return args
+		}
+	}
+	return nil
+}
+
+// extractTypeFromHeritage extracts the parent type from a superclass node.
+func extractTypeFromHeritage(node *tree_sitter.Node, content []byte) string {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.IsNamed() {
+			return ExtractTypeName(child, content)
+		}
+	}
+	return ""
+}
+
+// countComplexity counts cyclomatic complexity (branches + 1).
+func countComplexity(node *tree_sitter.Node, content []byte) int {
+	complexity := 1
+	astutil.WalkNamedChildren(node, func(child *tree_sitter.Node) bool {
+		switch child.Kind() {
+		case "if_statement", "for_statement", "enhanced_for_statement",
+			"while_statement", "do_statement", "catch_clause",
+			"switch_expression", "ternary_expression",
+			"binary_expression":
+			if child.Kind() == "binary_expression" {
+				op := ""
+				for j := uint(0); j < child.ChildCount(); j++ {
+					c := child.Child(j)
+					if !c.IsNamed() {
+						op = c.Utf8Text(content)
+					}
+				}
+				if op == "&&" || op == "||" {
+					complexity++
+				}
+			} else {
+				complexity++
+			}
+		}
+		return true
+	})
+	return complexity
+}
+
+// walkNamedChildren iterates named children recursively.
+

@@ -1,0 +1,7 @@
+bin/
+fcg/
+.fcg/
+*.exe
+*.dll
+*.so
+*.dylib
