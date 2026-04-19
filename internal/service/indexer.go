@@ -242,7 +242,10 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	}
 	indexer.progress.Emit(PhaseIncremental, len(changedFiles), len(changedFiles), fmt.Sprintf("%d changed files", len(changedFiles)))
 
-	// Snapshot import targets BEFORE cleanup (edges will be deleted with nodes)
+	// Find affected importers BEFORE cleanup (DETACH DELETE removes IMPORTS edges)
+	indexer.progress.EmitSub(PhaseWriting, SubFindAffected, "")
+	affectedFiles := indexer.findImporters(ctx, scanCtx.files, changedFiles, deletedFiles)
+	indexer.progress.EmitSub(PhaseWriting, SubFindAffected, fmt.Sprintf("%d importers", len(affectedFiles)))
 
 	// Clean deleted files
 	indexer.progress.EmitSub(PhaseWriting, SubCleanChanged, "")
@@ -275,15 +278,12 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 		return scanCtx.result, nil
 	}
 
-	// Expand: find files that import changed/deleted files — their edges need rebuilding
-	indexer.progress.EmitSub(PhaseWriting, SubFindAffected, "")
-	affectedFiles := indexer.findImporters(ctx, scanCtx.files, changedFiles, deletedFiles)
+	// Clean affected files
 	for _, af := range affectedFiles {
 		indexer.graphStore.DeleteNodesByFile(ctx, af.RelPath)
 		indexer.graphStore.DeleteNodeByID(ctx, fmt.Sprintf("file:%s", af.RelPath))
 	}
 	filesToParse := append(changedFiles, affectedFiles...)
-	indexer.progress.EmitSub(PhaseWriting, SubFindAffected, fmt.Sprintf("%d importers", len(affectedFiles)))
 
 	// Parse changed + affected files
 	parseResults, symbolTable := indexer.parseSourceFiles(ctx, scanCtx, filesToParse)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/liuymcn/flash-code-graph/internal/config"
 	"github.com/liuymcn/flash-code-graph/internal/model"
@@ -19,22 +18,11 @@ import (
 // For KùzuDB, it resolves the data directory from project path + branch.
 // For FalkorDB, it connects to the configured address.
 func openGraphStore(cfg *config.Config, repoPath string) (storage.GraphStore, error) {
-	database, address, graphName := storage.ResolveStorageAddress(cfg)
+	database, address, _ := storage.ResolveStorageAddress(cfg)
 
 	switch database {
 	case "falkordb":
-		// Per-project + per-branch graph isolation
-		absPath, _ := filepath.Abs(repoPath)
-		if absPath != "" {
-			projectName := filepath.Base(absPath)
-			branchName := cfg.Storage.Branch
-			if branchName == "" {
-				branchName = branch.DetectBranch(absPath)
-			}
-			graphName = graphName + "_" + projectName + "_" + branchName
-			// Sanitize to match FalkorDB internal graph name normalization
-			graphName = strings.NewReplacer("-", "_", "/", "_").Replace(graphName)
-		}
+		graphName := falkor.ResolveGraphName(cfg, repoPath)
 		store, err := falkor.New(address, graphName)
 		if err != nil {
 			return nil, fmt.Errorf("open FalkorDB (%s): %w", address, err)

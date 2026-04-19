@@ -4,18 +4,18 @@ package falkor
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/liuymcn/flash-code-graph/internal/config"
 	"github.com/liuymcn/flash-code-graph/internal/constants"
 	"github.com/liuymcn/flash-code-graph/internal/model"
 	"github.com/liuymcn/flash-code-graph/internal/storage"
+	"github.com/liuymcn/flash-code-graph/internal/storage/branch"
 )
-
-// DefaultGraphName is the FalkorDB graph name for FCG.
-const DefaultGraphName = "fcg"
 
 // allNodeLabels is the ordered list of all node labels, Function first for fast lookup.
 var allNodeLabels = []string{"Function", "Class", "Interface", "File", "Directory",
@@ -25,14 +25,27 @@ var allNodeLabels = []string{"Function", "Class", "Interface", "File", "Director
 type Store struct {
 	client    *redis.Client
 	graphName string
+	shared    bool // true = Close() does not close client (external ownership)
 }
 
 // New creates a FalkorDB store. Supports TCP (host:port) or Unix socket.
 func New(address string, graphName string) (*Store, error) {
-	if graphName == "" {
-		graphName = DefaultGraphName
+	client, err := NewClient(address)
+	if err != nil {
+		return nil, err
 	}
+	return &Store{client: client, graphName: graphName}, nil
+}
 
+// NewWithClient creates a Store using an existing redis.Client.
+// The client is NOT closed when Store.Close() is called (shared ownership).
+func NewWithClient(client *redis.Client, graphName string) *Store {
+	return &Store{client: client, graphName: graphName, shared: true}
+}
+
+// NewClient creates a redis.Client for the given FalkorDB address.
+// The caller is responsible for closing the client.
+func NewClient(address string) (*redis.Client, error) {
 	opts := &redis.Options{
 		ReadTimeout:  5 * time.Minute,
 		WriteTimeout: 5 * time.Minute,
@@ -43,13 +56,28 @@ func New(address string, graphName string) (*Store, error) {
 	} else {
 		opts.Addr = address
 	}
-
 	client := redis.NewClient(opts)
 	if err := client.Ping(context.Background()).Err(); err != nil {
+		client.Close()
 		return nil, fmt.Errorf("falkor: connect %s: %w", address, err)
 	}
+	return client, nil
+}
 
-	return &Store{client: client, graphName: graphName}, nil
+// ResolveGraphName computes the FalkorDB graph name for a project+branch.
+func ResolveGraphName(cfg *config.Config, repoPath string) string {
+	_, _, graphName := storage.ResolveStorageAddress(cfg)
+	absPath, _ := filepath.Abs(repoPath)
+	if absPath != "" {
+		projectName := filepath.Base(absPath)
+		branchName := cfg.Storage.Branch
+		if branchName == "" {
+			branchName = branch.DetectBranch(absPath)
+		}
+		graphName = graphName + "_" + projectName + "_" + branchName
+		graphName = strings.NewReplacer("-", "_", "/", "_").Replace(graphName)
+	}
+	return graphName
 }
 
 // query executes a Cypher query and returns the raw result.
@@ -152,19 +180,6 @@ func (store *Store) mergeNode(ctx context.Context, node model.Node) error {
 	return err
 }
 
-func (store *Store) createNode(ctx context.Context, node model.Node) error {
-	propParts := []string{fmt.Sprintf("id: '%s'", escapeCypher(node.ID))}
-	for key, value := range node.Properties {
-		if value == nil {
-			continue
-		}
-		propParts = append(propParts, fmt.Sprintf("%s: %s", key, formatCypherValue(value)))
-	}
-	cypher := fmt.Sprintf("CREATE (n:%s {%s})", node.Kind, strings.Join(propParts, ", "))
-	_, err := store.query(ctx, cypher)
-	return err
-}
-
 // WriteEdges writes edges in batch using Redis Pipeline.
 func (store *Store) WriteEdges(ctx context.Context, edges []model.Edge) error {
 	const batchSize = 200
@@ -244,30 +259,6 @@ func buildSingleEdgeCypher(sourceLabel, targetLabel, relType string, edge model.
 		sourceLabel, escapeCypher(edge.SourceID),
 		targetLabel, escapeCypher(edge.TargetID),
 		relType, propClause)
-}
-
-func (store *Store) writeEdge(ctx context.Context, edge model.Edge) error {
-	relType := mapRelationType(edge.Kind)
-	sourceLabel, targetLabel := edgeLabels(edge.Kind, edge.SourceKind)
-
-	propParts := []string{}
-	for key, value := range edge.Properties {
-		propParts = append(propParts, fmt.Sprintf("r.%s = %s", key, formatCypherValue(value)))
-	}
-
-	setClause := ""
-	if len(propParts) > 0 {
-		setClause = " SET " + strings.Join(propParts, ", ")
-	}
-
-	cypher := fmt.Sprintf(
-		"MATCH (a:%s {id: '%s'}), (b:%s {id: '%s'}) MERGE (a)-[r:%s]->(b)%s",
-		sourceLabel, escapeCypher(edge.SourceID),
-		targetLabel, escapeCypher(edge.TargetID),
-		relType, setClause)
-
-	_, err := store.query(ctx, cypher)
-	return err
 }
 
 // edgeLabels returns source and target node labels for a relation kind.
@@ -414,23 +405,6 @@ func (store *Store) QueryNodeByID(ctx context.Context, id string) (*model.Node, 
 	}
 	return nil, nil
 }
-
-func extractSingleString(rows []interface{}) string {
-	if len(rows) < 2 {
-		return ""
-	}
-	dataRows, ok := rows[1].([]interface{})
-	if !ok || len(dataRows) == 0 {
-		return ""
-	}
-	cols, ok := dataRows[0].([]interface{})
-	if !ok || len(cols) == 0 {
-		return ""
-	}
-	s, _ := cols[0].(string)
-	return s
-}
-
 
 // QueryNodeByQualifiedName returns a single node by its qualified name.
 func (store *Store) QueryNodeByQualifiedName(ctx context.Context, qualifiedName string) (*model.Node, error) {
@@ -646,23 +620,30 @@ func (store *Store) BatchUpdateNodeProperties(ctx context.Context, kind string, 
 	if len(updates) == 0 {
 		return nil
 	}
-	// Build individual SET statements (FalkorDB doesn't support UNWIND with params well via raw commands)
-	for _, u := range updates {
-		var setClauses []string
-		for k, v := range u.Props {
-			switch val := v.(type) {
-			case string:
-				setClauses = append(setClauses, fmt.Sprintf("n.%s = '%s'", k, val))
-			case float64:
-				setClauses = append(setClauses, fmt.Sprintf("n.%s = %f", k, val))
-			default:
-				setClauses = append(setClauses, fmt.Sprintf("n.%s = '%v'", k, val))
-			}
+	const batchSize = 500
+	for i := 0; i < len(updates); i += batchSize {
+		end := i + batchSize
+		if end > len(updates) {
+			end = len(updates)
 		}
-		cypher := fmt.Sprintf("MATCH (n:%s) WHERE n.id = '%s' SET %s", kind, u.NodeID, strings.Join(setClauses, ", "))
-		_, err := store.client.Do(ctx, "GRAPH.QUERY", store.graphName, cypher).Result()
-		if err != nil {
-			return err
+		pipe := store.client.Pipeline()
+		for _, u := range updates[i:end] {
+			var setClauses []string
+			for k, v := range u.Props {
+				switch val := v.(type) {
+				case string:
+					setClauses = append(setClauses, fmt.Sprintf("n.%s = '%s'", k, escapeCypher(val)))
+				case float64:
+					setClauses = append(setClauses, fmt.Sprintf("n.%s = %f", k, val))
+				default:
+					setClauses = append(setClauses, fmt.Sprintf("n.%s = '%v'", k, v))
+				}
+			}
+			cypher := fmt.Sprintf("MATCH (n:%s {id: '%s'}) SET %s", kind, escapeCypher(u.NodeID), strings.Join(setClauses, ", "))
+			pipe.Do(ctx, "GRAPH.QUERY", store.graphName, cypher)
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return fmt.Errorf("batch update %d: %w", i/batchSize, err)
 		}
 	}
 	return nil
@@ -818,6 +799,9 @@ func (store *Store) GetStats(ctx context.Context) (*model.GraphStats, error) {
 	return stats, nil
 }
 func (store *Store) Close() error {
+	if store.shared {
+		return nil
+	}
 	return store.client.Close()
 }
 
@@ -985,21 +969,6 @@ func parseFullNodeResults(rows []interface{}) []model.Node {
 
 
 
-func parseNodeProperties(nodeData []interface{}) map[string]interface{} {
-	props := make(map[string]interface{})
-	// FalkorDB node format: [[id, labels, properties...]]
-	if len(nodeData) >= 3 {
-		if propList, ok := nodeData[2].([]interface{}); ok {
-			for _, prop := range propList {
-				if pair, ok := prop.([]interface{}); ok && len(pair) >= 2 {
-					props[fmt.Sprint(pair[0])] = pair[1]
-				}
-			}
-		}
-	}
-	return props
-}
-
 func parseEdgeResults(rows []interface{}, defaultKind ...model.RelationKind) []model.Edge {
 	if len(rows) < 2 {
 		return nil
@@ -1106,25 +1075,6 @@ func parseSearchResults(rows []interface{}) []storage.SearchResult {
 		})
 	}
 	return results
-}
-
-func parseIDSet(rows []interface{}) map[string]bool {
-	ids := make(map[string]bool)
-	if len(rows) < 2 {
-		return ids
-	}
-	dataRows, ok := rows[1].([]interface{})
-	if !ok {
-		return ids
-	}
-	for _, row := range dataRows {
-		cols, ok := row.([]interface{})
-		if !ok || len(cols) < 1 {
-			continue
-		}
-		ids[fmt.Sprint(cols[0])] = true
-	}
-	return ids
 }
 
 func parseSingleInt(rows []interface{}) int {

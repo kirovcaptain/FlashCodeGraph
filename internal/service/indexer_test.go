@@ -1705,3 +1705,70 @@ func main() {}
 		t.Fatal("expected nil for non-existent class")
 	}
 }
+
+func TestIndexer_IncrementalAffectedImporters(t *testing.T) {
+	indexer, store := setupTestIndexer(t)
+	defer store.Close()
+
+	dir := t.TempDir()
+
+	// File B: service with function Foo
+	os.WriteFile(filepath.Join(dir, "service.go"), []byte(`package main
+
+type Service struct{}
+
+func (s *Service) Foo() string { return "foo" }
+`), model.FilePermission)
+
+	// File A: imports B, calls B.Foo
+	os.WriteFile(filepath.Join(dir, "handler.go"), []byte(`package main
+
+import "service"
+
+func Handle() string {
+    svc := &Service{}
+    return svc.Foo()
+}
+`), model.FilePermission)
+
+	ctx := context.Background()
+
+	// Full index
+	_, err := indexer.Index(ctx, dir, "main", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify IMPORTS edge exists: handler.go → service.go
+	allImports, _ := store.QueryAllEdges(ctx, model.RelImports, 0)
+	hasImport := false
+	for _, e := range allImports {
+		if strings.Contains(e.SourceID, "handler.go") && strings.Contains(e.TargetID, "service.go") {
+			hasImport = true
+		}
+	}
+	if !hasImport {
+		t.Fatal("expected IMPORTS edge handler.go → service.go after full index")
+	}
+
+	// Modify B: rename Foo → Bar (add extra content to ensure different size)
+	time.Sleep(1100 * time.Millisecond) // ensure different mod time (filesystem may have 1s granularity)
+	os.WriteFile(filepath.Join(dir, "service.go"), []byte(`package main
+
+type Service struct{}
+
+func (s *Service) Bar() string { return "bar_modified" }
+`), model.FilePermission)
+
+	// Incremental index — only service.go changed
+	result, err := indexer.Index(ctx, dir, "main", false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// BUG-4 verification: handler.go should be detected as affected (imports service.go)
+	// and re-parsed. FilesProcessed should be 2 (service.go + handler.go).
+	if result.FilesProcessed < 2 {
+		t.Errorf("BUG-4: expected FilesProcessed >= 2 (service.go + handler.go as affected importer), got %d", result.FilesProcessed)
+	}
+}

@@ -287,10 +287,11 @@ func (srv *Server) handleIndexRepository(ctx context.Context, request mcp.CallTo
 	}
 	force, _ := request.GetArguments()["force"].(bool)
 
-	indexer, _, err := srv.createIndexer(path)
+	indexer, store, err := srv.createIndexer(path)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("create indexer: %v", err)), nil
 	}
+	defer store.Close()
 
 	branchName, _ := request.GetArguments()["branch"].(string)
 	if branchName == "" {
