@@ -318,7 +318,7 @@ func (resolver *Resolver) lookupFieldInHierarchy(callerName, fieldName string, e
 				parentCandidates = resolver.symbolTable.FindByName(heritageEntry.ParentName)
 			}
 			for _, parentCandidate := range parentCandidates {
-				if parentCandidate.Kind == "class" || parentCandidate.Kind == "abstract_class" || parentCandidate.Kind == "interface" || parentCandidate.ClassType == "struct" {
+				if parentCandidate.Kind == constants.KindClass || parentCandidate.Kind == "abstract_class" || parentCandidate.Kind == constants.KindInterface || parentCandidate.ClassType == "struct" {
 					parentKey := parentCandidate.QualifiedName + ":" + fieldName
 					if typeName, exists := resolver.globalBindings[parentKey]; exists {
 						return typeName

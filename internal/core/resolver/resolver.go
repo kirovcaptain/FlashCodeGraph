@@ -737,7 +737,7 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 			className := baseExpr[:dotIdx]
 			// Check if className is an enum/class in SymbolTable
 			for _, sym := range resolver.symbolTable.FindByName(className) {
-				if sym.Kind == "class" || sym.ClassType == "enum" {
+				if sym.Kind == constants.KindClass || sym.ClassType == "enum" {
 					baseType = className
 					break
 				}
@@ -767,7 +767,7 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 			// Short name → fully qualified name lookup (Go/Java baseType is short name)
 			for _, candidate := range resolver.symbolTable.FindByName(baseType) {
 				if candidate.Kind == constants.KindClass || candidate.Kind == "abstract_class" ||
-					candidate.Kind == "interface" || candidate.ClassType == "struct" {
+					candidate.Kind == constants.KindInterface || candidate.ClassType == "struct" {
 					qualifiedKey := candidate.QualifiedName + ":" + methodName
 					if info, exists := env.Bindings[qualifiedKey]; exists {
 						return info.TypeName
@@ -887,7 +887,7 @@ func (resolver *Resolver) findClassSymbol(typeName string) *model.Symbol {
 	candidates := resolver.symbolTable.FindByName(typeName)
 	for _, candidate := range candidates {
 		if candidate.Kind == constants.KindClass || candidate.Kind == "abstract_class" ||
-			candidate.Kind == "interface" || candidate.ClassType == "struct" {
+			candidate.Kind == constants.KindInterface || candidate.ClassType == "struct" {
 			matched := candidate
 			return &matched
 		}
@@ -896,7 +896,7 @@ func (resolver *Resolver) findClassSymbol(typeName string) *model.Symbol {
 		candidates = resolver.symbolTable.FindByQualifiedName(typeName)
 		for _, candidate := range candidates {
 			if candidate.Kind == constants.KindClass || candidate.Kind == "abstract_class" ||
-				candidate.Kind == "interface" || candidate.ClassType == "struct" {
+				candidate.Kind == constants.KindInterface || candidate.ClassType == "struct" {
 				matched := candidate
 				return &matched
 			}
