@@ -879,6 +879,10 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 				},
 			})
 			result.SymbolsByKind[symbol.Kind]++
+			// Supplement class_type breakdown (abstract_class, enum, struct)
+			if symbol.ClassType != "" && symbol.ClassType != constants.ClassTypeClass && symbol.ClassType != constants.ClassTypeInterface {
+				result.SymbolsByKind[symbol.ClassType]++
+			}
 			result.SymbolsCreated++
 		}
 	}
