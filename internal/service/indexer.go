@@ -199,14 +199,14 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	// Write structural nodes: full rebuild from scratch (all CREATE)
 	indexer.progress.Emit(PhaseWriting, 0, 0, "nodes and edges")
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, "")
-	symbolEdges, err := indexer.writeStructuralNodes(ctx, scanCtx.absPath, scanCtx.files, parseResults, scanCtx.result)
+	symbolEdges, err := indexer.writeFileSystemNodes(ctx, scanCtx.absPath, scanCtx.files, parseResults, scanCtx.result)
 	if err != nil {
 		return nil, fmt.Errorf("indexer: write structural: %w", err)
 	}
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, fmt.Sprintf("%d files", scanCtx.result.FilesScanned))
 
 	// Write all other nodes and edges
-	if err := indexer.writeAllData(ctx, scanCtx, parseResults, symbolTable); err != nil {
+	if err := indexer.writeSemanticNodes(ctx, scanCtx, parseResults, symbolTable); err != nil {
 		return nil, err
 	}
 
@@ -297,14 +297,14 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	// Write structural nodes for changed + affected files only
 	// Repository/Directory use MERGE (already exist), File uses CREATE (deleted in Phase 3)
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, "")
-	symbolEdges, err := indexer.writeIncrementalStructural(ctx, scanCtx.absPath, filesToParse, parseResults, scanCtx.result)
+	symbolEdges, err := indexer.writeIncrementalFileSystemNodes(ctx, scanCtx.absPath, filesToParse, parseResults, scanCtx.result)
 	if err != nil {
 		return nil, fmt.Errorf("indexer: write structural: %w", err)
 	}
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, fmt.Sprintf("%d files", len(filesToParse)))
 
 	// Write all other nodes and edges
-	if err := indexer.writeAllData(ctx, scanCtx, parseResults, symbolTable); err != nil {
+	if err := indexer.writeSemanticNodes(ctx, scanCtx, parseResults, symbolTable); err != nil {
 		return nil, err
 	}
 
@@ -393,9 +393,10 @@ func filterNonSource(files []scanner.ScannedFile) []scanner.ScannedFile {
 	return filtered
 }
 
-// writeAllData writes symbol, route, query, annotation, and remote call nodes.
-// Structural nodes (Repository/Directory/File) are handled separately by each index mode.
-func (indexer *Indexer) writeAllData(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable) error {
+// writeSemanticNodes writes code-level semantic data to the graph:
+// Function/Class/Interface symbols, Route endpoints, Query nodes (SQL/ORM),
+// Annotation nodes, and RemoteCall edges. Does not handle file system structure.
+func (indexer *Indexer) writeSemanticNodes(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable) error {
 
 	indexer.progress.EmitSub(PhaseWriting, SubSymbolNodes, "")
 	if err := indexer.writeSymbolNodes(ctx, parseResults, scanCtx.result); err != nil {
@@ -1040,7 +1041,10 @@ func (indexer *Indexer) writeSymbolContainsEdges(ctx context.Context, symbolEdge
 	return nil
 }
 
-func (indexer *Indexer) writeStructuralNodes(ctx context.Context, absPath string, files []scanner.ScannedFile, parseResults []model.ParseResult, result *model.IndexResult) ([]model.Edge, error) {
+// writeFileSystemNodes creates Repository, Directory, and File nodes along with their
+// CONTAINS edges (repo→dir→file hierarchy). Returns symbolEdges (File→Symbol, Class→Function)
+// that must be written later after symbol nodes exist.
+func (indexer *Indexer) writeFileSystemNodes(ctx context.Context, absPath string, files []scanner.ScannedFile, parseResults []model.ParseResult, result *model.IndexResult) ([]model.Edge, error) {
 	repoName := filepath.Base(absPath)
 	repoID := fmt.Sprintf("repo:%s", repoName)
 
@@ -1059,9 +1063,10 @@ func (indexer *Indexer) writeStructuralNodes(ctx context.Context, absPath string
 	return symbolEdges, nil
 }
 
-// writeIncrementalStructural writes structural nodes for changed files only.
-// Repository/Directory use MERGE (already exist), File uses CREATE (deleted in Phase 3).
-func (indexer *Indexer) writeIncrementalStructural(ctx context.Context, absPath string, files []scanner.ScannedFile, parseResults []model.ParseResult, result *model.IndexResult) ([]model.Edge, error) {
+// writeIncrementalFileSystemNodes writes file system nodes for changed files only.
+// Repository/Directory use MERGE (already exist), File uses CREATE (deleted earlier in incremental flow).
+// Returns symbolEdges that must be written later after symbol nodes exist.
+func (indexer *Indexer) writeIncrementalFileSystemNodes(ctx context.Context, absPath string, files []scanner.ScannedFile, parseResults []model.ParseResult, result *model.IndexResult) ([]model.Edge, error) {
 	repoName := filepath.Base(absPath)
 	repoID := fmt.Sprintf("repo:%s", repoName)
 
