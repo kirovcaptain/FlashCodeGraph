@@ -123,11 +123,11 @@ func TestComputeMRO_MiddleClass(t *testing.T) {
 func TestDetectOverrides(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_speak", Name: "speak", QualifiedName: "Animal.speak", Kind: "function", FilePath: "animal.py"},
-		{ID: "base_class", Name: "Animal", QualifiedName: "Animal", Kind: "class", FilePath: "animal.py"},
-		{ID: "child_speak", Name: "speak", QualifiedName: "Dog.speak", Kind: "function", FilePath: "dog.py"},
-		{ID: "child_class", Name: "Dog", QualifiedName: "Dog", Kind: "class", FilePath: "dog.py"},
-		{ID: "child_fetch", Name: "fetch", QualifiedName: "Dog.fetch", Kind: "function", FilePath: "dog.py"},
+		{ID: "base_speak", Name: "speak", QualifiedName: "Animal.speak", Kind: "Function", FilePath: "animal.py"},
+		{ID: "base_class", Name: "Animal", QualifiedName: "Animal", Kind: "Class", FilePath: "animal.py"},
+		{ID: "child_speak", Name: "speak", QualifiedName: "Dog.speak", Kind: "Function", FilePath: "dog.py"},
+		{ID: "child_class", Name: "Dog", QualifiedName: "Dog", Kind: "Class", FilePath: "dog.py"},
+		{ID: "child_fetch", Name: "fetch", QualifiedName: "Dog.fetch", Kind: "Function", FilePath: "dog.py"},
 	})
 	resolver := NewResolver(table)
 
@@ -154,12 +154,12 @@ func TestDetectOverrides(t *testing.T) {
 func TestDetectOverrides_TransitiveGrandparent(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_class", Name: "Base", QualifiedName: "Base", Kind: "class", FilePath: "base.py"},
-		{ID: "base_run", Name: "run", QualifiedName: "Base.run", Kind: "function", FilePath: "base.py"},
-		{ID: "mid_class", Name: "Middle", QualifiedName: "Middle", Kind: "class", FilePath: "mid.py"},
+		{ID: "base_class", Name: "Base", QualifiedName: "Base", Kind: "Class", FilePath: "base.py"},
+		{ID: "base_run", Name: "run", QualifiedName: "Base.run", Kind: "Function", FilePath: "base.py"},
+		{ID: "mid_class", Name: "Middle", QualifiedName: "Middle", Kind: "Class", FilePath: "mid.py"},
 		// Middle does NOT override run
-		{ID: "leaf_class", Name: "Leaf", QualifiedName: "Leaf", Kind: "class", FilePath: "leaf.py"},
-		{ID: "leaf_run", Name: "run", QualifiedName: "Leaf.run", Kind: "function", FilePath: "leaf.py"},
+		{ID: "leaf_class", Name: "Leaf", QualifiedName: "Leaf", Kind: "Class", FilePath: "leaf.py"},
+		{ID: "leaf_run", Name: "run", QualifiedName: "Leaf.run", Kind: "Function", FilePath: "leaf.py"},
 	})
 	resolver := NewResolver(table)
 
@@ -185,10 +185,10 @@ func TestDetectOverrides_TransitiveGrandparent(t *testing.T) {
 func TestDetectOverrides_SkipsConstructors(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_class", Name: "Base", QualifiedName: "Base", Kind: "class", FilePath: "base.py"},
-		{ID: "base_init", Name: "__init__", QualifiedName: "Base.__init__", Kind: "function", FilePath: "base.py", IsConstructor: true},
-		{ID: "child_class", Name: "Child", QualifiedName: "Child", Kind: "class", FilePath: "child.py"},
-		{ID: "child_init", Name: "__init__", QualifiedName: "Child.__init__", Kind: "function", FilePath: "child.py", IsConstructor: true},
+		{ID: "base_class", Name: "Base", QualifiedName: "Base", Kind: "Class", FilePath: "base.py"},
+		{ID: "base_init", Name: "__init__", QualifiedName: "Base.__init__", Kind: "Function", FilePath: "base.py", IsConstructor: true},
+		{ID: "child_class", Name: "Child", QualifiedName: "Child", Kind: "Class", FilePath: "child.py"},
+		{ID: "child_init", Name: "__init__", QualifiedName: "Child.__init__", Kind: "Function", FilePath: "child.py", IsConstructor: true},
 	})
 	resolver := NewResolver(table)
 
@@ -206,12 +206,12 @@ func TestDetectOverrides_SkipsConstructors(t *testing.T) {
 func TestDetectOverrides_MultipleParents(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "a_class", Name: "A", QualifiedName: "A", Kind: "class", FilePath: "a.py"},
-		{ID: "a_run", Name: "run", QualifiedName: "A.run", Kind: "function", FilePath: "a.py"},
-		{ID: "b_class", Name: "B", QualifiedName: "B", Kind: "class", FilePath: "b.py"},
-		{ID: "b_run", Name: "run", QualifiedName: "B.run", Kind: "function", FilePath: "b.py"},
-		{ID: "c_class", Name: "C", QualifiedName: "C", Kind: "class", FilePath: "c.py"},
-		{ID: "c_run", Name: "run", QualifiedName: "C.run", Kind: "function", FilePath: "c.py"},
+		{ID: "a_class", Name: "A", QualifiedName: "A", Kind: "Class", FilePath: "a.py"},
+		{ID: "a_run", Name: "run", QualifiedName: "A.run", Kind: "Function", FilePath: "a.py"},
+		{ID: "b_class", Name: "B", QualifiedName: "B", Kind: "Class", FilePath: "b.py"},
+		{ID: "b_run", Name: "run", QualifiedName: "B.run", Kind: "Function", FilePath: "b.py"},
+		{ID: "c_class", Name: "C", QualifiedName: "C", Kind: "Class", FilePath: "c.py"},
+		{ID: "c_run", Name: "run", QualifiedName: "C.run", Kind: "Function", FilePath: "c.py"},
 	})
 	resolver := NewResolver(table)
 
@@ -231,8 +231,8 @@ func TestDetectOverrides_MultipleParents(t *testing.T) {
 func TestDetectOverrides_NoMethods(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_class", Name: "Base", QualifiedName: "Base", Kind: "class", FilePath: "base.py"},
-		{ID: "child_class", Name: "Child", QualifiedName: "Child", Kind: "class", FilePath: "child.py"},
+		{ID: "base_class", Name: "Base", QualifiedName: "Base", Kind: "Class", FilePath: "base.py"},
+		{ID: "child_class", Name: "Child", QualifiedName: "Child", Kind: "Class", FilePath: "child.py"},
 	})
 	resolver := NewResolver(table)
 
@@ -250,9 +250,9 @@ func TestDetectOverrides_NoMethods(t *testing.T) {
 func TestFindMethodInHierarchy(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_save", Name: "save", QualifiedName: "models.BaseDao.save", Kind: "function", FilePath: "base.py"},
-		{ID: "base_class", Name: "BaseDao", QualifiedName: "models.BaseDao", Kind: "class", FilePath: "base.py"},
-		{ID: "child_class", Name: "UserDao", QualifiedName: "models.UserDao", Kind: "class", FilePath: "user.py"},
+		{ID: "base_save", Name: "save", QualifiedName: "models.BaseDao.save", Kind: "Function", FilePath: "base.py"},
+		{ID: "base_class", Name: "BaseDao", QualifiedName: "models.BaseDao", Kind: "Class", FilePath: "base.py"},
+		{ID: "child_class", Name: "UserDao", QualifiedName: "models.UserDao", Kind: "Class", FilePath: "user.py"},
 	})
 	resolver := NewResolver(table)
 
@@ -281,11 +281,11 @@ func TestFindMethodInHierarchy(t *testing.T) {
 func TestFindMethodInHierarchy_PrefersClosestAncestor(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_class", Name: "Base", QualifiedName: "pkg.Base", Kind: "class", FilePath: "base.py"},
-		{ID: "base_run", Name: "run", QualifiedName: "pkg.Base.run", Kind: "function", FilePath: "base.py"},
-		{ID: "mid_class", Name: "Middle", QualifiedName: "pkg.Middle", Kind: "class", FilePath: "mid.py"},
-		{ID: "mid_run", Name: "run", QualifiedName: "pkg.Middle.run", Kind: "function", FilePath: "mid.py"},
-		{ID: "leaf_class", Name: "Leaf", QualifiedName: "pkg.Leaf", Kind: "class", FilePath: "leaf.py"},
+		{ID: "base_class", Name: "Base", QualifiedName: "pkg.Base", Kind: "Class", FilePath: "base.py"},
+		{ID: "base_run", Name: "run", QualifiedName: "pkg.Base.run", Kind: "Function", FilePath: "base.py"},
+		{ID: "mid_class", Name: "Middle", QualifiedName: "pkg.Middle", Kind: "Class", FilePath: "mid.py"},
+		{ID: "mid_run", Name: "run", QualifiedName: "pkg.Middle.run", Kind: "Function", FilePath: "mid.py"},
+		{ID: "leaf_class", Name: "Leaf", QualifiedName: "pkg.Leaf", Kind: "Class", FilePath: "leaf.py"},
 	})
 	resolver := NewResolver(table)
 

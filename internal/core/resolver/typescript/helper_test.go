@@ -11,7 +11,7 @@ import (
 func TestTSHelper_ResolveSuperCall_Method(t *testing.T) {
 	helper := tshelper.NewHelper()
 	funcCandidates := []model.Symbol{
-		{ID: "parent_render", Name: "render", QualifiedName: "Component.render", Kind: "function"},
+		{ID: "parent_render", Name: "render", QualifiedName: "Component.render", Kind: "Function"},
 	}
 	heritage := []model.RawHeritage{
 		{ChildName: "App", ParentName: "Component", Kind: "extends", FilePath: "app.ts"},
@@ -36,7 +36,7 @@ func TestTSHelper_ResolveSuperCall_Method(t *testing.T) {
 func TestTSHelper_ResolveSuperCall_Constructor(t *testing.T) {
 	helper := tshelper.NewHelper()
 	funcCandidates := []model.Symbol{
-		{ID: "parent_ctor", Name: "constructor", QualifiedName: "Base.constructor", Kind: "function"},
+		{ID: "parent_ctor", Name: "constructor", QualifiedName: "Base.constructor", Kind: "Function"},
 	}
 	heritage := []model.RawHeritage{
 		{ChildName: "Child", ParentName: "Base", Kind: "extends", FilePath: "child.ts"},
@@ -166,8 +166,8 @@ func newTSResolver(table *resolver.SymbolTable) *resolver.Resolver {
 func TestTSHelper_Integration_SuperMethod(t *testing.T) {
 	table := resolver.NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "parent_next", Name: "next", QualifiedName: "Middleware.next", Kind: "function", FilePath: "middleware.ts"},
-		{ID: "child_handle", Name: "handle", QualifiedName: "AuthMiddleware.handle", Kind: "function", FilePath: "auth.ts"},
+		{ID: "parent_next", Name: "next", QualifiedName: "Middleware.next", Kind: "Function", FilePath: "middleware.ts"},
+		{ID: "child_handle", Name: "handle", QualifiedName: "AuthMiddleware.handle", Kind: "Function", FilePath: "auth.ts"},
 	})
 
 	r := newTSResolver(table)
@@ -193,8 +193,8 @@ func TestTSHelper_Integration_SuperMethod(t *testing.T) {
 func TestTSHelper_Integration_SuperConstructor(t *testing.T) {
 	table := resolver.NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_ctor", Name: "constructor", QualifiedName: "EventEmitter.constructor", Kind: "function", FilePath: "emitter.ts"},
-		{ID: "child_ctor", Name: "constructor", QualifiedName: "Server.constructor", Kind: "function", FilePath: "server.ts"},
+		{ID: "base_ctor", Name: "constructor", QualifiedName: "EventEmitter.constructor", Kind: "Function", FilePath: "emitter.ts"},
+		{ID: "child_ctor", Name: "constructor", QualifiedName: "Server.constructor", Kind: "Function", FilePath: "server.ts"},
 	})
 
 	r := newTSResolver(table)

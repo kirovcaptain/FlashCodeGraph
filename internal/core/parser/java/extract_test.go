@@ -51,7 +51,7 @@ public class UserService {
 		switch sym.Name {
 		case "UserService":
 			hasClass = true
-			if sym.Kind != "class" {
+			if sym.Kind != "Class" {
 				t.Fatalf("UserService should be class, got %s", sym.Kind)
 			}
 		case "findById":

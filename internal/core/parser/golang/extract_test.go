@@ -41,13 +41,13 @@ func NewUserService() *UserService { return &UserService{} }
 		names[sym.Name] = sym.Kind
 	}
 
-	if names["UserService"] != "class" {
+	if names["UserService"] != "Class" {
 		t.Fatalf("UserService expected class, got %s", names["UserService"])
 	}
-	if names["FindByID"] != "function" {
+	if names["FindByID"] != "Function" {
 		t.Fatalf("FindByID expected function, got %s", names["FindByID"])
 	}
-	if names["NewUserService"] != "function" {
+	if names["NewUserService"] != "Function" {
 		t.Fatalf("NewUserService expected function, got %s", names["NewUserService"])
 	}
 	t.Logf("✅ Go Extract: struct + methods + constructor, %d symbols", len(result.Symbols))
@@ -70,7 +70,7 @@ type Repository interface {
 
 	hasInterface := false
 	for _, sym := range result.Symbols {
-		if sym.Name == "Repository" && sym.Kind == "interface" {
+		if sym.Name == "Repository" && sym.Kind == "Interface" {
 			hasInterface = true
 		}
 	}
@@ -122,7 +122,7 @@ func NoReturn() {}
 	// Build map: funcName → ReturnTypes
 	retMap := make(map[string][]string)
 	for _, sym := range result.Symbols {
-		if sym.Kind == "function" {
+		if sym.Kind == "Function" {
 			retMap[sym.Name] = sym.ReturnTypes
 		}
 	}

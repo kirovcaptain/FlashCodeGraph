@@ -63,7 +63,7 @@ func TestInferLocal_SelfReceiver(t *testing.T) {
 	infer := New()
 	result := &model.ParseResult{
 		Symbols: []model.Symbol{
-			{Name: "findById", QualifiedName: "UserService.findById", Kind: "function"},
+			{Name: "findById", QualifiedName: "UserService.findById", Kind: "Function"},
 		},
 	}
 
@@ -142,7 +142,7 @@ func TestPropagate_CrossFile(t *testing.T) {
 		{
 			FilePath: "dao.go",
 			Symbols: []model.Symbol{
-				{Name: "FindById", QualifiedName: "dao.FindById", Kind: "function", ReturnTypes: []string{"User"}, IsExported: true},
+				{Name: "FindById", QualifiedName: "dao.FindById", Kind: "Function", ReturnTypes: []string{"User"}, IsExported: true},
 			},
 		},
 		{
@@ -187,7 +187,7 @@ func TestInferLocal_Tier2a_CopyPropagation(t *testing.T) {
 	// Inside "handler", svc.findById() should get svc's type via copy propagation.
 	result := &model.ParseResult{
 		FilePath: "main.py",
-		Symbols:  []model.Symbol{{Name: "handler", Kind: "function", FilePath: "main.py"}},
+		Symbols:  []model.Symbol{{Name: "handler", Kind: "Function", FilePath: "main.py"}},
 		Calls: []model.RawCall{
 			{CallerName: "handler", CalledName: "findById", ReceiverExpr: "svc", FilePath: "main.py"},
 		},
@@ -286,8 +286,8 @@ func TestInferLocal_LocalReturnType(t *testing.T) {
 	result := &model.ParseResult{
 		FilePath: "main.go",
 		Symbols: []model.Symbol{
-			{Name: "getUser", Kind: "function", ReturnTypes: []string{"User"}, FilePath: "main.go"},
-			{Name: "process", Kind: "function", FilePath: "main.go"},
+			{Name: "getUser", Kind: "Function", ReturnTypes: []string{"User"}, FilePath: "main.go"},
+			{Name: "process", Kind: "Function", FilePath: "main.go"},
 		},
 		Calls: []model.RawCall{
 			{CallerName: "process", CalledName: "getUser", FilePath: "main.go"},
@@ -398,7 +398,7 @@ func TestResolveFixpoint_MethodCallResult(t *testing.T) {
 	}
 	findByName := func(name string) []model.Symbol {
 		if name == "getAddress" {
-			return []model.Symbol{{Name: "getAddress", QualifiedName: "com.example.UserService.getAddress", Kind: "function", ReturnTypes: []string{"Address"}}}
+			return []model.Symbol{{Name: "getAddress", QualifiedName: "com.example.UserService.getAddress", Kind: "Function", ReturnTypes: []string{"Address"}}}
 		}
 		return nil
 	}
@@ -421,9 +421,9 @@ func TestResolveFixpoint_Chain(t *testing.T) {
 	findByName := func(name string) []model.Symbol {
 		switch name {
 		case "getUser":
-			return []model.Symbol{{Name: "getUser", Kind: "function", ReturnTypes: []string{"User"}}}
+			return []model.Symbol{{Name: "getUser", Kind: "Function", ReturnTypes: []string{"User"}}}
 		case "getAddress":
-			return []model.Symbol{{Name: "getAddress", QualifiedName: "User.getAddress", Kind: "function", ReturnTypes: []string{"Address"}}}
+			return []model.Symbol{{Name: "getAddress", QualifiedName: "User.getAddress", Kind: "Function", ReturnTypes: []string{"Address"}}}
 		}
 		return nil
 	}
@@ -485,9 +485,9 @@ func TestResolveFixpoint_UserDefinedGeneric(t *testing.T) {
 	findByName := func(name string) []model.Symbol {
 		switch name {
 		case "getData":
-			return []model.Symbol{{Name: "getData", QualifiedName: "TKPayResponseWrapper.getData", Kind: "function", ReturnTypes: []string{"T"}, IsSynthetic: true}}
+			return []model.Symbol{{Name: "getData", QualifiedName: "TKPayResponseWrapper.getData", Kind: "Function", ReturnTypes: []string{"T"}, IsSynthetic: true}}
 		case "TKPayResponseWrapper":
-			return []model.Symbol{{Name: "TKPayResponseWrapper", Kind: "class", TypeParams: []string{"T"}}}
+			return []model.Symbol{{Name: "TKPayResponseWrapper", Kind: "Class", TypeParams: []string{"T"}}}
 		}
 		return nil
 	}

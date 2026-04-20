@@ -204,7 +204,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 		ID:            astutil.GenerateSymbolID(file.RelPath, qualifiedName, int(node.StartPosition().Row)+1),
 		Name:          className,
 		QualifiedName: qualifiedName,
-		Kind:          classType,
+		Kind:          constants.KindClass,
 		ClassType:     classType,
 		FilePath:      file.RelPath,
 		StartLine:     int(node.StartPosition().Row) + 1,

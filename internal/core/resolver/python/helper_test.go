@@ -11,8 +11,8 @@ import (
 func TestPythonHelper_ResolveSuperCall(t *testing.T) {
 	helper := pyhelper.NewHelper()
 	funcCandidates := []model.Symbol{
-		{ID: "parent_init", Name: "__init__", QualifiedName: "Animal.__init__", Kind: "function"},
-		{ID: "other_init", Name: "__init__", QualifiedName: "Vehicle.__init__", Kind: "function"},
+		{ID: "parent_init", Name: "__init__", QualifiedName: "Animal.__init__", Kind: "Function"},
+		{ID: "other_init", Name: "__init__", QualifiedName: "Vehicle.__init__", Kind: "Function"},
 	}
 	heritage := []model.RawHeritage{
 		{ChildName: "Dog", ParentName: "Animal", Kind: "extends", FilePath: "dog.py"},
@@ -150,9 +150,9 @@ func newPythonResolver(table *resolver.SymbolTable) *resolver.Resolver {
 func TestPythonHelper_Integration_SuperCall(t *testing.T) {
 	table := resolver.NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "parent_save", Name: "save", QualifiedName: "BaseModel.save", Kind: "function", FilePath: "base.py"},
-		{ID: "child_save", Name: "save", QualifiedName: "User.save", Kind: "function", FilePath: "user.py"},
-		{ID: "caller", Name: "save", QualifiedName: "User.save", Kind: "function", FilePath: "user.py"},
+		{ID: "parent_save", Name: "save", QualifiedName: "BaseModel.save", Kind: "Function", FilePath: "base.py"},
+		{ID: "child_save", Name: "save", QualifiedName: "User.save", Kind: "Function", FilePath: "user.py"},
+		{ID: "caller", Name: "save", QualifiedName: "User.save", Kind: "Function", FilePath: "user.py"},
 	})
 
 	r := newPythonResolver(table)

@@ -47,7 +47,7 @@ func NewUserService(dao UserDao) *UserService {
 				t.Fatalf("expected service.UserService, got %s", symbol.QualifiedName)
 			}
 		}
-		if symbol.Kind == "function" {
+		if symbol.Kind == "Function" {
 			funcCount++
 		}
 	}
@@ -109,7 +109,7 @@ type AuthHandler struct {
 	interfaceCount := 0
 	structCount := 0
 	for _, symbol := range result.Symbols {
-		if symbol.Kind == "interface" {
+		if symbol.Kind == "Interface" {
 			interfaceCount++
 		}
 		if symbol.ClassType == "struct" {

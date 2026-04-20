@@ -3,6 +3,7 @@ package java
 import (
 	"strings"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
@@ -43,7 +44,7 @@ func (javaHelper *Helper) ResolveSuperCall(call model.RawCall, funcCandidates []
 			callerPkg := javaHelper.extractPackage(call.FilePath)
 
 			for _, sym := range parentSymbols {
-				if sym.Kind != "class" && sym.Kind != "abstract_class" {
+				if sym.Kind != "Class" && sym.Kind != "abstract_class" {
 					continue
 				}
 				symPkg := extractSymbolPackage(sym)
@@ -139,7 +140,7 @@ func (javaHelper *Helper) ResolveReceiverFallback(call model.RawCall, funcCandid
 	callerPkg := javaHelper.extractPackage(call.FilePath)
 
 	for _, cls := range classSyms {
-		if cls.Kind != "class" && cls.Kind != "interface" && cls.Kind != "abstract_class" {
+		if cls.Kind != constants.KindClass && cls.Kind != constants.KindInterface && cls.Kind != "abstract_class" {
 			continue
 		}
 		clsPkg := extractSymbolPackage(cls)
@@ -212,7 +213,7 @@ func (javaHelper *Helper) LookupMethodReturn(typeName, methodName string) (strin
 
 func (javaHelper *Helper) extractPackage(filePath string) string {
 	for _, sym := range javaHelper.symbolTable.FindByFile(filePath) {
-		if sym.Kind != "class" && sym.Kind != "interface" && sym.Kind != "abstract_class" {
+		if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
 			continue
 		}
 		if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {

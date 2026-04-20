@@ -206,11 +206,17 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 		}
 	}
 
+	// Determine node Kind from classType
+	nodeKind := constants.KindClass
+	if classType == constants.ClassTypeInterface {
+		nodeKind = constants.KindInterface
+	}
+
 	result.Symbols = append(result.Symbols, model.Symbol{
 		ID:            astutil.GenerateSymbolID(filePath, qualifiedName, int(node.StartPosition().Row)+1),
 		Name:          className,
 		QualifiedName: qualifiedName,
-		Kind:          classType,
+		Kind:          nodeKind,
 		FilePath:      filePath,
 		StartLine:     int(node.StartPosition().Row) + 1,
 		EndLine:       int(node.EndPosition().Row) + 1,

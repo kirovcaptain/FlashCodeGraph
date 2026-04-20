@@ -3,6 +3,7 @@ package resolver
 import (
 	"strings"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
@@ -135,12 +136,12 @@ func (resolver *Resolver) DetectOverrides(heritage []model.RawHeritage) []model.
 					if matched {
 						relations = append(relations, model.ResolvedRelation{
 							SourceID: childMethod.ID, TargetID: parentMethod.ID,
-							Kind: model.RelOverrides, SourceKind: "Function",
+							Kind: model.RelOverrides, SourceKind: constants.KindFunction,
 							Confidence: 1.0, ResolvedBy: "override_detection", Candidates: 1,
 						})
 						relations = append(relations, model.ResolvedRelation{
 							SourceID: parentMethod.ID, TargetID: childMethod.ID,
-							Kind: model.RelDispatches, SourceKind: "Function",
+							Kind: model.RelDispatches, SourceKind: constants.KindFunction,
 							Confidence: 1.0, ResolvedBy: "interface_dispatch", Candidates: 1,
 						})
 					}
@@ -177,8 +178,8 @@ func (resolver *Resolver) FindMethodInHierarchy(className, methodName string, he
 	startQN := ""
 	candidates := resolver.symbolTable.FindByName(className)
 	for _, c := range candidates {
-		if c.Kind == "class" || c.Kind == "abstract_class" ||
-			c.Kind == "interface" || c.ClassType == "struct" {
+		if c.Kind == constants.KindClass || c.Kind == "abstract_class" ||
+			c.Kind == constants.KindInterface || c.ClassType == "struct" {
 			startQN = c.QualifiedName
 			break
 		}
@@ -242,8 +243,8 @@ func (resolver *Resolver) buildQualifiedParentMap(heritage []model.RawHeritage) 
 		}
 		candidates := resolver.symbolTable.FindByName(entry.ParentName)
 		for _, c := range candidates {
-			if c.Kind == "class" || c.Kind == "abstract_class" ||
-				c.Kind == "interface" || c.ClassType == "struct" {
+			if c.Kind == constants.KindClass || c.Kind == "abstract_class" ||
+				c.Kind == constants.KindInterface || c.ClassType == "struct" {
 				parentQNCache[entry.ParentName] = c.QualifiedName
 				break
 			}

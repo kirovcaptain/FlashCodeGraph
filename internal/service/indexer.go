@@ -613,7 +613,7 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 		if strings.HasPrefix(sym.ID, "external:") {
 			externalNodes = append(externalNodes, model.Node{
 				ID:   sym.ID,
-				Kind: "Function",
+				Kind: constants.KindFunction,
 				Properties: map[string]interface{}{
 					"name":           sym.Name,
 					"qualified_name": sym.QualifiedName,
@@ -658,7 +658,7 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 					SourceID:   hint.CallerID,
 					TargetID:   candidateSymbols[0].ID,
 					Kind:       model.RelUnresolvedCall,
-					SourceKind: "Function",
+					SourceKind: constants.KindFunction,
 					Properties: map[string]any{
 						"hint_type":       hint.HintType,
 						"line":            hint.Line,
@@ -798,14 +798,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 	var nodes []model.Node
 	for _, parseResult := range parseResults {
 		for _, symbol := range parseResult.Symbols {
-			kind := symbol.Kind
-			if kind == constants.KindAbstractClass || kind == constants.KindEnum {
-				kind = "Class"
-			} else if kind == constants.KindClass || kind == constants.KindInterface {
-				kind = capitalizeFirst(kind)
-			} else if kind == constants.KindFunction {
-				kind = "Function"
-			}
+			kind := constants.ParserKindToNodeKind(symbol.Kind)
 
 			nodes = append(nodes, model.Node{
 				ID:   symbol.ID,
@@ -957,7 +950,7 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 		parsedFiles[f.RelPath] = true
 	}
 
-	for _, kind := range []string{"Function", "Class", "Interface"} {
+	for _, kind := range []string{constants.KindFunction, constants.KindClass, constants.KindInterface} {
 		nodes, err := indexer.graphStore.QueryAllByKind(ctx, kind, 0)
 		if err != nil {
 			continue
@@ -977,7 +970,7 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 				ID:            node.ID,
 				Name:          name,
 				QualifiedName: qualifiedName,
-				Kind:          strings.ToLower(kind),
+				Kind:          kind,
 				FilePath:      filePath,
 				Params:        params,
 			})
@@ -1069,7 +1062,7 @@ func (indexer *Indexer) writeIncrementalStructural(ctx context.Context, absPath 
 
 	// Incremental: build class map from parseResults, then supplement with existing classes from graph
 	classIDByQualifiedName := buildClassMap(parseResults)
-	existingClasses, _ := indexer.graphStore.QueryAllByKind(ctx, "Class", 0)
+	existingClasses, _ := indexer.graphStore.QueryAllByKind(ctx, constants.KindClass, 0)
 	for _, classNode := range existingClasses {
 		qualifiedName, _ := classNode.Properties["qualified_name"].(string)
 		if qualifiedName != "" {
@@ -1160,7 +1153,7 @@ func buildStructuralData(repoID, repoName, absPath string, files []scanner.Scann
 		for _, symbol := range parseResult.Symbols {
 			sourceKind := constants.SourceKindFile
 			switch symbol.Kind {
-			case constants.KindClass, constants.KindAbstractClass, constants.KindEnum:
+			case constants.KindClass:
 				sourceKind = constants.SourceKindFileClass
 			case constants.KindInterface:
 				sourceKind = constants.SourceKindFileInterface
@@ -1203,8 +1196,7 @@ func buildClassMap(parseResults []model.ParseResult) map[string]string {
 	for _, parseResult := range parseResults {
 		for _, symbol := range parseResult.Symbols {
 			switch symbol.Kind {
-			case constants.KindClass, constants.KindAbstractClass,
-				constants.KindEnum, constants.KindInterface:
+			case constants.KindClass, constants.KindInterface:
 				classIDByQualifiedName[symbol.QualifiedName] = symbol.ID
 			}
 		}
@@ -1239,7 +1231,7 @@ func (indexer *Indexer) writeRouteNodes(ctx context.Context, parseResults []mode
 					SourceID:   handlerID,
 					TargetID:   routeID,
 					Kind:       model.RelHandles,
-					SourceKind: "Function",
+					SourceKind: constants.KindFunction,
 				})
 				result.RelationsByKind["HANDLES"]++
 				result.RelationsCreated++
@@ -1309,7 +1301,7 @@ func propagateFeignRoutes(parseResults []model.ParseResult, symbolTable *resolve
 				handlerID := resolveHandlerFunction(symbolTable, h.ChildName+"."+mr.method, pr.FilePath)
 				if handlerID != "" {
 					*edges = append(*edges, model.Edge{
-						SourceID: handlerID, TargetID: mr.routeID, Kind: model.RelHandles, SourceKind: "Function",
+						SourceID: handlerID, TargetID: mr.routeID, Kind: model.RelHandles, SourceKind: constants.KindFunction,
 					})
 					result.RelationsByKind["HANDLES"]++
 					result.RelationsCreated++
@@ -1379,7 +1371,7 @@ func (indexer *Indexer) writeQueryNodes(ctx context.Context, parseResults []mode
 					SourceID:   callerID,
 					TargetID:   queryID,
 					Kind:       model.RelExecutes,
-					SourceKind: "Function",
+					SourceKind: constants.KindFunction,
 				})
 				result.RelationsByKind["EXECUTES"]++
 				result.RelationsCreated++
@@ -1447,12 +1439,12 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 						"line":      symbol.StartLine,
 					},
 				})
-				sourceKind := "Function"
+				sourceKind := constants.KindFunction
 				switch symbol.Kind {
-				case constants.KindClass, constants.KindAbstractClass, constants.KindEnum:
-					sourceKind = "Class"
+				case constants.KindClass:
+					sourceKind = constants.KindClass
 				case constants.KindInterface:
-					sourceKind = "Interface"
+					sourceKind = constants.KindInterface
 				}
 				edges = append(edges, model.Edge{
 					SourceID:   symbol.ID,
@@ -1497,7 +1489,7 @@ func (indexer *Indexer) writeRemoteCallEdges(ctx context.Context, parseResults [
 			if len(matched) > 0 {
 				edges = append(edges, model.Edge{
 					SourceID: callerID, TargetID: matched[0],
-					Kind: model.RelRemoteCallsRoute, SourceKind: "Function",
+					Kind: model.RelRemoteCallsRoute, SourceKind: constants.KindFunction,
 					Properties: map[string]any{
 						"target_url":     rc.TargetURL,
 						"target_service": rc.TargetService,
@@ -1523,7 +1515,7 @@ func (indexer *Indexer) writeRemoteCallEdges(ctx context.Context, parseResults [
 				}
 				edges = append(edges, model.Edge{
 					SourceID: callerID, TargetID: extID,
-					Kind: model.RelRemoteCallsExt, SourceKind: "Function",
+					Kind: model.RelRemoteCallsExt, SourceKind: constants.KindFunction,
 					Properties: map[string]any{
 						"target_url":     rc.TargetURL,
 						"target_service": rc.TargetService,

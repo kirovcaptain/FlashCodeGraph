@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 )
@@ -49,7 +50,7 @@ func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string
 	var results []model.Node
 	seen := map[string]bool{}
 	for _, annotationID := range matchedAnnotationIDs {
-		for _, sourceKind := range []string{"Class", "Interface", "Function"} {
+		for _, sourceKind := range []string{constants.KindClass, constants.KindInterface, constants.KindFunction} {
 			edges, err := querier.graphStore.QueryEdges(ctx, annotationID, sourceKind, model.RelHasAnnotation, model.Incoming)
 			if err != nil {
 				continue
@@ -110,7 +111,7 @@ func (querier *Querier) resolveAnnotatedNodes(ctx context.Context, annIDs []stri
 	var results []model.Node
 	seen := map[string]bool{}
 	for _, annID := range annIDs {
-		for _, srcKind := range []string{"Class", "Interface", "Function"} {
+		for _, srcKind := range []string{constants.KindClass, constants.KindInterface, constants.KindFunction} {
 			edges, err := querier.graphStore.QueryEdges(ctx, annID, srcKind, model.RelHasAnnotation, model.Incoming)
 			if err != nil {
 				continue
@@ -154,7 +155,7 @@ func (querier *Querier) ResolveFunction(ctx context.Context, name string) (*mode
 		}
 		// Fallback: extract short name, query, then filter by qualified_name
 		shortName := name[strings.LastIndex(name, ".")+1:]
-		nodes, err := querier.graphStore.QueryNodesByName(ctx, shortName, model.QueryOpts{Kinds: []string{"Function"}, Limit: 20})
+		nodes, err := querier.graphStore.QueryNodesByName(ctx, shortName, model.QueryOpts{Kinds: []string{constants.KindFunction}, Limit: 20})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -175,7 +176,7 @@ func (querier *Querier) ResolveFunction(ctx context.Context, name string) (*mode
 	}
 
 	// Short name search
-	nodes, err := querier.graphStore.QueryNodesByName(ctx, name, model.QueryOpts{Kinds: []string{"Function"}, Limit: 10})
+	nodes, err := querier.graphStore.QueryNodesByName(ctx, name, model.QueryOpts{Kinds: []string{constants.KindFunction}, Limit: 10})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -222,7 +223,7 @@ func (querier *Querier) QueryCallChainEx(ctx context.Context, symbolName string,
 		}
 		// Query UNRESOLVED_CALL edges from these nodes
 		for nodeID := range nodeIDs {
-			edges, err := querier.graphStore.QueryEdges(ctx, nodeID, "Function", model.RelUnresolvedCall, direction)
+			edges, err := querier.graphStore.QueryEdges(ctx, nodeID, constants.KindFunction, model.RelUnresolvedCall, direction)
 			if err != nil {
 				continue
 			}
@@ -276,7 +277,7 @@ func (querier *Querier) QueryClassMethods(ctx context.Context, className string,
 	}
 
 	classNodes, err := querier.graphStore.QueryNodesByName(ctx, searchName, model.QueryOpts{
-		Kinds: []string{"Class"},
+		Kinds: []string{constants.KindClass},
 		Limit: 20,
 	})
 	if err != nil {
@@ -421,7 +422,7 @@ func (querier *Querier) Report(ctx context.Context) (*model.GraphReport, error) 
 		EdgeCounts: make(map[string]int),
 	}
 
-	nodeKinds := []string{"Repository", "Directory", "File", "Function", "Class", "Interface", "Route", "QueryNode", "ExternalService"}
+	nodeKinds := []string{"Repository", "Directory", "File", constants.KindFunction, constants.KindClass, constants.KindInterface, "Route", "QueryNode", "ExternalService"}
 	seenIDs := make(map[string]bool)
 	
 
@@ -445,21 +446,21 @@ func (querier *Querier) Report(ctx context.Context) (*model.GraphReport, error) 
 			line := propInt(node.Properties, "start_line")
 
 			// Quality checks
-			if (kind == "Function" || kind == "Class") && fp == "" {
+			if (kind == constants.KindFunction || kind == constants.KindClass) && fp == "" {
 				report.MissingFilePath = append(report.MissingFilePath, node.ID)
 			}
-			if (kind == "Function" || kind == "Class" || kind == "Interface") && name == "" {
+			if (kind == constants.KindFunction || kind == constants.KindClass || kind == constants.KindInterface) && name == "" {
 				report.EmptyNames = append(report.EmptyNames, node.ID)
 			}
 
 			// Symbol details
 			detail := model.SymbolDetail{Name: name, QualifiedName: qname, FilePath: fp, Line: line}
 			switch kind {
-			case "Function":
+			case constants.KindFunction:
 				report.Functions = append(report.Functions, detail)
-			case "Class":
+			case constants.KindClass:
 				report.Classes = append(report.Classes, detail)
-			case "Interface":
+			case constants.KindInterface:
 				report.Interfaces = append(report.Interfaces, detail)
 			case "Route":
 				report.RouteDetails = append(report.RouteDetails, model.RouteDetail{
@@ -545,7 +546,7 @@ func (querier *Querier) QueryRouteChain(ctx context.Context, routePath string, m
 	}
 
 	// Batch-load all data into memory for fast traversal
-	funcs, _ := querier.graphStore.QueryAllByKind(ctx, "Function", 0)
+	funcs, _ := querier.graphStore.QueryAllByKind(ctx, constants.KindFunction, 0)
 	funcMap := make(map[string]*model.Node, len(funcs))
 	for i := range funcs {
 		funcMap[funcs[i].ID] = &funcs[i]
@@ -643,7 +644,7 @@ func (querier *Querier) buildLayerMapBatch(ctx context.Context, funcs []model.No
 
 	annotationEdges, _ := querier.graphStore.QueryAllEdges(ctx, model.RelHasAnnotation, 0)
 	classMap := make(map[string]*model.Node)
-	for _, kind := range []string{"Class", "Interface"} {
+	for _, kind := range []string{constants.KindClass, constants.KindInterface} {
 		nodes, _ := querier.graphStore.QueryAllByKind(ctx, kind, 0)
 		for i := range nodes {
 			classMap[nodes[i].ID] = &nodes[i]

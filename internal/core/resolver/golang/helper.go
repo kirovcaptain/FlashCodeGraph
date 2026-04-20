@@ -181,7 +181,7 @@ func (goHelper *Helper) InferImplements() []model.ResolvedRelation {
 				SourceID:   info.id,
 				TargetID:   ifaceIDs[ifaceQN],
 				Kind:       model.RelImplements,
-				SourceKind: "Class",
+				SourceKind: constants.KindClass,
 				ResolvedBy: "inferred_implements",
 				Confidence: 0.85,
 			})
@@ -192,12 +192,12 @@ func (goHelper *Helper) InferImplements() []model.ResolvedRelation {
 						resolver.CountParams(ifaceMethod.Params) == resolver.CountParams(structMethod.Params) {
 						relations = append(relations, model.ResolvedRelation{
 							SourceID: structMethod.ID, TargetID: ifaceMethod.ID,
-							Kind: model.RelOverrides, SourceKind: "Function",
+							Kind: model.RelOverrides, SourceKind: constants.KindFunction,
 							Confidence: 0.85, ResolvedBy: "inferred_override", Candidates: 1,
 						})
 						relations = append(relations, model.ResolvedRelation{
 							SourceID: ifaceMethod.ID, TargetID: structMethod.ID,
-							Kind: model.RelDispatches, SourceKind: "Function",
+							Kind: model.RelDispatches, SourceKind: constants.KindFunction,
 							Confidence: 0.85, ResolvedBy: "inferred_dispatch", Candidates: 1,
 						})
 					}

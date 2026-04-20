@@ -19,11 +19,11 @@ func TestJavaHelper_LoggerOverload(t *testing.T) {
 	// error(String, Object) vs error(String, Throwable) — should pick Throwable (more specific)
 	table := resolver.NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "err_obj", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "function", FilePath: "LoggerUtil.java", Params: `[{"name":"format","type":"String"},{"name":"arg","type":"Object"}]`},
-		{ID: "err_thr", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "function", FilePath: "LoggerUtil.java", Params: `[{"name":"msg","type":"String"},{"name":"t","type":"Throwable"}]`},
-		{ID: "c_log", Name: "LoggerUtil", QualifiedName: "com.example.LoggerUtil", Kind: "class", FilePath: "LoggerUtil.java"},
-		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "function", FilePath: "Controller.java"},
-		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.example.Controller", Kind: "class", FilePath: "Controller.java"},
+		{ID: "err_obj", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"format","type":"String"},{"name":"arg","type":"Object"}]`},
+		{ID: "err_thr", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"msg","type":"String"},{"name":"t","type":"Throwable"}]`},
+		{ID: "c_log", Name: "LoggerUtil", QualifiedName: "com.example.LoggerUtil", Kind: "Class", FilePath: "LoggerUtil.java"},
+		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
+		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.example.Controller", Kind: "Class", FilePath: "Controller.java"},
 	})
 
 	r := newJavaResolver(table)
@@ -63,11 +63,11 @@ func TestJavaHelper_CatchChainedExpr(t *testing.T) {
 	// Should resolve to error(String, Throwable) via JDK hierarchy
 	table := resolver.NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "err_obj", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "function", FilePath: "LoggerUtil.java", Params: `[{"name":"format","type":"String"},{"name":"arg","type":"Object"}]`},
-		{ID: "err_thr", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "function", FilePath: "LoggerUtil.java", Params: `[{"name":"msg","type":"String"},{"name":"t","type":"Throwable"}]`},
-		{ID: "err_var", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "function", FilePath: "LoggerUtil.java", Params: `[{"name":"format","type":"String"},{"name":"arguments","type":"Object..."}]`},
-		{ID: "logger_cls", Name: "LoggerUtil", QualifiedName: "com.example.LoggerUtil", Kind: "class", FilePath: "LoggerUtil.java"},
-		{ID: "caller1", Name: "zCard", QualifiedName: "com.example.RedisUtil.zCard", Kind: "function", FilePath: "RedisUtil.java"},
+		{ID: "err_obj", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"format","type":"String"},{"name":"arg","type":"Object"}]`},
+		{ID: "err_thr", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"msg","type":"String"},{"name":"t","type":"Throwable"}]`},
+		{ID: "err_var", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"format","type":"String"},{"name":"arguments","type":"Object..."}]`},
+		{ID: "logger_cls", Name: "LoggerUtil", QualifiedName: "com.example.LoggerUtil", Kind: "Class", FilePath: "LoggerUtil.java"},
+		{ID: "caller1", Name: "zCard", QualifiedName: "com.example.RedisUtil.zCard", Kind: "Function", FilePath: "RedisUtil.java"},
 	})
 
 	r := newJavaResolver(table)

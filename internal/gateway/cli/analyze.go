@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/service"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/status"
@@ -135,7 +136,7 @@ func runListEntries(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Read persisted entry_type from Function nodes (written by 'fcg analyze')
-	funcs, err := store.QueryAllByKind(ctx, "Function", 0)
+	funcs, err := store.QueryAllByKind(ctx, constants.KindFunction, 0)
 	if err != nil {
 		return err
 	}

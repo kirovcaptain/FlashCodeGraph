@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 )
@@ -123,7 +124,7 @@ func (analyzer *Analyzer) BuildCallForest(ctx context.Context) (*CallForest, err
 	}
 
 	// Preload all Function nodes for fast lookup in traceDFS
-	funcs, err := analyzer.graphStore.QueryAllByKind(ctx, "Function", 0)
+	funcs, err := analyzer.graphStore.QueryAllByKind(ctx, constants.KindFunction, 0)
 	if err == nil {
 		for _, f := range funcs {
 			forest.Nodes[f.ID] = f
@@ -157,7 +158,7 @@ func (analyzer *Analyzer) ClassifyRoots(ctx context.Context, forest *CallForest)
 	}
 
 	// Build set of @RestController class names
-	allClasses, _ := analyzer.graphStore.QueryAllByKind(ctx, "Class", 0)
+	allClasses, _ := analyzer.graphStore.QueryAllByKind(ctx, constants.KindClass, 0)
 	restControllerClasses := make(map[string]bool)
 	for _, cls := range allClasses {
 		anns, _ := cls.Properties["annotations"].(string)
@@ -243,7 +244,7 @@ func (analyzer *Analyzer) ClassifyRoots(ctx context.Context, forest *CallForest)
 		if !ok {
 			continue
 		}
-		if node.Kind != "Function" {
+		if node.Kind != constants.KindFunction {
 			continue
 		}
 
@@ -339,7 +340,7 @@ func (analyzer *Analyzer) BuildLayerMap(ctx context.Context) map[string]string {
 	// Batch-load all classes/interfaces for file_path lookup
 	fileLayerMap := map[string]string{}
 	classMap := make(map[string]*model.Node)
-	for _, kind := range []string{"Class", "Interface"} {
+	for _, kind := range []string{constants.KindClass, constants.KindInterface} {
 		nodes, _ := analyzer.graphStore.QueryAllByKind(ctx, kind, 0)
 		for i := range nodes {
 			classMap[nodes[i].ID] = &nodes[i]
@@ -362,7 +363,7 @@ func (analyzer *Analyzer) BuildLayerMap(ctx context.Context) map[string]string {
 
 	// Propagate layer to all functions in the same file
 	if len(fileLayerMap) > 0 {
-		funcs, _ := analyzer.graphStore.QueryAllByKind(ctx, "Function", 0)
+		funcs, _ := analyzer.graphStore.QueryAllByKind(ctx, constants.KindFunction, 0)
 		for _, fn := range funcs {
 			if _, exists := m[fn.ID]; exists {
 				continue
@@ -434,7 +435,7 @@ func (analyzer *Analyzer) WriteEntryPoints(ctx context.Context, entries []EntryP
 			},
 		})
 	}
-	return analyzer.graphStore.BatchUpdateNodeProperties(ctx, "Function", updates)
+	return analyzer.graphStore.BatchUpdateNodeProperties(ctx, constants.KindFunction, updates)
 }
 
 // ClearAnalysisData removes old Process nodes and STEP edges.

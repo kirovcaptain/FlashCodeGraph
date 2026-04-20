@@ -11,6 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/service"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/status"
@@ -518,9 +519,9 @@ func (srv *Server) handleQueryDependencies(ctx context.Context, request mcp.Call
 	var queryKinds []string
 	switch relKind {
 	case model.RelCalls:
-		queryKinds = []string{"Function"}
+		queryKinds = []string{constants.KindFunction}
 	case model.RelImports, model.RelExtends, model.RelImplements:
-		queryKinds = []string{"Class", "Interface"}
+		queryKinds = []string{constants.KindClass, constants.KindInterface}
 	}
 	nodes, err := querier.QuerySymbol(ctx, symbolName, model.QueryOpts{Kinds: queryKinds, Limit: 10})
 	if err != nil {
@@ -698,7 +699,7 @@ func (srv *Server) handleQueryEntryPoints(ctx context.Context, request mcp.CallT
 	}
 	defer store.Close()
 
-	nodes, err := store.QueryAllByKind(ctx, "Function", 0)
+	nodes, err := store.QueryAllByKind(ctx, constants.KindFunction, 0)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -751,7 +752,7 @@ func (srv *Server) handleQueryCallForest(ctx context.Context, request mcp.CallTo
 	}
 
 	// Read persisted entry points instead of re-classifying
-	funcs, err := store.QueryAllByKind(ctx, "Function", 0)
+	funcs, err := store.QueryAllByKind(ctx, constants.KindFunction, 0)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

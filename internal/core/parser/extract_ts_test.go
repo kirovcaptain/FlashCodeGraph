@@ -50,13 +50,13 @@ const arrow = (x: number) => x * 2;
 	classCount := 0
 	funcCount := 0
 	for _, symbol := range result.Symbols {
-		if symbol.Kind == "class" {
+		if symbol.Kind == "Class" {
 			classCount++
 			if symbol.Name != "UserService" {
 				t.Fatalf("expected UserService, got %s", symbol.Name)
 			}
 		}
-		if symbol.Kind == "function" {
+		if symbol.Kind == "Function" {
 			funcCount++
 		}
 	}
@@ -142,7 +142,7 @@ module.exports = UserController;
 
 	classCount := 0
 	for _, symbol := range result.Symbols {
-		if symbol.Kind == "class" {
+		if symbol.Kind == "Class" {
 			classCount++
 		}
 	}

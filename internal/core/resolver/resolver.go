@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/typeinfer"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
@@ -114,7 +115,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 	// Filter to functions only
 	var funcCandidates []model.Symbol
 	for _, candidate := range candidates {
-		if candidate.Kind == "function" || candidate.Kind == "class" {
+		if candidate.Kind == constants.KindFunction || candidate.Kind == constants.KindClass {
 			funcCandidates = append(funcCandidates, candidate)
 		}
 	}
@@ -142,7 +143,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 							externalID := "external:" + fqn
 							resolver.symbolTable.AddBatch([]model.Symbol{{
 								ID: externalID, Name: call.CalledName,
-								QualifiedName: fqn, Kind: "function", FilePath: "[external]",
+								QualifiedName: fqn, Kind: constants.KindFunction, FilePath: "[external]",
 							}})
 							return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
 						}
@@ -185,7 +186,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 						relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)
 						relation.Metadata["declared_type"] = receiverType
 						receiverSymbol := resolver.findClassSymbol(receiverType)
-						if receiverSymbol != nil && (receiverSymbol.Kind == "interface" || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
+						if receiverSymbol != nil && (receiverSymbol.Kind == constants.KindInterface || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
 							relation.Metadata["polymorphic"] = "true"
 						}
 						return []model.ResolvedRelation{relation}, nil
@@ -230,7 +231,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 				externalID := "external:" + externalQN
 				resolver.symbolTable.AddBatch([]model.Symbol{{
 					ID: externalID, Name: call.CalledName,
-					QualifiedName: externalQN, Kind: "function", FilePath: "[external]",
+					QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
 				}})
 				return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
 			}
@@ -243,7 +244,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 						externalID := "external:" + externalQN
 						resolver.symbolTable.AddBatch([]model.Symbol{{
 							ID: externalID, Name: call.CalledName,
-							QualifiedName: externalQN, Kind: "function", FilePath: "[external]",
+							QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
 						}})
 						return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
 					}
@@ -256,7 +257,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 				// Extract current file's package from its symbols
 				callerPkg := ""
 				for _, sym := range resolver.symbolTable.FindByFile(call.FilePath) {
-					if sym.Kind != "class" && sym.Kind != "interface" && sym.Kind != "abstract_class" {
+					if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
 						continue
 					}
 					if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
@@ -266,7 +267,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 				}
 
 				for _, sym := range resolver.symbolTable.FindByName(receiverType) {
-					if sym.Kind != "class" && sym.Kind != "interface" && sym.Kind != "abstract_class" {
+					if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
 						continue
 					}
 					// Same package — no import needed
@@ -309,7 +310,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 						externalID := "external:" + externalQN
 						resolver.symbolTable.AddBatch([]model.Symbol{{
 							ID: externalID, Name: call.CalledName,
-							QualifiedName: externalQN, Kind: "function", FilePath: "[external]",
+							QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
 						}})
 						return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
 					}
@@ -490,7 +491,7 @@ func (resolver *Resolver) resolveImportedCall(call model.RawCall, envs map[strin
 			relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "import_hierarchy", 1)
 			relation.Metadata["declared_type"] = receiverFQN
 			receiverSymbol := resolver.findClassSymbol(receiverFQN)
-			if receiverSymbol != nil && (receiverSymbol.Kind == "interface" || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
+			if receiverSymbol != nil && (receiverSymbol.Kind == constants.KindInterface || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
 				relation.Metadata["polymorphic"] = "true"
 			}
 			return []model.ResolvedRelation{relation}, true
@@ -504,7 +505,7 @@ func (resolver *Resolver) resolveImportedCall(call model.RawCall, envs map[strin
 		ID:            externalID,
 		Name:          call.CalledName,
 		QualifiedName: externalQN,
-		Kind:          "function",
+		Kind:          constants.KindFunction,
 		FilePath:      "[external]",
 	}})
 	return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, true
@@ -604,7 +605,7 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 			}
 			// Short name → fully qualified name lookup (Go/Java baseType is short name)
 			for _, candidate := range resolver.symbolTable.FindByName(baseType) {
-				if candidate.Kind == "class" || candidate.Kind == "abstract_class" ||
+				if candidate.Kind == constants.KindClass || candidate.Kind == "abstract_class" ||
 					candidate.Kind == "interface" || candidate.ClassType == "struct" {
 					qualifiedKey := candidate.QualifiedName + ":" + methodName
 					if info, exists := env.Bindings[qualifiedKey]; exists {
@@ -619,7 +620,7 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 	// Method call: find return type in SymbolTable
 	candidates := resolver.symbolTable.FindByName(methodName)
 	for _, candidate := range candidates {
-		if candidate.Kind == "function" && strings.Contains(candidate.QualifiedName, typeSeg+".") && len(candidate.ReturnTypes) > 0 {
+		if candidate.Kind == constants.KindFunction && strings.Contains(candidate.QualifiedName, typeSeg+".") && len(candidate.ReturnTypes) > 0 {
 			retType := candidate.ReturnTypes[0]
 			retType = resolver.substituteGenericParam(retType, baseType, baseExpr, call, envs)
 			return retType
@@ -722,7 +723,7 @@ func (resolver *Resolver) isProjectClass(typeName string) bool {
 func (resolver *Resolver) findClassSymbol(typeName string) *model.Symbol {
 	candidates := resolver.symbolTable.FindByName(typeName)
 	for _, candidate := range candidates {
-		if candidate.Kind == "class" || candidate.Kind == "abstract_class" ||
+		if candidate.Kind == constants.KindClass || candidate.Kind == "abstract_class" ||
 			candidate.Kind == "interface" || candidate.ClassType == "struct" {
 			matched := candidate
 			return &matched
@@ -731,7 +732,7 @@ func (resolver *Resolver) findClassSymbol(typeName string) *model.Symbol {
 	if strings.Contains(typeName, ".") {
 		candidates = resolver.symbolTable.FindByQualifiedName(typeName)
 		for _, candidate := range candidates {
-			if candidate.Kind == "class" || candidate.Kind == "abstract_class" ||
+			if candidate.Kind == constants.KindClass || candidate.Kind == "abstract_class" ||
 				candidate.Kind == "interface" || candidate.ClassType == "struct" {
 				matched := candidate
 				return &matched
@@ -745,7 +746,7 @@ func (resolver *Resolver) findCallerID(call model.RawCall) string {
 	candidates := resolver.symbolTable.FindByName(lastSegment(call.CallerName))
 	var fallback string
 	for _, candidate := range candidates {
-		if candidate.FilePath == call.FilePath && candidate.Kind == "function" {
+		if candidate.FilePath == call.FilePath && candidate.Kind == constants.KindFunction {
 			if fallback == "" {
 				fallback = candidate.ID
 			}
@@ -914,7 +915,7 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 		methodName := expr[:strings.Index(expr, "(")]
 		candidates := resolver.symbolTable.FindByName(methodName)
 		for _, candidate := range candidates {
-			if candidate.Kind == "function" && candidate.FilePath == call.FilePath && len(candidate.ReturnTypes) > 0 {
+			if candidate.Kind == constants.KindFunction && candidate.FilePath == call.FilePath && len(candidate.ReturnTypes) > 0 {
 				return extractSimpleType(candidate.ReturnTypes[0])
 			}
 		}
@@ -937,7 +938,7 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 				// Lookup method return type on objType
 				candidates := resolver.symbolTable.FindByName(methodName)
 				for _, candidate := range candidates {
-					if candidate.Kind == "function" && strings.Contains(candidate.QualifiedName, objType+".") && len(candidate.ReturnTypes) > 0 {
+					if candidate.Kind == constants.KindFunction && strings.Contains(candidate.QualifiedName, objType+".") && len(candidate.ReturnTypes) > 0 {
 						return extractSimpleType(candidate.ReturnTypes[0])
 					}
 				}

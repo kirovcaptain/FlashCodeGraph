@@ -37,10 +37,10 @@ func TestExtract_ClassAndMethods(t *testing.T) {
 		names[sym.Name] = sym.Kind
 	}
 
-	if names["UserService"] != "class" {
+	if names["UserService"] != "Class" {
 		t.Fatalf("UserService expected class, got %s", names["UserService"])
 	}
-	if names["findById"] != "function" {
+	if names["findById"] != "Function" {
 		t.Fatalf("findById expected function, got %s", names["findById"])
 	}
 	t.Logf("✅ TS Extract: class + methods, %d symbols", len(result.Symbols))

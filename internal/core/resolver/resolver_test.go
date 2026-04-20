@@ -80,7 +80,7 @@ func (h *testJavaHelper) ResolveSuperCall(call model.RawCall, funcCandidates []m
 			env := envs[call.FilePath]
 			callerPkg := ""
 			for _, cs := range h.symbolTable.FindByFile(call.FilePath) {
-				if cs.Kind == "class" || cs.Kind == "interface" || cs.Kind == "abstract_class" {
+				if cs.Kind == "Class" || cs.Kind == "Interface" || cs.Kind == "abstract_class" {
 					if idx := strings.LastIndex(cs.QualifiedName, "."+cs.Name); idx > 0 {
 						callerPkg = cs.QualifiedName[:idx]
 						break
@@ -88,7 +88,7 @@ func (h *testJavaHelper) ResolveSuperCall(call model.RawCall, funcCandidates []m
 				}
 			}
 			for _, sym := range h.symbolTable.FindByName(parentName) {
-				if sym.Kind != "class" && sym.Kind != "abstract_class" {
+				if sym.Kind != "Class" && sym.Kind != "abstract_class" {
 					continue
 				}
 				symPkg := ""
@@ -148,7 +148,7 @@ func (h *testJavaHelper) NarrowByScope(matched []model.Symbol, call model.RawCal
 	}
 	callerPkg := ""
 	for _, cs := range symbolTable.FindByFile(call.FilePath) {
-		if cs.Kind != "class" && cs.Kind != "interface" && cs.Kind != "abstract_class" {
+		if cs.Kind != "Class" && cs.Kind != "Interface" && cs.Kind != "abstract_class" {
 			continue
 		}
 		if idx := strings.LastIndex(cs.QualifiedName, "."+cs.Name); idx > 0 {
@@ -218,12 +218,12 @@ func (h *testJavaHelper) InferImplements() []model.ResolvedRelation { return nil
 func buildTestTable() *SymbolTable {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "f1", Name: "findById", QualifiedName: "com.example.UserService.findById", Kind: "function", FilePath: "service.go", Params: `[{"name":"id","type":"int"}]`},
-		{ID: "f2", Name: "findById", QualifiedName: "com.example.OrderService.findById", Kind: "function", FilePath: "order.go", Params: `[{"name":"id","type":"int"}]`},
-		{ID: "f3", Name: "findById", QualifiedName: "com.example.AdminService.findById", Kind: "function", FilePath: "admin.go", Params: `[{"name":"id","type":"int"},{"name":"role","type":"string"}]`},
-		{ID: "f4", Name: "helper", QualifiedName: "com.example.utils.helper", Kind: "function", FilePath: "utils.go", Params: `[{"name":"x"}]`},
-		{ID: "c1", Name: "UserService", QualifiedName: "com.example.UserService", Kind: "class", FilePath: "service.go"},
-		{ID: "c2", Name: "OrderService", QualifiedName: "com.example.OrderService", Kind: "class", FilePath: "order.go"},
+		{ID: "f1", Name: "findById", QualifiedName: "com.example.UserService.findById", Kind: "Function", FilePath: "service.go", Params: `[{"name":"id","type":"int"}]`},
+		{ID: "f2", Name: "findById", QualifiedName: "com.example.OrderService.findById", Kind: "Function", FilePath: "order.go", Params: `[{"name":"id","type":"int"}]`},
+		{ID: "f3", Name: "findById", QualifiedName: "com.example.AdminService.findById", Kind: "Function", FilePath: "admin.go", Params: `[{"name":"id","type":"int"},{"name":"role","type":"string"}]`},
+		{ID: "f4", Name: "helper", QualifiedName: "com.example.utils.helper", Kind: "Function", FilePath: "utils.go", Params: `[{"name":"x"}]`},
+		{ID: "c1", Name: "UserService", QualifiedName: "com.example.UserService", Kind: "Class", FilePath: "service.go"},
+		{ID: "c2", Name: "OrderService", QualifiedName: "com.example.OrderService", Kind: "Class", FilePath: "order.go"},
 	})
 	return table
 }
@@ -385,8 +385,8 @@ func TestResolveHeritage(t *testing.T) {
 func TestResolveCalls_SelfReceiver(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "m1", Name: "save", QualifiedName: "UserService.save", Kind: "function", FilePath: "service.py"},
-		{ID: "m2", Name: "findById", QualifiedName: "UserService.findById", Kind: "function", FilePath: "service.py"},
+		{ID: "m1", Name: "save", QualifiedName: "UserService.save", Kind: "Function", FilePath: "service.py"},
+		{ID: "m2", Name: "findById", QualifiedName: "UserService.findById", Kind: "Function", FilePath: "service.py"},
 	})
 	resolver := newTestResolver(table)
 
@@ -533,10 +533,10 @@ func TestCountParams_NoFalseCount(t *testing.T) {
 func TestResolveCalls_TypeParent(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "caller", Name: "process", QualifiedName: "main.process", Kind: "function", FilePath: "main.go"},
+		{ID: "caller", Name: "process", QualifiedName: "main.process", Kind: "Function", FilePath: "main.go"},
 		// Two "run" methods in different classes
-		{ID: "dog_run", Name: "run", QualifiedName: "Dog.run", Kind: "function", FilePath: "dog.go", ClassType: "Dog"},
-		{ID: "cat_run", Name: "run", QualifiedName: "Cat.run", Kind: "function", FilePath: "cat.go", ClassType: "Cat"},
+		{ID: "dog_run", Name: "run", QualifiedName: "Dog.run", Kind: "Function", FilePath: "dog.go", ClassType: "Dog"},
+		{ID: "cat_run", Name: "run", QualifiedName: "Cat.run", Kind: "Function", FilePath: "cat.go", ClassType: "Cat"},
 	})
 	resolver := newTestResolver(table)
 
@@ -564,10 +564,10 @@ func TestResolveCalls_TypeParent(t *testing.T) {
 func TestResolveCalls_TypeMulti(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "caller", Name: "process", QualifiedName: "main.process", Kind: "function", FilePath: "main.go"},
+		{ID: "caller", Name: "process", QualifiedName: "main.process", Kind: "Function", FilePath: "main.go"},
 		// Two "run" methods both in Animal class (overloaded)
-		{ID: "run1", Name: "run", QualifiedName: "Animal.run", Kind: "function", FilePath: "animal.go", ClassType: "Animal"},
-		{ID: "run2", Name: "run", QualifiedName: "Animal.run2", Kind: "function", FilePath: "animal.go", ClassType: "Animal"},
+		{ID: "run1", Name: "run", QualifiedName: "Animal.run", Kind: "Function", FilePath: "animal.go", ClassType: "Animal"},
+		{ID: "run2", Name: "run", QualifiedName: "Animal.run2", Kind: "Function", FilePath: "animal.go", ClassType: "Animal"},
 	})
 	resolver := newTestResolver(table)
 
@@ -595,8 +595,8 @@ func TestResolveCalls_TypeMulti(t *testing.T) {
 func TestResolveHeritage_UniqueParentHighConfidence(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "child", Name: "Dog", Kind: "class", FilePath: "dog.py"},
-		{ID: "parent", Name: "Animal", Kind: "class", FilePath: "animal.py"},
+		{ID: "child", Name: "Dog", Kind: "Class", FilePath: "dog.py"},
+		{ID: "parent", Name: "Animal", Kind: "Class", FilePath: "animal.py"},
 	})
 	resolver := newTestResolver(table)
 
@@ -621,10 +621,10 @@ func TestResolveHeritage_UniqueParentHighConfidence(t *testing.T) {
 func TestResolveHeritage_MultipleParentCandidatesLowerConfidence(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "child", Name: "Dog", Kind: "class", FilePath: "dog.py"},
+		{ID: "child", Name: "Dog", Kind: "Class", FilePath: "dog.py"},
 		// Two classes named "Animal" in different files
-		{ID: "parent1", Name: "Animal", Kind: "class", FilePath: "animal_v1.py"},
-		{ID: "parent2", Name: "Animal", Kind: "class", FilePath: "animal_v2.py"},
+		{ID: "parent1", Name: "Animal", Kind: "Class", FilePath: "animal_v1.py"},
+		{ID: "parent2", Name: "Animal", Kind: "Class", FilePath: "animal_v2.py"},
 	})
 	resolver := newTestResolver(table)
 
@@ -646,8 +646,8 @@ func TestResolveHeritage_MultipleParentCandidatesLowerConfidence(t *testing.T) {
 func TestResolveHeritage_ImplementsKind(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "child", Name: "UserService", Kind: "class", FilePath: "svc.java"},
-		{ID: "parent", Name: "Serializable", Kind: "interface", FilePath: "serial.java"},
+		{ID: "child", Name: "UserService", Kind: "Class", FilePath: "svc.java"},
+		{ID: "parent", Name: "Serializable", Kind: "Interface", FilePath: "serial.java"},
 	})
 	resolver := newTestResolver(table)
 
@@ -670,12 +670,12 @@ func TestResolveCall_TypeHierarchy(t *testing.T) {
 	// Calling dao.save() where dao is UserDao should resolve to BaseRepository.save via hierarchy
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_class", Name: "BaseRepository", QualifiedName: "com.example.BaseRepository", Kind: "class", FilePath: "base.java"},
-		{ID: "base_save", Name: "save", QualifiedName: "com.example.BaseRepository.save", Kind: "function", FilePath: "base.java"},
-		{ID: "dao_class", Name: "UserDao", QualifiedName: "com.example.UserDao", Kind: "class", FilePath: "dao.java"},
-		{ID: "dao_find", Name: "findById", QualifiedName: "com.example.UserDao.findById", Kind: "function", FilePath: "dao.java"},
-		{ID: "other_save", Name: "save", QualifiedName: "com.example.OtherService.save", Kind: "function", FilePath: "other.java"},
-		{ID: "caller", Name: "createUser", QualifiedName: "com.example.UserService.createUser", Kind: "function", FilePath: "service.java"},
+		{ID: "base_class", Name: "BaseRepository", QualifiedName: "com.example.BaseRepository", Kind: "Class", FilePath: "base.java"},
+		{ID: "base_save", Name: "save", QualifiedName: "com.example.BaseRepository.save", Kind: "Function", FilePath: "base.java"},
+		{ID: "dao_class", Name: "UserDao", QualifiedName: "com.example.UserDao", Kind: "Class", FilePath: "dao.java"},
+		{ID: "dao_find", Name: "findById", QualifiedName: "com.example.UserDao.findById", Kind: "Function", FilePath: "dao.java"},
+		{ID: "other_save", Name: "save", QualifiedName: "com.example.OtherService.save", Kind: "Function", FilePath: "other.java"},
+		{ID: "caller", Name: "createUser", QualifiedName: "com.example.UserService.createUser", Kind: "Function", FilePath: "service.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -708,11 +708,11 @@ func TestResolveCall_TypeHierarchy_DirectMatchTakesPriority(t *testing.T) {
 	// If UserDao has its own save(), should resolve to it directly (type_exact), not walk hierarchy
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_class", Name: "BaseRepository", QualifiedName: "com.example.BaseRepository", Kind: "class", FilePath: "base.java"},
-		{ID: "base_save", Name: "save", QualifiedName: "com.example.BaseRepository.save", Kind: "function", FilePath: "base.java"},
-		{ID: "dao_class", Name: "UserDao", QualifiedName: "com.example.UserDao", Kind: "class", FilePath: "dao.java"},
-		{ID: "dao_save", Name: "save", QualifiedName: "com.example.UserDao.save", Kind: "function", FilePath: "dao.java"},
-		{ID: "caller", Name: "createUser", QualifiedName: "com.example.UserService.createUser", Kind: "function", FilePath: "service.java"},
+		{ID: "base_class", Name: "BaseRepository", QualifiedName: "com.example.BaseRepository", Kind: "Class", FilePath: "base.java"},
+		{ID: "base_save", Name: "save", QualifiedName: "com.example.BaseRepository.save", Kind: "Function", FilePath: "base.java"},
+		{ID: "dao_class", Name: "UserDao", QualifiedName: "com.example.UserDao", Kind: "Class", FilePath: "dao.java"},
+		{ID: "dao_save", Name: "save", QualifiedName: "com.example.UserDao.save", Kind: "Function", FilePath: "dao.java"},
+		{ID: "caller", Name: "createUser", QualifiedName: "com.example.UserService.createUser", Kind: "Function", FilePath: "service.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -746,9 +746,9 @@ func TestResolveCall_TypeHierarchy_NoHeritageFallback(t *testing.T) {
 	// and no import match — should return nil (treated as external), not best_guess
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_save", Name: "save", QualifiedName: "com.example.BaseRepository.save", Kind: "function", FilePath: "base.java"},
-		{ID: "other_save", Name: "save", QualifiedName: "com.example.OtherService.save", Kind: "function", FilePath: "other.java"},
-		{ID: "caller", Name: "createUser", QualifiedName: "com.example.UserService.createUser", Kind: "function", FilePath: "service.java"},
+		{ID: "base_save", Name: "save", QualifiedName: "com.example.BaseRepository.save", Kind: "Function", FilePath: "base.java"},
+		{ID: "other_save", Name: "save", QualifiedName: "com.example.OtherService.save", Kind: "Function", FilePath: "other.java"},
+		{ID: "caller", Name: "createUser", QualifiedName: "com.example.UserService.createUser", Kind: "Function", FilePath: "service.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -774,8 +774,8 @@ func TestResolveCall_ClassScopeFieldType(t *testing.T) {
 	// Method calls orderClient.getOrder() — should resolve via class-level scope
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "oc_getOrder", Name: "getOrder", QualifiedName: "OrderClient.getOrder", Kind: "function", FilePath: "client.java"},
-		{ID: "ctrl_getOrder", Name: "getOrder", QualifiedName: "OrderController.getOrder", Kind: "function", FilePath: "controller.java"},
+		{ID: "oc_getOrder", Name: "getOrder", QualifiedName: "OrderClient.getOrder", Kind: "Function", FilePath: "client.java"},
+		{ID: "ctrl_getOrder", Name: "getOrder", QualifiedName: "OrderController.getOrder", Kind: "Function", FilePath: "controller.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -846,14 +846,14 @@ func TestResolveCalls_TypeSameFile(t *testing.T) {
 	// plus the interface method. Caller is in falkor/store.go.
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "iface-tc", Name: "TraverseCallChain", QualifiedName: "storage.GraphStore.TraverseCallChain", Kind: "function", FilePath: "storage/storage.go",
+		{ID: "iface-tc", Name: "TraverseCallChain", QualifiedName: "storage.GraphStore.TraverseCallChain", Kind: "Function", FilePath: "storage/storage.go",
 			Params: `[{"name":"ctx","type":"context.Context"},{"name":"nodeID","type":"string"},{"name":"depth","type":"int"},{"name":"dir","type":"Direction"},{"name":"minConf","type":"float64"}]`},
-		{ID: "falkor-tc", Name: "TraverseCallChain", QualifiedName: "falkor.Store.TraverseCallChain", Kind: "function", FilePath: "storage/falkor/store.go",
+		{ID: "falkor-tc", Name: "TraverseCallChain", QualifiedName: "falkor.Store.TraverseCallChain", Kind: "Function", FilePath: "storage/falkor/store.go",
 			Params: `[{"name":"ctx","type":"context.Context"},{"name":"nodeID","type":"string"},{"name":"depth","type":"int"},{"name":"dir","type":"Direction"},{"name":"minConf","type":"float64"}]`},
-		{ID: "kuzu-tc", Name: "TraverseCallChain", QualifiedName: "kuzu.Store.TraverseCallChain", Kind: "function", FilePath: "storage/kuzu/store.go",
+		{ID: "kuzu-tc", Name: "TraverseCallChain", QualifiedName: "kuzu.Store.TraverseCallChain", Kind: "Function", FilePath: "storage/kuzu/store.go",
 			Params: `[{"name":"ctx","type":"context.Context"},{"name":"nodeID","type":"string"},{"name":"depth","type":"int"},{"name":"dir","type":"Direction"},{"name":"minConf","type":"float64"}]`},
 		// Caller
-		{ID: "falkor-ti", Name: "TraverseImpact", QualifiedName: "falkor.Store.TraverseImpact", Kind: "function", FilePath: "storage/falkor/store.go"},
+		{ID: "falkor-ti", Name: "TraverseImpact", QualifiedName: "falkor.Store.TraverseImpact", Kind: "Function", FilePath: "storage/falkor/store.go"},
 	})
 
 	resolver := newTestResolver(table)
@@ -895,10 +895,10 @@ func TestResolveCalls_ExternalViaReceiverType(t *testing.T) {
 	// Should create external node via import match, not produce N best_guess edges
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "f1", Name: "get", QualifiedName: "com.example.DaoA.get", Kind: "function", FilePath: "DaoA.java", Params: `[{"name":"sql","type":"String"}]`},
-		{ID: "f2", Name: "get", QualifiedName: "com.example.DaoB.get", Kind: "function", FilePath: "DaoB.java", Params: `[{"name":"sql","type":"String"}]`},
-		{ID: "f3", Name: "get", QualifiedName: "com.example.DaoC.get", Kind: "function", FilePath: "DaoC.java", Params: `[{"name":"sql","type":"String"}]`},
-		{ID: "caller1", Name: "refresh", QualifiedName: "com.example.Service.refresh", Kind: "function", FilePath: "Service.java"},
+		{ID: "f1", Name: "get", QualifiedName: "com.example.DaoA.get", Kind: "Function", FilePath: "DaoA.java", Params: `[{"name":"sql","type":"String"}]`},
+		{ID: "f2", Name: "get", QualifiedName: "com.example.DaoB.get", Kind: "Function", FilePath: "DaoB.java", Params: `[{"name":"sql","type":"String"}]`},
+		{ID: "f3", Name: "get", QualifiedName: "com.example.DaoC.get", Kind: "Function", FilePath: "DaoC.java", Params: `[{"name":"sql","type":"String"}]`},
+		{ID: "caller1", Name: "refresh", QualifiedName: "com.example.Service.refresh", Kind: "Function", FilePath: "Service.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -939,9 +939,9 @@ func TestResolveCalls_ReceiverTypeKnown_NoImport_ReturnNil(t *testing.T) {
 	// Should return nil, not best_guess
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "f1", Name: "length", QualifiedName: "com.example.Rope.length", Kind: "function", FilePath: "Rope.java"},
-		{ID: "f2", Name: "length", QualifiedName: "com.example.Cable.length", Kind: "function", FilePath: "Cable.java"},
-		{ID: "caller1", Name: "test", QualifiedName: "com.example.App.test", Kind: "function", FilePath: "App.java"},
+		{ID: "f1", Name: "length", QualifiedName: "com.example.Rope.length", Kind: "Function", FilePath: "Rope.java"},
+		{ID: "f2", Name: "length", QualifiedName: "com.example.Cable.length", Kind: "Function", FilePath: "Cable.java"},
+		{ID: "caller1", Name: "test", QualifiedName: "com.example.App.test", Kind: "Function", FilePath: "App.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -973,10 +973,10 @@ func TestResolveCalls_WildcardImport(t *testing.T) {
 	// req.getRules() where req type is UpdateRequest, imported via com.example.request.*
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "f1", Name: "getRules", QualifiedName: "com.example.request.UpdateRequest.getRules", Kind: "function", FilePath: "UpdateRequest.java"},
-		{ID: "c1", Name: "UpdateRequest", QualifiedName: "com.example.request.UpdateRequest", Kind: "class", FilePath: "UpdateRequest.java"},
-		{ID: "caller1", Name: "handle", QualifiedName: "com.example.service.Handler.handle", Kind: "function", FilePath: "Handler.java"},
-		{ID: "cc1", Name: "Handler", QualifiedName: "com.example.service.Handler", Kind: "class", FilePath: "Handler.java"},
+		{ID: "f1", Name: "getRules", QualifiedName: "com.example.request.UpdateRequest.getRules", Kind: "Function", FilePath: "UpdateRequest.java"},
+		{ID: "c1", Name: "UpdateRequest", QualifiedName: "com.example.request.UpdateRequest", Kind: "Class", FilePath: "UpdateRequest.java"},
+		{ID: "caller1", Name: "handle", QualifiedName: "com.example.service.Handler.handle", Kind: "Function", FilePath: "Handler.java"},
+		{ID: "cc1", Name: "Handler", QualifiedName: "com.example.service.Handler", Kind: "Class", FilePath: "Handler.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1016,10 +1016,10 @@ func TestResolveCalls_SamePackageNoImport(t *testing.T) {
 	// Same package class — no import needed
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "f1", Name: "query", QualifiedName: "com.example.service.ReportDao.query", Kind: "function", FilePath: "ReportDao.java"},
-		{ID: "c1", Name: "ReportDao", QualifiedName: "com.example.service.ReportDao", Kind: "class", FilePath: "ReportDao.java"},
-		{ID: "caller1", Name: "generate", QualifiedName: "com.example.service.ReportService.generate", Kind: "function", FilePath: "ReportService.java"},
-		{ID: "cc1", Name: "ReportService", QualifiedName: "com.example.service.ReportService", Kind: "class", FilePath: "ReportService.java"},
+		{ID: "f1", Name: "query", QualifiedName: "com.example.service.ReportDao.query", Kind: "Function", FilePath: "ReportDao.java"},
+		{ID: "c1", Name: "ReportDao", QualifiedName: "com.example.service.ReportDao", Kind: "Class", FilePath: "ReportDao.java"},
+		{ID: "caller1", Name: "generate", QualifiedName: "com.example.service.ReportService.generate", Kind: "Function", FilePath: "ReportService.java"},
+		{ID: "cc1", Name: "ReportService", QualifiedName: "com.example.service.ReportService", Kind: "Class", FilePath: "ReportService.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1057,12 +1057,12 @@ func TestResolveCalls_SuperCall(t *testing.T) {
 	// super.get() in ChildDao extends BaseDao — should resolve to BaseDao.get via heritage
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_get", Name: "get", QualifiedName: "com.example.dao.BaseDao.get", Kind: "function", FilePath: "BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "other_get", Name: "get", QualifiedName: "com.other.OtherDao.get", Kind: "function", FilePath: "OtherDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "caller1", Name: "getById", QualifiedName: "com.example.dao.ChildDao.getById", Kind: "function", FilePath: "ChildDao.java"},
-		{ID: "c_child", Name: "ChildDao", QualifiedName: "com.example.dao.ChildDao", Kind: "class", FilePath: "ChildDao.java"},
-		{ID: "c_base", Name: "BaseDao", QualifiedName: "com.example.dao.BaseDao", Kind: "class", FilePath: "BaseDao.java"},
-		{ID: "c_other", Name: "BaseDao", QualifiedName: "com.other.BaseDao", Kind: "class", FilePath: "OtherBaseDao.java"},
+		{ID: "base_get", Name: "get", QualifiedName: "com.example.dao.BaseDao.get", Kind: "Function", FilePath: "BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "other_get", Name: "get", QualifiedName: "com.other.OtherDao.get", Kind: "Function", FilePath: "OtherDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "caller1", Name: "getById", QualifiedName: "com.example.dao.ChildDao.getById", Kind: "Function", FilePath: "ChildDao.java"},
+		{ID: "c_child", Name: "ChildDao", QualifiedName: "com.example.dao.ChildDao", Kind: "Class", FilePath: "ChildDao.java"},
+		{ID: "c_base", Name: "BaseDao", QualifiedName: "com.example.dao.BaseDao", Kind: "Class", FilePath: "BaseDao.java"},
+		{ID: "c_other", Name: "BaseDao", QualifiedName: "com.other.BaseDao", Kind: "Class", FilePath: "OtherBaseDao.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1097,12 +1097,12 @@ func TestResolveCalls_NoReceiverInheritedMethod(t *testing.T) {
 	// Multiple candidates with same arg count to ensure arg_count can't disambiguate
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "base_get", Name: "get", QualifiedName: "com.example.dao.BaseDao.get", Kind: "function", FilePath: "BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "other_get", Name: "get", QualifiedName: "com.example.dao.OtherBaseDao.get", Kind: "function", FilePath: "OtherBaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "third_get", Name: "get", QualifiedName: "com.example.dao.ThirdDao.get", Kind: "function", FilePath: "ThirdDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "caller1", Name: "getByTeamName", QualifiedName: "com.example.dao.PrmTeamDao.getByTeamName", Kind: "function", FilePath: "PrmTeamDao.java"},
-		{ID: "c_child", Name: "PrmTeamDao", QualifiedName: "com.example.dao.PrmTeamDao", Kind: "class", FilePath: "PrmTeamDao.java"},
-		{ID: "c_base", Name: "BaseDao", QualifiedName: "com.example.dao.BaseDao", Kind: "class", FilePath: "BaseDao.java"},
+		{ID: "base_get", Name: "get", QualifiedName: "com.example.dao.BaseDao.get", Kind: "Function", FilePath: "BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "other_get", Name: "get", QualifiedName: "com.example.dao.OtherBaseDao.get", Kind: "Function", FilePath: "OtherBaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "third_get", Name: "get", QualifiedName: "com.example.dao.ThirdDao.get", Kind: "Function", FilePath: "ThirdDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "caller1", Name: "getByTeamName", QualifiedName: "com.example.dao.PrmTeamDao.getByTeamName", Kind: "Function", FilePath: "PrmTeamDao.java"},
+		{ID: "c_child", Name: "PrmTeamDao", QualifiedName: "com.example.dao.PrmTeamDao", Kind: "Class", FilePath: "PrmTeamDao.java"},
+		{ID: "c_base", Name: "BaseDao", QualifiedName: "com.example.dao.BaseDao", Kind: "Class", FilePath: "BaseDao.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1139,10 +1139,10 @@ func TestResolveCalls_EnrichArgTypes_Variable(t *testing.T) {
 	// setFail(code) where code is ExceptionCode — should disambiguate overloads
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "sf1", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "function", FilePath: "ApiResult.java", Params: `[{"name":"code","type":"ExceptionCode"}]`},
-		{ID: "sf2", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "function", FilePath: "ApiResult.java", Params: `[{"name":"msg","type":"String"}]`},
-		{ID: "sf3", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "function", FilePath: "ApiResult.java", Params: `[{"name":"e","type":"Exception"}]`},
-		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "function", FilePath: "Controller.java"},
+		{ID: "sf1", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"code","type":"ExceptionCode"}]`},
+		{ID: "sf2", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"msg","type":"String"}]`},
+		{ID: "sf3", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"e","type":"Exception"}]`},
+		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1181,10 +1181,10 @@ func TestResolveCalls_EnrichArgTypes_MethodCall(t *testing.T) {
 	// setFail(getCode()) where getCode returns ExceptionCode
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "sf1", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "function", FilePath: "ApiResult.java", Params: `[{"name":"code","type":"ExceptionCode"}]`},
-		{ID: "sf2", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "function", FilePath: "ApiResult.java", Params: `[{"name":"msg","type":"String"}]`},
-		{ID: "gc", Name: "getCode", QualifiedName: "com.example.Controller.getCode", Kind: "function", FilePath: "Controller.java", ReturnTypes: []string{"ExceptionCode"}},
-		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "function", FilePath: "Controller.java"},
+		{ID: "sf1", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"code","type":"ExceptionCode"}]`},
+		{ID: "sf2", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"msg","type":"String"}]`},
+		{ID: "gc", Name: "getCode", QualifiedName: "com.example.Controller.getCode", Kind: "Function", FilePath: "Controller.java", ReturnTypes: []string{"ExceptionCode"}},
+		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1221,10 +1221,10 @@ func TestResolveCalls_EnrichArgTypes_StaticImport(t *testing.T) {
 	// setFail(Safety) where Safety is static-imported from ExceptionCode
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "sf1", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "function", FilePath: "ApiResult.java", Params: `[{"name":"code","type":"ExceptionCode"}]`},
-		{ID: "sf2", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "function", FilePath: "ApiResult.java", Params: `[{"name":"msg","type":"String"}]`},
-		{ID: "safety", Name: "Safety", QualifiedName: "com.example.ExceptionCode.Safety", Kind: "function", FilePath: "ExceptionCode.java"},
-		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "function", FilePath: "Controller.java"},
+		{ID: "sf1", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"code","type":"ExceptionCode"}]`},
+		{ID: "sf2", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"msg","type":"String"}]`},
+		{ID: "safety", Name: "Safety", QualifiedName: "com.example.ExceptionCode.Safety", Kind: "Function", FilePath: "ExceptionCode.java"},
+		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1262,9 +1262,9 @@ func TestResolveCalls_EnrichArgTypes_NoEffect(t *testing.T) {
 	// When ArgTypes already has type, enrichment should not change anything
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "sf1", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "function", FilePath: "ApiResult.java", Params: `[{"name":"msg","type":"String"}]`},
-		{ID: "sf2", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "function", FilePath: "ApiResult.java", Params: `[{"name":"code","type":"int"}]`},
-		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "function", FilePath: "Controller.java"},
+		{ID: "sf1", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"msg","type":"String"}]`},
+		{ID: "sf2", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"code","type":"int"}]`},
+		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1303,19 +1303,19 @@ func TestResolveCalls_SuperCall_MultipleBaseDao(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		// biz-core BaseDao
-		{ID: "biz_get1", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.BaseDao.get", Kind: "function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "biz_get2", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.BaseDao.get", Kind: "function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/BaseDao.java", Params: `[{"name":"id","type":"Object"},{"name":"clazz","type":"Class"}]`},
-		{ID: "biz_base", Name: "BaseDao", QualifiedName: "com.weijin.chatting.biz.core.dao.BaseDao", Kind: "class", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/BaseDao.java"},
+		{ID: "biz_get1", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.BaseDao.get", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "biz_get2", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.BaseDao.get", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/BaseDao.java", Params: `[{"name":"id","type":"Object"},{"name":"clazz","type":"Class"}]`},
+		{ID: "biz_base", Name: "BaseDao", QualifiedName: "com.weijin.chatting.biz.core.dao.BaseDao", Kind: "Class", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/BaseDao.java"},
 		// admin BaseDao
-		{ID: "admin_get1", Name: "get", QualifiedName: "com.weijin.chatting.admin.dao.base.BaseDao.get", Kind: "function", FilePath: "admin/src/main/java/com/weijin/chatting/admin/dao/base/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "admin_get2", Name: "get", QualifiedName: "com.weijin.chatting.admin.dao.base.BaseDao.get", Kind: "function", FilePath: "admin/src/main/java/com/weijin/chatting/admin/dao/base/BaseDao.java", Params: `[{"name":"id","type":"Object"},{"name":"clazz","type":"Class"}]`},
-		{ID: "admin_base", Name: "BaseDao", QualifiedName: "com.weijin.chatting.admin.dao.base.BaseDao", Kind: "class", FilePath: "admin/src/main/java/com/weijin/chatting/admin/dao/base/BaseDao.java"},
+		{ID: "admin_get1", Name: "get", QualifiedName: "com.weijin.chatting.admin.dao.base.BaseDao.get", Kind: "Function", FilePath: "admin/src/main/java/com/weijin/chatting/admin/dao/base/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "admin_get2", Name: "get", QualifiedName: "com.weijin.chatting.admin.dao.base.BaseDao.get", Kind: "Function", FilePath: "admin/src/main/java/com/weijin/chatting/admin/dao/base/BaseDao.java", Params: `[{"name":"id","type":"Object"},{"name":"clazz","type":"Class"}]`},
+		{ID: "admin_base", Name: "BaseDao", QualifiedName: "com.weijin.chatting.admin.dao.base.BaseDao", Kind: "Class", FilePath: "admin/src/main/java/com/weijin/chatting/admin/dao/base/BaseDao.java"},
 		// prm-core BaseDao
-		{ID: "prm_get1", Name: "get", QualifiedName: "com.weijin.chatting.prm.core.dao.BaseDao.get", Kind: "function", FilePath: "chatting-prm-core/src/main/java/com/weijin/chatting/prm/core/dao/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "prm_base", Name: "BaseDao", QualifiedName: "com.weijin.chatting.prm.core.dao.BaseDao", Kind: "class", FilePath: "chatting-prm-core/src/main/java/com/weijin/chatting/prm/core/dao/BaseDao.java"},
+		{ID: "prm_get1", Name: "get", QualifiedName: "com.weijin.chatting.prm.core.dao.BaseDao.get", Kind: "Function", FilePath: "chatting-prm-core/src/main/java/com/weijin/chatting/prm/core/dao/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "prm_base", Name: "BaseDao", QualifiedName: "com.weijin.chatting.prm.core.dao.BaseDao", Kind: "Class", FilePath: "chatting-prm-core/src/main/java/com/weijin/chatting/prm/core/dao/BaseDao.java"},
 		// CoinRechargeDao in biz-core
-		{ID: "caller1", Name: "getByOrderNo", QualifiedName: "com.weijin.chatting.biz.core.dao.CoinRechargeDao.getByOrderNo", Kind: "function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/CoinRechargeDao.java"},
-		{ID: "c_coin", Name: "CoinRechargeDao", QualifiedName: "com.weijin.chatting.biz.core.dao.CoinRechargeDao", Kind: "class", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/CoinRechargeDao.java"},
+		{ID: "caller1", Name: "getByOrderNo", QualifiedName: "com.weijin.chatting.biz.core.dao.CoinRechargeDao.getByOrderNo", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/CoinRechargeDao.java"},
+		{ID: "c_coin", Name: "CoinRechargeDao", QualifiedName: "com.weijin.chatting.biz.core.dao.CoinRechargeDao", Kind: "Class", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/CoinRechargeDao.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1361,13 +1361,13 @@ func TestResolveCalls_EnrichArgTypes_ChainedExpr(t *testing.T) {
 	// coinAccountDao.get(command.getUserId()) — getUserId returns Long, disambiguates get(String) vs get(Long)
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "get_str", Name: "get", QualifiedName: "com.example.CoinAccountDao.get", Kind: "function", FilePath: "CoinAccountDao.java", Params: `[{"name":"id","type":"String"}]`, ReturnTypes: []string{"CoinAccount"}},
-		{ID: "get_long", Name: "get", QualifiedName: "com.example.CoinAccountDao.get", Kind: "function", FilePath: "CoinAccountDao.java", Params: `[{"name":"userId","type":"Long"}]`, ReturnTypes: []string{"CoinAccount"}},
-		{ID: "getUserId", Name: "getUserId", QualifiedName: "com.example.Command.getUserId", Kind: "function", FilePath: "Command.java", ReturnTypes: []string{"Long"}},
-		{ID: "c_dao", Name: "CoinAccountDao", QualifiedName: "com.example.CoinAccountDao", Kind: "class", FilePath: "CoinAccountDao.java"},
-		{ID: "c_cmd", Name: "Command", QualifiedName: "com.example.Command", Kind: "class", FilePath: "Command.java"},
-		{ID: "caller1", Name: "recharge", QualifiedName: "com.example.Service.recharge", Kind: "function", FilePath: "Service.java"},
-		{ID: "c_svc", Name: "Service", QualifiedName: "com.example.Service", Kind: "class", FilePath: "Service.java"},
+		{ID: "get_str", Name: "get", QualifiedName: "com.example.CoinAccountDao.get", Kind: "Function", FilePath: "CoinAccountDao.java", Params: `[{"name":"id","type":"String"}]`, ReturnTypes: []string{"CoinAccount"}},
+		{ID: "get_long", Name: "get", QualifiedName: "com.example.CoinAccountDao.get", Kind: "Function", FilePath: "CoinAccountDao.java", Params: `[{"name":"userId","type":"Long"}]`, ReturnTypes: []string{"CoinAccount"}},
+		{ID: "getUserId", Name: "getUserId", QualifiedName: "com.example.Command.getUserId", Kind: "Function", FilePath: "Command.java", ReturnTypes: []string{"Long"}},
+		{ID: "c_dao", Name: "CoinAccountDao", QualifiedName: "com.example.CoinAccountDao", Kind: "Class", FilePath: "CoinAccountDao.java"},
+		{ID: "c_cmd", Name: "Command", QualifiedName: "com.example.Command", Kind: "Class", FilePath: "Command.java"},
+		{ID: "caller1", Name: "recharge", QualifiedName: "com.example.Service.recharge", Kind: "Function", FilePath: "Service.java"},
+		{ID: "c_svc", Name: "Service", QualifiedName: "com.example.Service", Kind: "Class", FilePath: "Service.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1408,11 +1408,11 @@ func TestResolveCalls_EnrichArgTypes_ChainedExpr_NoSideEffect(t *testing.T) {
 	// When chained expr type can't be resolved, should not change behavior
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "proc1", Name: "process", QualifiedName: "com.example.ServiceA.process", Kind: "function", FilePath: "ServiceA.java", Params: `[{"name":"data","type":"String"}]`},
-		{ID: "proc2", Name: "process", QualifiedName: "com.example.ServiceA.process", Kind: "function", FilePath: "ServiceA.java", Params: `[{"name":"data","type":"Integer"}]`},
-		{ID: "c_a", Name: "ServiceA", QualifiedName: "com.example.ServiceA", Kind: "class", FilePath: "ServiceA.java"},
-		{ID: "caller1", Name: "run", QualifiedName: "com.example.App.run", Kind: "function", FilePath: "App.java"},
-		{ID: "c_app", Name: "App", QualifiedName: "com.example.App", Kind: "class", FilePath: "App.java"},
+		{ID: "proc1", Name: "process", QualifiedName: "com.example.ServiceA.process", Kind: "Function", FilePath: "ServiceA.java", Params: `[{"name":"data","type":"String"}]`},
+		{ID: "proc2", Name: "process", QualifiedName: "com.example.ServiceA.process", Kind: "Function", FilePath: "ServiceA.java", Params: `[{"name":"data","type":"Integer"}]`},
+		{ID: "c_a", Name: "ServiceA", QualifiedName: "com.example.ServiceA", Kind: "Class", FilePath: "ServiceA.java"},
+		{ID: "caller1", Name: "run", QualifiedName: "com.example.App.run", Kind: "Function", FilePath: "App.java"},
+		{ID: "c_app", Name: "App", QualifiedName: "com.example.App", Kind: "Class", FilePath: "App.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1452,13 +1452,13 @@ func TestResolveCalls_EnrichArgTypes_ChainedExpr_MethodParam(t *testing.T) {
 	// userInfoDao.get(reqs.getBroadcasterId()) — getBroadcasterId returns Long, disambiguates get(Integer) vs get(Long)
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "get_int", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "function", FilePath: "UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
-		{ID: "get_long", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "function", FilePath: "UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
-		{ID: "getBroadcasterId", Name: "getBroadcasterId", QualifiedName: "com.example.Reqs.getBroadcasterId", Kind: "function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}},
-		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.example.UserInfoDao", Kind: "class", FilePath: "UserInfoDao.java"},
-		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "class", FilePath: "Reqs.java"},
-		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "function", FilePath: "Controller.java"},
-		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.example.Controller", Kind: "class", FilePath: "Controller.java"},
+		{ID: "get_int", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
+		{ID: "get_long", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
+		{ID: "getBroadcasterId", Name: "getBroadcasterId", QualifiedName: "com.example.Reqs.getBroadcasterId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}},
+		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.example.UserInfoDao", Kind: "Class", FilePath: "UserInfoDao.java"},
+		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "Class", FilePath: "Reqs.java"},
+		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
+		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.example.Controller", Kind: "Class", FilePath: "Controller.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1504,18 +1504,18 @@ func TestResolveCalls_EnrichArgTypes_RealCase_BroadcasterController(t *testing.T
 	// getBroadcasterId is Lombok-generated getter returning Long
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "get_int", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.UserInfoDao.get", Kind: "function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
-		{ID: "get_long", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.UserInfoDao.get", Kind: "function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
+		{ID: "get_int", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.UserInfoDao.get", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
+		{ID: "get_long", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.UserInfoDao.get", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
 		// Lombok-generated getter
-		{ID: "getBroadcasterId", Name: "getBroadcasterId", QualifiedName: "com.weijin.chatting.admin.model.request.broadcaster.GetLastCycleIncomeReqs.getBroadcasterId", Kind: "function",
+		{ID: "getBroadcasterId", Name: "getBroadcasterId", QualifiedName: "com.weijin.chatting.admin.model.request.broadcaster.GetLastCycleIncomeReqs.getBroadcasterId", Kind: "Function",
 			FilePath: "admin/src/main/java/com/weijin/chatting/admin/model/request/broadcaster/GetLastCycleIncomeReqs.java",
 			ReturnTypes: []string{"Long"}, IsSynthetic: true},
-		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.weijin.chatting.biz.core.dao.UserInfoDao", Kind: "class", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/UserInfoDao.java"},
-		{ID: "c_reqs", Name: "GetLastCycleIncomeReqs", QualifiedName: "com.weijin.chatting.admin.model.request.broadcaster.GetLastCycleIncomeReqs", Kind: "class",
+		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.weijin.chatting.biz.core.dao.UserInfoDao", Kind: "Class", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/UserInfoDao.java"},
+		{ID: "c_reqs", Name: "GetLastCycleIncomeReqs", QualifiedName: "com.weijin.chatting.admin.model.request.broadcaster.GetLastCycleIncomeReqs", Kind: "Class",
 			FilePath: "admin/src/main/java/com/weijin/chatting/admin/model/request/broadcaster/GetLastCycleIncomeReqs.java"},
-		{ID: "caller1", Name: "getLastCycleIncome", QualifiedName: "com.weijin.chatting.admin.controller.BroadcasterController.getLastCycleIncome", Kind: "function",
+		{ID: "caller1", Name: "getLastCycleIncome", QualifiedName: "com.weijin.chatting.admin.controller.BroadcasterController.getLastCycleIncome", Kind: "Function",
 			FilePath: "admin/src/main/java/com/weijin/chatting/admin/controller/BroadcasterController.java"},
-		{ID: "c_ctrl", Name: "BroadcasterController", QualifiedName: "com.weijin.chatting.admin.controller.BroadcasterController", Kind: "class",
+		{ID: "c_ctrl", Name: "BroadcasterController", QualifiedName: "com.weijin.chatting.admin.controller.BroadcasterController", Kind: "Class",
 			FilePath: "admin/src/main/java/com/weijin/chatting/admin/controller/BroadcasterController.java"},
 	})
 
@@ -1560,13 +1560,13 @@ func TestResolveCalls_EnrichArgTypes_RealCase_ShortScope(t *testing.T) {
 	// TypeEnv uses fully qualified scope (after 1.4 unification)
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "get_int", Name: "get", QualifiedName: "com.weijin.UserInfoDao.get", Kind: "function", FilePath: "UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
-		{ID: "get_long", Name: "get", QualifiedName: "com.weijin.UserInfoDao.get", Kind: "function", FilePath: "UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
-		{ID: "getBId", Name: "getBroadcasterId", QualifiedName: "com.weijin.Reqs.getBroadcasterId", Kind: "function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}, IsSynthetic: true},
-		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.weijin.UserInfoDao", Kind: "class", FilePath: "UserInfoDao.java"},
-		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.weijin.Reqs", Kind: "class", FilePath: "Reqs.java"},
-		{ID: "caller1", Name: "getLastCycleIncome", QualifiedName: "com.weijin.Controller.getLastCycleIncome", Kind: "function", FilePath: "Controller.java"},
-		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.weijin.Controller", Kind: "class", FilePath: "Controller.java"},
+		{ID: "get_int", Name: "get", QualifiedName: "com.weijin.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
+		{ID: "get_long", Name: "get", QualifiedName: "com.weijin.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
+		{ID: "getBId", Name: "getBroadcasterId", QualifiedName: "com.weijin.Reqs.getBroadcasterId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}, IsSynthetic: true},
+		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.weijin.UserInfoDao", Kind: "Class", FilePath: "UserInfoDao.java"},
+		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.weijin.Reqs", Kind: "Class", FilePath: "Reqs.java"},
+		{ID: "caller1", Name: "getLastCycleIncome", QualifiedName: "com.weijin.Controller.getLastCycleIncome", Kind: "Function", FilePath: "Controller.java"},
+		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.weijin.Controller", Kind: "Class", FilePath: "Controller.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1610,22 +1610,22 @@ func TestResolveCalls_TypeMulti_CrossModuleSameClass(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		// biz-core UserInfo
-		{ID: "biz_getUserId", Name: "getUserId", QualifiedName: "com.weijin.biz.core.domain.UserInfo.getUserId", Kind: "function",
+		{ID: "biz_getUserId", Name: "getUserId", QualifiedName: "com.weijin.biz.core.domain.UserInfo.getUserId", Kind: "Function",
 			FilePath: "chatting-biz-core/src/main/java/com/weijin/biz/core/domain/UserInfo.java", ReturnTypes: []string{"Long"}},
-		{ID: "biz_userinfo", Name: "UserInfo", QualifiedName: "com.weijin.biz.core.domain.UserInfo", Kind: "class",
+		{ID: "biz_userinfo", Name: "UserInfo", QualifiedName: "com.weijin.biz.core.domain.UserInfo", Kind: "Class",
 			FilePath: "chatting-biz-core/src/main/java/com/weijin/biz/core/domain/UserInfo.java"},
 		// admin UserInfo
-		{ID: "admin_getUserId", Name: "getUserId", QualifiedName: "com.weijin.admin.entity.UserInfo.getUserId", Kind: "function",
+		{ID: "admin_getUserId", Name: "getUserId", QualifiedName: "com.weijin.admin.entity.UserInfo.getUserId", Kind: "Function",
 			FilePath: "admin/src/main/java/com/weijin/admin/entity/UserInfo.java", ReturnTypes: []string{"Long"}},
-		{ID: "admin_userinfo", Name: "UserInfo", QualifiedName: "com.weijin.admin.entity.UserInfo", Kind: "class",
+		{ID: "admin_userinfo", Name: "UserInfo", QualifiedName: "com.weijin.admin.entity.UserInfo", Kind: "Class",
 			FilePath: "admin/src/main/java/com/weijin/admin/entity/UserInfo.java"},
 		// analysis UserInfo
-		{ID: "analysis_getUserId", Name: "getUserId", QualifiedName: "com.weijin.analysis.domain.UserInfo.getUserId", Kind: "function",
+		{ID: "analysis_getUserId", Name: "getUserId", QualifiedName: "com.weijin.analysis.domain.UserInfo.getUserId", Kind: "Function",
 			FilePath: "chatting-analysis-core/src/main/java/com/weijin/analysis/domain/UserInfo.java", ReturnTypes: []string{"Long"}},
 		// Caller in biz-core service
-		{ID: "caller1", Name: "process", QualifiedName: "com.weijin.biz.core.service.RechargeService.process", Kind: "function",
+		{ID: "caller1", Name: "process", QualifiedName: "com.weijin.biz.core.service.RechargeService.process", Kind: "Function",
 			FilePath: "chatting-biz-core/src/main/java/com/weijin/biz/core/service/RechargeService.java"},
-		{ID: "c_svc", Name: "RechargeService", QualifiedName: "com.weijin.biz.core.service.RechargeService", Kind: "class",
+		{ID: "c_svc", Name: "RechargeService", QualifiedName: "com.weijin.biz.core.service.RechargeService", Kind: "Class",
 			FilePath: "chatting-biz-core/src/main/java/com/weijin/biz/core/service/RechargeService.java"},
 	})
 
@@ -1665,11 +1665,11 @@ func TestResolveCalls_JDKHierarchy_NoFalsePositive(t *testing.T) {
 	// Should keep both (no hierarchy relationship)
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "p_str", Name: "process", QualifiedName: "com.example.Svc.process", Kind: "function", FilePath: "Svc.java", Params: `[{"name":"data","type":"String"}]`},
-		{ID: "p_int", Name: "process", QualifiedName: "com.example.Svc.process", Kind: "function", FilePath: "Svc.java", Params: `[{"name":"data","type":"Integer"}]`},
-		{ID: "c_svc", Name: "Svc", QualifiedName: "com.example.Svc", Kind: "class", FilePath: "Svc.java"},
-		{ID: "caller1", Name: "run", QualifiedName: "com.example.App.run", Kind: "function", FilePath: "App.java"},
-		{ID: "c_app", Name: "App", QualifiedName: "com.example.App", Kind: "class", FilePath: "App.java"},
+		{ID: "p_str", Name: "process", QualifiedName: "com.example.Svc.process", Kind: "Function", FilePath: "Svc.java", Params: `[{"name":"data","type":"String"}]`},
+		{ID: "p_int", Name: "process", QualifiedName: "com.example.Svc.process", Kind: "Function", FilePath: "Svc.java", Params: `[{"name":"data","type":"Integer"}]`},
+		{ID: "c_svc", Name: "Svc", QualifiedName: "com.example.Svc", Kind: "Class", FilePath: "Svc.java"},
+		{ID: "caller1", Name: "run", QualifiedName: "com.example.App.run", Kind: "Function", FilePath: "App.java"},
+		{ID: "c_app", Name: "App", QualifiedName: "com.example.App", Kind: "Class", FilePath: "App.java"},
 	})
 
 	resolver := newTestResolver(table)
@@ -1715,11 +1715,11 @@ func TestResolveCalls_JDKHierarchy_NoFalsePositive(t *testing.T) {
 func TestResolveCalls_ExternalSymbolPollutesNameUnique(t *testing.T) {
 	baseSymbols := []model.Symbol{
 		// BaseRepository.log — the only project symbol named "log"
-		{ID: "base-log", Name: "log", QualifiedName: "src.services.base-repository.BaseRepository.log", Kind: "function", FilePath: "services/base-repository.js"},
+		{ID: "base-log", Name: "log", QualifiedName: "src.services.base-repository.BaseRepository.log", Kind: "Function", FilePath: "services/base-repository.js"},
 		// GrandChild class — has no "log" method, inherits from ChildService → BaseRepository
-		{ID: "grandchild-doWork", Name: "doWork", QualifiedName: "src.services.grandchild.GrandChild.doWork", Kind: "function", FilePath: "services/grandchild.js"},
+		{ID: "grandchild-doWork", Name: "doWork", QualifiedName: "src.services.grandchild.GrandChild.doWork", Kind: "Function", FilePath: "services/grandchild.js"},
 		// LoggingDecorator.execute
-		{ID: "decorator-execute", Name: "execute", QualifiedName: "src.patterns.decorator.LoggingDecorator.execute", Kind: "function", FilePath: "patterns/decorator.js"},
+		{ID: "decorator-execute", Name: "execute", QualifiedName: "src.patterns.decorator.LoggingDecorator.execute", Kind: "Function", FilePath: "patterns/decorator.js"},
 	}
 
 	symbolTable := NewSymbolTable()

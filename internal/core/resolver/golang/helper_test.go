@@ -137,9 +137,9 @@ func newGoResolver(table *resolver.SymbolTable) *resolver.Resolver {
 func TestGoHelper_Integration_SameFileResolve(t *testing.T) {
 	table := resolver.NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "f1", Name: "Handle", QualifiedName: "api.Handle", Kind: "function", FilePath: "/project/api/handler.go"},
-		{ID: "f2", Name: "Handle", QualifiedName: "internal.Handle", Kind: "function", FilePath: "/project/internal/handler.go"},
-		{ID: "caller", Name: "main", QualifiedName: "api.main", Kind: "function", FilePath: "/project/api/handler.go"},
+		{ID: "f1", Name: "Handle", QualifiedName: "api.Handle", Kind: "Function", FilePath: "/project/api/handler.go"},
+		{ID: "f2", Name: "Handle", QualifiedName: "internal.Handle", Kind: "Function", FilePath: "/project/internal/handler.go"},
+		{ID: "caller", Name: "main", QualifiedName: "api.main", Kind: "Function", FilePath: "/project/api/handler.go"},
 	})
 
 	r := newGoResolver(table)
@@ -165,16 +165,16 @@ func TestInferImplements(t *testing.T) {
 	table := resolver.NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		// Interface with 2 methods
-		{ID: "iface", Name: "Store", QualifiedName: "storage.Store", Kind: "interface", FilePath: "storage.go"},
-		{ID: "iface_write", Name: "Write", QualifiedName: "storage.Store.Write", Kind: "function", FilePath: "storage.go", Params: `[{"name":"ctx"},{"name":"data"}]`},
-		{ID: "iface_close", Name: "Close", QualifiedName: "storage.Store.Close", Kind: "function", FilePath: "storage.go", Params: `[]`},
+		{ID: "iface", Name: "Store", QualifiedName: "storage.Store", Kind: "Interface", FilePath: "storage.go"},
+		{ID: "iface_write", Name: "Write", QualifiedName: "storage.Store.Write", Kind: "Function", FilePath: "storage.go", Params: `[{"name":"ctx"},{"name":"data"}]`},
+		{ID: "iface_close", Name: "Close", QualifiedName: "storage.Store.Close", Kind: "Function", FilePath: "storage.go", Params: `[]`},
 		// Struct implementing both methods
-		{ID: "impl_class", Name: "FileStore", QualifiedName: "file.FileStore", Kind: "class", ClassType: "struct", FilePath: "file.go"},
-		{ID: "impl_write", Name: "Write", QualifiedName: "file.FileStore.Write", Kind: "function", FilePath: "file.go", Params: `[{"name":"ctx"},{"name":"data"}]`},
-		{ID: "impl_close", Name: "Close", QualifiedName: "file.FileStore.Close", Kind: "function", FilePath: "file.go", Params: `[]`},
+		{ID: "impl_class", Name: "FileStore", QualifiedName: "file.FileStore", Kind: "Class", ClassType: "struct", FilePath: "file.go"},
+		{ID: "impl_write", Name: "Write", QualifiedName: "file.FileStore.Write", Kind: "Function", FilePath: "file.go", Params: `[{"name":"ctx"},{"name":"data"}]`},
+		{ID: "impl_close", Name: "Close", QualifiedName: "file.FileStore.Close", Kind: "Function", FilePath: "file.go", Params: `[]`},
 		// Struct missing one method — should NOT match
-		{ID: "partial_class", Name: "PartialStore", QualifiedName: "partial.PartialStore", Kind: "class", ClassType: "struct", FilePath: "partial.go"},
-		{ID: "partial_write", Name: "Write", QualifiedName: "partial.PartialStore.Write", Kind: "function", FilePath: "partial.go", Params: `[{"name":"ctx"},{"name":"data"}]`},
+		{ID: "partial_class", Name: "PartialStore", QualifiedName: "partial.PartialStore", Kind: "Class", ClassType: "struct", FilePath: "partial.go"},
+		{ID: "partial_write", Name: "Write", QualifiedName: "partial.PartialStore.Write", Kind: "Function", FilePath: "partial.go", Params: `[{"name":"ctx"},{"name":"data"}]`},
 	})
 
 	helper := gohelper.NewHelper(table)

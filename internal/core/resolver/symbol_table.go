@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
@@ -58,7 +59,7 @@ func (table *SymbolTable) Add(symbol model.Symbol) {
 	shard.byID[symbol.ID] = &symbolCopy
 
 	// Index methods by owner class for FindMethodsByQualifiedName
-	if symbol.Kind == "function" && strings.Contains(symbol.QualifiedName, ".") {
+	if symbol.Kind == constants.KindFunction && strings.Contains(symbol.QualifiedName, ".") {
 		ownerClassQN := symbol.QualifiedName[:strings.LastIndex(symbol.QualifiedName, ".")]
 		table.methodsMutex.Lock()
 		table.methodsByClass[ownerClassQN] = append(table.methodsByClass[ownerClassQN], symbol)

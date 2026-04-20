@@ -50,7 +50,7 @@ public class UserService extends BaseService implements Serializable {
 	funcCount := 0
 	for _, symbol := range result.Symbols {
 		switch symbol.Kind {
-		case "class":
+		case "Class":
 			classCount++
 			if symbol.Name != "UserService" {
 				t.Fatalf("expected UserService, got %s", symbol.Name)
@@ -58,7 +58,7 @@ public class UserService extends BaseService implements Serializable {
 			if symbol.QualifiedName != "com.example.UserService" {
 				t.Fatalf("expected com.example.UserService, got %s", symbol.QualifiedName)
 			}
-		case "function":
+		case "Function":
 			funcCount++
 		}
 	}
@@ -345,7 +345,7 @@ public class Outer {
 	foundClass := false
 	foundMethod := false
 	for _, s := range result.Symbols {
-		if s.Name == "Inner" && s.Kind == "class" {
+		if s.Name == "Inner" && s.Kind == "Class" {
 			foundClass = true
 			t.Logf("✅ Inner class: %s", s.QualifiedName)
 		}

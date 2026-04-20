@@ -44,7 +44,7 @@ def top_level_func(x):
 	funcCount := 0
 	for _, symbol := range result.Symbols {
 		switch {
-		case symbol.Kind == "abstract_class" || symbol.Kind == "class":
+		case symbol.Kind == "abstract_class" || symbol.Kind == "Class":
 			classCount++
 			if symbol.Name != "UserService" {
 				t.Fatalf("expected UserService, got %s", symbol.Name)
@@ -52,7 +52,7 @@ def top_level_func(x):
 			if !symbol.IsAbstract {
 				t.Fatal("UserService should be abstract (inherits ABC)")
 			}
-		case symbol.Kind == "function":
+		case symbol.Kind == "Function":
 			funcCount++
 		}
 	}

@@ -4,6 +4,7 @@ package typeinfer
 import (
 	"strings"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
@@ -94,7 +95,7 @@ func (infer *TypeInfer) InferLocal(result *model.ParseResult) *model.TypeEnv {
 	// infer the type of the call result variable.
 	symbolReturnTypes := make(map[string][]string)
 	for _, sym := range result.Symbols {
-		if sym.Kind == "function" && len(sym.ReturnTypes) > 0 {
+		if sym.Kind == constants.KindFunction && len(sym.ReturnTypes) > 0 {
 			symbolReturnTypes[sym.Name] = sym.ReturnTypes
 		}
 	}
@@ -187,7 +188,7 @@ func lookupInEnv(env *model.TypeEnv, scope, varName string) string {
 func lookupReturnType(callee string, findByName func(string) []model.Symbol) string {
 	symbols := findByName(callee)
 	for _, s := range symbols {
-		if s.Kind == "function" && len(s.ReturnTypes) > 0 {
+		if s.Kind == constants.KindFunction && len(s.ReturnTypes) > 0 {
 			return s.ReturnTypes[0]
 		}
 	}
@@ -200,7 +201,7 @@ func lookupFieldType(receiverType, fieldName string, findByName func(string) []m
 	getterName := "get" + capName
 	symbols := findByName(getterName)
 	for _, s := range symbols {
-		if s.Kind == "function" && strings.Contains(s.QualifiedName, lastSegmentFromType(receiverType)+".") && len(s.ReturnTypes) > 0 {
+		if s.Kind == constants.KindFunction && strings.Contains(s.QualifiedName, lastSegmentFromType(receiverType)+".") && len(s.ReturnTypes) > 0 {
 			return s.ReturnTypes[0]
 		}
 	}
@@ -211,7 +212,7 @@ func lookupMethodReturnType(receiverType, methodName string, findByName func(str
 	symbols := findByName(methodName)
 	typeSeg := lastSegmentFromType(receiverType)
 	for _, s := range symbols {
-		if s.Kind == "function" && strings.Contains(s.QualifiedName, typeSeg+".") && len(s.ReturnTypes) > 0 {
+		if s.Kind == constants.KindFunction && strings.Contains(s.QualifiedName, typeSeg+".") && len(s.ReturnTypes) > 0 {
 			return s.ReturnTypes[0]
 		}
 	}
@@ -330,7 +331,7 @@ func (infer *TypeInfer) Propagate(
 			changed := false
 			// Propagate return types of exported functions
 			for _, symbol := range importedResult.Symbols {
-				if symbol.Kind != "function" || len(symbol.ReturnTypes) == 0 {
+				if symbol.Kind != constants.KindFunction || len(symbol.ReturnTypes) == 0 {
 					continue
 				}
 				if !symbol.IsExported {
@@ -491,7 +492,7 @@ func inferTier1FromCalls(result *model.ParseResult, env *model.TypeEnv) {
 func inferSelfReceiver(result *model.ParseResult, env *model.TypeEnv) {
 	// For methods inside a class, self/this refers to the class
 	for _, symbol := range result.Symbols {
-		if symbol.Kind != "function" {
+		if symbol.Kind != constants.KindFunction {
 			continue
 		}
 		// If qualified name contains a class (e.g., "services.user_service.UserService.findById")
