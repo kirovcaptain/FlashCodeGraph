@@ -36,6 +36,7 @@ type Resolver struct {
 }
 
 // NewResolver creates a Resolver with the given SymbolTable and language helpers.
+// NewResolver creates a Resolver with the given SymbolTable and optional language-specific helpers.
 func NewResolver(symbolTable *SymbolTable, helpers ...map[string]LanguageHelper) *Resolver {
 	r := &Resolver{
 		symbolTable: symbolTable,
@@ -47,6 +48,8 @@ func NewResolver(symbolTable *SymbolTable, helpers ...map[string]LanguageHelper)
 	return r
 }
 
+// helperFor returns the language-specific helper for a call based on file extension.
+// Panics if no helper is registered for the detected language.
 func (resolver *Resolver) helperFor(call model.RawCall) LanguageHelper {
 	lang := call.Language
 	// Backward compat: detect from file extension when Language not stamped
@@ -450,6 +453,8 @@ func (resolver *Resolver) resolveCallFallback(
 }
 
 // classifyUnresolvedCall creates an UnresolvedHint with the appropriate hint type.
+// classifyUnresolvedCall creates an UnresolvedHint for a call that could not be confidently resolved.
+// Classifies the hint type based on the call pattern (super, chained, lambda, enum, ambiguous).
 func classifyUnresolvedCall(call model.RawCall, callerID string, receiverType string, candidates []model.Symbol) *model.UnresolvedHint {
 	hint := &model.UnresolvedHint{
 		Line:           call.Line,
@@ -486,6 +491,8 @@ func classifyUnresolvedCall(call model.RawCall, callerID string, receiverType st
 	return hint
 }
 
+// isEnumConstantPattern checks if an expression looks like "ClassName.CONSTANT_NAME"
+// (uppercase class + all-uppercase constant after dot).
 func isEnumConstantPattern(expr string) bool {
 	dotIdx := strings.IndexByte(expr, '.')
 	if dotIdx <= 0 || dotIdx >= len(expr)-1 {
@@ -595,6 +602,8 @@ func (resolver *Resolver) resolveChainedReceiver(expr string, call model.RawCall
 	return result
 }
 
+// resolveChainedReceiverInternal recursively resolves a dotted receiver expression (e.g. "obj.getService().findById")
+// by walking the chain left-to-right, resolving each segment's return type to determine the next receiver type.
 func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model.RawCall, envs map[string]*model.TypeEnv, langHelper LanguageHelper) string {
 	// Find the last "." that separates receiver from method, respecting parentheses
 	parenDepth := 0
@@ -710,6 +719,8 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 
 // substituteGenericParam replaces a type parameter (e.g. "T") with the actual type argument
 // by looking up the class's TypeParams and the receiver variable's TypeArgs.
+// substituteGenericParam replaces a generic return type (e.g. "T") with the actual type argument
+// from the receiver's instantiation. Example: List<String>.get() returns "T" → substituted to "String".
 func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiverVar string, call model.RawCall, envs map[string]*model.TypeEnv) string {
 	if len(retType) > 20 || strings.Contains(retType, ".") {
 		return retType
@@ -741,8 +752,8 @@ func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiver
 	return retType
 }
 
-// lookupFieldInHierarchy looks up a field's type by walking the inheritance chain.
-// Checks current class scope first, then parent classes (may be in different files).
+// lookupReceiverType determines the type of a call's receiver expression.
+// Checks TypeEnv bindings, class field hierarchy, and chained receiver resolution.
 func (resolver *Resolver) lookupReceiverType(call model.RawCall, envs map[string]*model.TypeEnv, langHelper LanguageHelper) string {
 	env := envs[call.FilePath]
 	if env == nil {
@@ -808,6 +819,8 @@ func (resolver *Resolver) findClassSymbol(typeName string) *model.Symbol {
 	return nil
 }
 
+// findCallerID locates the Function node ID for the caller of a raw call.
+// Matches by file path and line range; falls back to first function in same file.
 func (resolver *Resolver) findCallerID(call model.RawCall) string {
 	candidates := resolver.symbolTable.FindByName(lastSegment(call.CallerName))
 	var fallback string
@@ -879,6 +892,8 @@ func (resolver *Resolver) ResolveImports(imports []model.RawImport, allFiles []s
 
 // Helper functions
 
+// filterByOwnerClass returns candidates whose QualifiedName contains ".className." as a segment.
+// Used to match methods belonging to a specific class.
 func filterByOwnerClass(candidates []model.Symbol, className string) []model.Symbol {
 	className = strings.TrimPrefix(className, "*")
 	target := "." + className + "."
@@ -892,6 +907,7 @@ func filterByOwnerClass(candidates []model.Symbol, className string) []model.Sym
 	return matched
 }
 
+// filterByFile returns candidates defined in the specified file.
 func filterByFile(candidates []model.Symbol, filePath string) []model.Symbol {
 	var matched []model.Symbol
 	for _, candidate := range candidates {
@@ -902,6 +918,8 @@ func filterByFile(candidates []model.Symbol, filePath string) []model.Symbol {
 	return matched
 }
 
+// filterByArgCount returns candidates whose parameter count matches the call's argument count.
+// Supports varargs: a varargs function matches if argCount >= (paramCount - 1).
 func filterByArgCount(candidates []model.Symbol, argCount int) []model.Symbol {
 	var matched []model.Symbol
 	for _, candidate := range candidates {
@@ -920,6 +938,7 @@ func filterByArgCount(candidates []model.Symbol, argCount int) []model.Symbol {
 	return matched
 }
 
+// countParams parses a JSON params string and returns the number of parameters.
 func countParams(paramsJSON string) int {
 	if paramsJSON == "" || paramsJSON == "null" {
 		return 0
@@ -946,6 +965,8 @@ func (resolver *Resolver) enrichArgTypes(call model.RawCall, envs map[string]*mo
 	return result
 }
 
+// inferExprType infers the type of an expression used as a function argument.
+// Handles string literals, variables, method calls, field access, and constructor calls.
 func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *model.TypeEnv, envs map[string]*model.TypeEnv, langHelper LanguageHelper) string {
 	if expr == "" {
 		return ""
@@ -1018,6 +1039,8 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 	return ""
 }
 
+// extractSimpleType strips pointer prefix and package path, returning the short type name.
+// Example: "*com.example.UserService" → "UserService"
 func extractSimpleType(typeName string) string {
 	if dotIdx := strings.LastIndex(typeName, "."); dotIdx >= 0 {
 		return typeName[dotIdx+1:]
@@ -1112,6 +1135,8 @@ func filterByArgTypes(candidates []model.Symbol, argTypes []string, langHelper L
 
 func parseParamTypes(paramsJSON string) []string {
 	if paramsJSON == "" || paramsJSON == "null" {
+// parseParamTypes extracts type strings from a JSON params array.
+// Returns a slice of type names (e.g. ["String", "int", "Object..."]).
 		return nil
 	}
 	var params []map[string]any
@@ -1131,11 +1156,13 @@ func isSingleLetterGeneric(typeName string) bool {
 	return len(typeName) == 1 && typeName[0] >= 'A' && typeName[0] <= 'Z'
 }
 
+// isSingleLetterGeneric returns true if the type name is a single uppercase letter (generic type parameter).
 func makeRelation(sourceID, targetID string, call model.RawCall, confidence float64, resolvedBy string, candidates int) model.ResolvedRelation {
 	return model.ResolvedRelation{
 		SourceID:    sourceID,
 		TargetID:    targetID,
 		Kind:        model.RelCalls,
+// makeRelation constructs a ResolvedRelation with standard metadata (line, flow_context, declared_type).
 		SourceKind:  "Function",
 		Confidence:  confidence,
 		ResolvedBy:  resolvedBy,
@@ -1156,6 +1183,8 @@ func makeMultiRelations(sourceID string, candidates []model.Symbol, call model.R
 			TargetID:    candidate.ID,
 			Kind:        model.RelCalls,
 			SourceKind:  "Function",
+// makeMultiRelations creates a ResolvedRelation for each candidate when multiple matches exist.
+// Uses best_guess confidence since the resolver cannot determine which is correct.
 			Confidence:  confidence,
 			ResolvedBy:  resolvedBy,
 			Candidates:  len(candidates),
