@@ -109,10 +109,13 @@ func (resolver *Resolver) ResolveCalls(calls []model.RawCall, envs map[string]*m
 	return relations, hints
 }
 
+// resolveCall resolves a single raw call to one or more target symbols.
+// Returns resolved relations (with confidence scores) or an unresolved hint.
 func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model.TypeEnv) ([]model.ResolvedRelation, *model.UnresolvedHint) {
+	// Step 1: Find candidate symbols by name from the SymbolTable.
 	candidates := resolver.symbolTable.FindByName(call.CalledName)
 
-	// Filter to functions only
+	// Step 2: Filter to functions and classes only (exclude variables, interfaces, etc.)
 	var funcCandidates []model.Symbol
 	for _, candidate := range candidates {
 		if candidate.Kind == constants.KindFunction || candidate.Kind == constants.KindClass {
@@ -120,233 +123,296 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 		}
 	}
 
+	// Step 3: No candidates found — the called name doesn't match any project symbol.
+	// This typically means the call targets a third-party library (e.g. "jdbcTemplate.query",
+	// "DateUtil.format") that is not in the indexed source code. Attempt to resolve as external.
 	if len(funcCandidates) == 0 {
-		
-		langHelper := resolver.helperFor(call)
-		// No project symbol matches — try import-based external resolution
-		if call.ReceiverExpr != "" {
-			callerID := resolver.findCallerID(call)
-			// Try ReceiverExpr as class name (static call: DateUtil.format)
-			if relations, handled := resolver.resolveImportedCall(call, envs, callerID, langHelper); handled && len(relations) > 0 {
-				return relations, nil
-			}
-			// Try receiverType from TypeEnv (instance call: jdbcTemplate.query)
-			receiverType := resolver.lookupReceiverType(call, envs, langHelper)
-			if receiverType != "" && receiverType != call.ReceiverExpr {
-				if env := envs[call.FilePath]; env != nil {
-					for _, imp := range env.Imports {
-						if imp.SymbolName == receiverType || (strings.Contains(receiverType, ".") && strings.HasPrefix(receiverType, imp.ModulePath)) {
-							fqn := imp.ModulePath + "." + call.CalledName
-							if strings.Contains(receiverType, ".") {
-								fqn = receiverType + "." + call.CalledName
-							}
-							externalID := "external:" + fqn
-							resolver.symbolTable.AddBatch([]model.Symbol{{
-								ID: externalID, Name: call.CalledName,
-								QualifiedName: fqn, Kind: constants.KindFunction, FilePath: "[external]",
-							}})
-							return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
-						}
-					}
-				}
-			}
+		return resolver.resolveCallNoCandidate(call, envs)
+	}
+
+	callerID := resolver.findCallerID(call)
+	langHelper := resolver.helperFor(call)
+
+	// Step 4: Has receiver expression — resolve using type information.
+	if call.ReceiverExpr != "" {
+		relations, hint, shouldFallthrough := resolver.resolveCallWithReceiver(call, envs, funcCandidates, callerID, langHelper)
+		if !shouldFallthrough {
+			return relations, hint
 		}
+		// Language helper allows fallthrough to no-receiver matching.
+	}
+
+	// Step 5: No receiver or fallthrough — use fallback strategies.
+	return resolver.resolveCallFallback(call, envs, funcCandidates, callerID, langHelper)
+}
+
+// resolveCallNoCandidate handles calls where no project symbol matches the called name.
+// Attempts to resolve as an external dependency via import information.
+func (resolver *Resolver) resolveCallNoCandidate(call model.RawCall, envs map[string]*model.TypeEnv) ([]model.ResolvedRelation, *model.UnresolvedHint) {
+	langHelper := resolver.helperFor(call)
+
+	if call.ReceiverExpr == "" {
 		return nil, nil
 	}
 
 	callerID := resolver.findCallerID(call)
 
-	langHelper := resolver.helperFor(call)
+	// Try ReceiverExpr as class name (static call: e.g. DateUtil.format)
+	if relations, handled := resolver.resolveImportedCall(call, envs, callerID, langHelper); handled && len(relations) > 0 {
+		return relations, nil
+	}
 
-	// Try TypeEnv receiver match
-	if call.ReceiverExpr != "" {
-		// Step 0: super.method() — delegate to language helper
-		if relations, handled := langHelper.ResolveSuperCall(call, funcCandidates, resolver.heritage, envs, callerID); handled {
-			
-			return relations, nil
-		}
-
-		// Step 1: try import-based full qualified name matching
-		if relations, handled := resolver.resolveImportedCall(call, envs, callerID, langHelper); handled {
-			
-			if len(relations) == 0 {
-				return nil, nil
-			}
-			return relations, nil
-		}
-
-		// Step 2: variable.method — lookup receiver type from TypeEnv
-		receiverType := resolver.lookupReceiverType(call, envs, langHelper)
-		if receiverType != "" {
-			matched := filterByOwnerClass(funcCandidates, receiverType)
-			if len(matched) == 0 && len(resolver.heritage) > 0 {
-				// Only search hierarchy if receiverType is a project class
-				if resolver.isProjectClass(receiverType) {
-					if resolvedMethod := resolver.FindMethodInHierarchy(receiverType, call.CalledName, resolver.heritage); resolvedMethod != nil {
-						relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)
-						relation.Metadata["declared_type"] = receiverType
-						receiverSymbol := resolver.findClassSymbol(receiverType)
-						if receiverSymbol != nil && (receiverSymbol.Kind == constants.KindInterface || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
-							relation.Metadata["polymorphic"] = "true"
-						}
-						return []model.ResolvedRelation{relation}, nil
+	// Try receiverType from TypeEnv (instance call: e.g. jdbcTemplate.query)
+	receiverType := resolver.lookupReceiverType(call, envs, langHelper)
+	if receiverType != "" && receiverType != call.ReceiverExpr {
+		if env := envs[call.FilePath]; env != nil {
+			for _, imp := range env.Imports {
+				if imp.SymbolName == receiverType || (strings.Contains(receiverType, ".") && strings.HasPrefix(receiverType, imp.ModulePath)) {
+					fqn := imp.ModulePath + "." + call.CalledName
+					if strings.Contains(receiverType, ".") {
+						fqn = receiverType + "." + call.CalledName
 					}
+					externalID := "external:" + fqn
+					resolver.symbolTable.AddBatch([]model.Symbol{{
+						ID: externalID, Name: call.CalledName,
+						QualifiedName: fqn, Kind: constants.KindFunction, FilePath: "[external]",
+					}})
+					return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
 				}
 			}
-			if len(matched) == 1 {
-				relation := makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)
+		}
+	}
+	return nil, nil
+}
+
+// resolveCallWithReceiver resolves a call that has a receiver expression (e.g. "svc.findById()").
+// Tries multiple strategies in priority order: super call, import match, TypeEnv lookup,
+// hierarchy walk, wildcard import, and package prefix.
+// Returns (relations, hint, shouldFallthrough). If fallthrough=true, caller should continue to fallback.
+func (resolver *Resolver) resolveCallWithReceiver(
+	call model.RawCall,
+	envs map[string]*model.TypeEnv,
+	funcCandidates []model.Symbol,
+	callerID string,
+	langHelper LanguageHelper,
+) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
+
+	// Strategy 1: super.method() — delegate to language helper for parent class resolution.
+	if relations, handled := langHelper.ResolveSuperCall(call, funcCandidates, resolver.heritage, envs, callerID); handled {
+		return relations, nil, false
+	}
+
+	// Strategy 2: Import-based fully qualified name matching.
+	// e.g. import "com.example.UserService" + call "UserService.findById" → match by FQN.
+	if relations, handled := resolver.resolveImportedCall(call, envs, callerID, langHelper); handled {
+		if len(relations) == 0 {
+			return nil, nil, false
+		}
+		return relations, nil, false
+	}
+
+	// Strategy 3: Lookup receiver type from TypeEnv and match against candidates.
+	receiverType := resolver.lookupReceiverType(call, envs, langHelper)
+	if receiverType != "" {
+		if relations, hint, done := resolver.resolveByReceiverType(call, envs, funcCandidates, callerID, langHelper, receiverType); done {
+			return relations, hint, false
+		}
+	}
+
+	// Strategy 4: Match ReceiverExpr as package prefix in QualifiedName.
+	// e.g. ReceiverExpr="falkor", QN="falkor.New" → match.
+	matched := filterByOwnerClass(funcCandidates, call.ReceiverExpr)
+	if len(matched) == 1 {
+		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceSameFile, "package_prefix", 1)}, nil, false
+	}
+
+	// Strategy 5: Language-specific receiver fallback (e.g. Java same-package static call).
+	if relations, handled := langHelper.ResolveReceiverFallback(call, funcCandidates, envs, callerID, resolver.symbolTable); handled {
+		return relations, nil, false
+	}
+
+	// Language controls whether to fall through to no-receiver matching.
+	if !langHelper.ShouldFallthrough() {
+		return nil, nil, false
+	}
+	return nil, nil, true
+}
+
+// resolveByReceiverType resolves a call using the known receiver type from TypeEnv.
+// Handles exact match, hierarchy walk, arg count disambiguation, wildcard imports, and external fallback.
+func (resolver *Resolver) resolveByReceiverType(
+	call model.RawCall,
+	envs map[string]*model.TypeEnv,
+	funcCandidates []model.Symbol,
+	callerID string,
+	langHelper LanguageHelper,
+	receiverType string,
+) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
+
+	matched := filterByOwnerClass(funcCandidates, receiverType)
+
+	// No direct match — try walking the inheritance hierarchy.
+	if len(matched) == 0 && len(resolver.heritage) > 0 {
+		if resolver.isProjectClass(receiverType) {
+			if resolvedMethod := resolver.FindMethodInHierarchy(receiverType, call.CalledName, resolver.heritage); resolvedMethod != nil {
+				relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)
 				relation.Metadata["declared_type"] = receiverType
-				return []model.ResolvedRelation{relation}, nil
+				receiverSymbol := resolver.findClassSymbol(receiverType)
+				if receiverSymbol != nil && (receiverSymbol.Kind == constants.KindInterface || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
+					relation.Metadata["polymorphic"] = "true"
+				}
+				return []model.ResolvedRelation{relation}, nil, true
 			}
-			if len(matched) > 1 {
-				// Narrow by language-specific scope rules
-				matched = langHelper.NarrowByScope(matched, call, envs[call.FilePath], resolver.symbolTable)
-				if len(matched) == 1 {
-					return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil
-				}
-				sameFile := filterByFile(matched, call.FilePath)
-				if len(sameFile) == 1 {
-					return []model.ResolvedRelation{makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "type_same_file", 1)}, nil
-				}
-				argMatched := filterByArgCount(matched, call.ArgCount)
-				if len(argMatched) == 1 {
-					return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil
-				}
-				if len(argMatched) > 1 {
-					typeMatched := filterByArgTypes(argMatched, resolver.enrichArgTypes(call, envs, langHelper), langHelper)
-					if len(typeMatched) == 1 {
-						return []model.ResolvedRelation{makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1)}, nil
-					}
-				}
-				// Use argMatched if available (narrower), otherwise matched
-				finalCandidates := matched
-				if len(argMatched) > 0 {
-					finalCandidates = argMatched
-				}
-				return makeMultiRelations(callerID, finalCandidates, call, ConfidenceTypeParent, "type_multi"), nil
+		}
+	}
+
+	// Single exact match — highest confidence.
+	if len(matched) == 1 {
+		relation := makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)
+		relation.Metadata["declared_type"] = receiverType
+		return []model.ResolvedRelation{relation}, nil, true
+	}
+
+	// Multiple matches — disambiguate by scope, file, arg count, arg types.
+	if len(matched) > 1 {
+		matched = langHelper.NarrowByScope(matched, call, envs[call.FilePath], resolver.symbolTable)
+		if len(matched) == 1 {
+			return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil, true
+		}
+		sameFile := filterByFile(matched, call.FilePath)
+		if len(sameFile) == 1 {
+			return []model.ResolvedRelation{makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "type_same_file", 1)}, nil, true
+		}
+		argMatched := filterByArgCount(matched, call.ArgCount)
+		if len(argMatched) == 1 {
+			return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil, true
+		}
+		if len(argMatched) > 1 {
+			typeMatched := filterByArgTypes(argMatched, resolver.enrichArgTypes(call, envs, langHelper), langHelper)
+			if len(typeMatched) == 1 {
+				return []model.ResolvedRelation{makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1)}, nil, true
 			}
-			// FQN receiver type resolved but no match — external dependency
-			if strings.Contains(receiverType, ".") {
-				externalQN := receiverType + "." + call.CalledName
+		}
+		finalCandidates := matched
+		if len(argMatched) > 0 {
+			finalCandidates = argMatched
+		}
+		return makeMultiRelations(callerID, finalCandidates, call, ConfidenceTypeParent, "type_multi"), nil, true
+	}
+
+	// No match with receiverType — try external dependency resolution.
+	if strings.Contains(receiverType, ".") {
+		// FQN receiver type (e.g. "com.example.UserService") — create external node directly.
+		externalQN := receiverType + "." + call.CalledName
+		externalID := "external:" + externalQN
+		resolver.symbolTable.AddBatch([]model.Symbol{{
+			ID: externalID, Name: call.CalledName,
+			QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
+		}})
+		return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
+	}
+
+	// Short receiver type (e.g. "List") — try resolving via imports.
+	if env := envs[call.FilePath]; env != nil {
+		for _, imp := range env.Imports {
+			if imp.SymbolName == receiverType {
+				externalQN := imp.ModulePath + "." + call.CalledName
 				externalID := "external:" + externalQN
 				resolver.symbolTable.AddBatch([]model.Symbol{{
 					ID: externalID, Name: call.CalledName,
 					QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
 				}})
-				return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
+				return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
 			}
-			// Short receiver type (e.g. "List") resolved but no match in SymbolTable —
-			// try resolving via imports to create external node
-			if env := envs[call.FilePath]; env != nil {
-				for _, imp := range env.Imports {
-					if imp.SymbolName == receiverType {
-						externalQN := imp.ModulePath + "." + call.CalledName
-						externalID := "external:" + externalQN
-						resolver.symbolTable.AddBatch([]model.Symbol{{
-							ID: externalID, Name: call.CalledName,
-							QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
-						}})
-						return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
-					}
-				}
-			}
-			// receiverType known but no exact import match.
-			// Check if it's a project class via wildcard import (import com.xxx.*)
-			// or same-package class (no import needed).
-			if env := envs[call.FilePath]; env != nil {
-				// Extract current file's package from its symbols
-				callerPkg := ""
-				for _, sym := range resolver.symbolTable.FindByFile(call.FilePath) {
-					if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
-						continue
-					}
-					if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
-						callerPkg = sym.QualifiedName[:idx]
-						break
-					}
-				}
-
-				for _, sym := range resolver.symbolTable.FindByName(receiverType) {
-					if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
-						continue
-					}
-					// Same package — no import needed
-					symPkg := ""
-					if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
-						symPkg = sym.QualifiedName[:idx]
-					}
-					isSamePackage := callerPkg != "" && symPkg == callerPkg
-
-					// Wildcard import match
-					isWildcardImport := false
-					for _, imp := range env.Imports {
-						if strings.HasPrefix(sym.QualifiedName, imp.ModulePath+".") {
-							isWildcardImport = true
-							break
-						}
-					}
-
-					if isSamePackage || isWildcardImport {
-						matched := filterByOwnerClass(funcCandidates, sym.Name)
-						if len(matched) == 1 {
-							return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil
-						}
-						if len(matched) > 1 {
-							argMatched := filterByArgCount(matched, call.ArgCount)
-							if len(argMatched) == 1 {
-								return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil
-							}
-							return makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "type_multi"), nil
-						}
-						break
-					}
-				}
-			}
-			// Not a project class — try creating external via receiverType + import
-			if env := envs[call.FilePath]; env != nil {
-				for _, imp := range env.Imports {
-					if imp.SymbolName == receiverType {
-						externalQN := imp.ModulePath + "." + call.CalledName
-						externalID := "external:" + externalQN
-						resolver.symbolTable.AddBatch([]model.Symbol{{
-							ID: externalID, Name: call.CalledName,
-							QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
-						}})
-						return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
-					}
-				}
-			}
-			return nil, nil
-		}
-
-		// Fallback: match ReceiverExpr as package prefix in QualifiedName
-		// e.g. ReceiverExpr="falkor", QN="falkor.New" → match
-		matched := filterByOwnerClass(funcCandidates, call.ReceiverExpr)
-		if len(matched) == 1 {
-			return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceSameFile, "package_prefix", 1)}, nil
-		}
-
-		// Language-specific receiver fallback (e.g., Java same-package static call)
-		if relations, handled := langHelper.ResolveReceiverFallback(call, funcCandidates, envs, callerID, resolver.symbolTable); handled {
-			return relations, nil
-		}
-
-		// Language controls whether to fall through to no-receiver matching
-		if !langHelper.ShouldFallthrough() {
-			return nil, nil
 		}
 	}
 
-	// Exclude generated symbols from fallback matching
+	// Try wildcard import or same-package resolution.
+	if env := envs[call.FilePath]; env != nil {
+		callerPkg := ""
+		for _, sym := range resolver.symbolTable.FindByFile(call.FilePath) {
+			if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
+				continue
+			}
+			if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
+				callerPkg = sym.QualifiedName[:idx]
+				break
+			}
+		}
+
+		for _, sym := range resolver.symbolTable.FindByName(receiverType) {
+			if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
+				continue
+			}
+			symPkg := ""
+			if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
+				symPkg = sym.QualifiedName[:idx]
+			}
+			isSamePackage := callerPkg != "" && symPkg == callerPkg
+
+			isWildcardImport := false
+			for _, imp := range env.Imports {
+				if strings.HasPrefix(sym.QualifiedName, imp.ModulePath+".") {
+					isWildcardImport = true
+					break
+				}
+			}
+
+			if isSamePackage || isWildcardImport {
+				matched := filterByOwnerClass(funcCandidates, sym.Name)
+				if len(matched) == 1 {
+					return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil, true
+				}
+				if len(matched) > 1 {
+					argMatched := filterByArgCount(matched, call.ArgCount)
+					if len(argMatched) == 1 {
+						return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil, true
+					}
+					return makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "type_multi"), nil, true
+				}
+				break
+			}
+		}
+	}
+
+	// Last attempt: external via import for short receiverType.
+	if env := envs[call.FilePath]; env != nil {
+		for _, imp := range env.Imports {
+			if imp.SymbolName == receiverType {
+				externalQN := imp.ModulePath + "." + call.CalledName
+				externalID := "external:" + externalQN
+				resolver.symbolTable.AddBatch([]model.Symbol{{
+					ID: externalID, Name: call.CalledName,
+					QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
+				}})
+				return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
+			}
+		}
+	}
+
+	return nil, nil, true
+}
+
+// resolveCallFallback resolves a call without receiver type information.
+// Uses progressively weaker strategies: same file, arg count, inherited method, global unique name.
+func (resolver *Resolver) resolveCallFallback(
+	call model.RawCall,
+	envs map[string]*model.TypeEnv,
+	funcCandidates []model.Symbol,
+	callerID string,
+	langHelper LanguageHelper,
+) ([]model.ResolvedRelation, *model.UnresolvedHint) {
+
+	// Exclude generated symbols (e.g. synthetic getters/setters) from fallback matching.
 	realCandidates := langHelper.FilterGenerated(funcCandidates)
 
-	// Same file match
+	// Strategy 1: Same file — if only one candidate is in the same file, high confidence.
 	sameFile := filterByFile(realCandidates, call.FilePath)
 	if len(sameFile) == 1 {
 		return []model.ResolvedRelation{makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "same_file", 1)}, nil
 	}
 
-	// Arg count disambiguation
+	// Strategy 2: Arg count disambiguation — narrow by matching argument count.
 	if call.ArgCount > 0 {
 		argMatched := filterByArgCount(realCandidates, call.ArgCount)
 		if len(argMatched) == 1 {
@@ -360,7 +426,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 		}
 	}
 
-	// No-receiver inherited method: check caller's class hierarchy
+	// Strategy 3: No-receiver inherited method — check caller's class hierarchy.
 	if call.ReceiverExpr == "" && len(resolver.heritage) > 0 {
 		callerClass := call.CallerName
 		if dotIdx := strings.LastIndex(callerClass, "."); dotIdx >= 0 {
@@ -371,12 +437,12 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 		}
 	}
 
-	// Global unique name
+	// Strategy 4: Global unique name — only one candidate exists in the entire project.
 	if len(realCandidates) == 1 {
 		return []model.ResolvedRelation{makeRelation(callerID, realCandidates[0].ID, call, ConfidenceNameUnique, "name_unique", 1)}, nil
 	}
 
-	// Multiple candidates — generate unresolved hint
+	// Multiple candidates remain — cannot resolve confidently, generate unresolved hint.
 	if len(realCandidates) > 1 {
 		return nil, classifyUnresolvedCall(call, callerID, "", realCandidates)
 	}
