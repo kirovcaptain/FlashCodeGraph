@@ -73,14 +73,21 @@ func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage) []model.
 	return relations
 }
 
-// DetectOverrides finds methods in child classes that share the same name as methods
-// in ancestor classes, producing OVERRIDES relations. Uses BFS to walk the full
-// parent chain (including grandparents), so transitive overrides are detected.
-// Constructors (__init__, constructor) are excluded since they are not true overrides.
-func (resolver *Resolver) DetectOverrides(heritage []model.RawHeritage) []model.ResolvedRelation {
+// DetectOverridesAndDispatches finds methods in child classes that share the same name as methods
+// in ancestor classes. For each match, produces two edges:
+//   - OVERRIDES (child → parent): indicates the child method overrides the parent method.
+//   - DISPATCHES (parent → child): indicates that calls to the parent method may dispatch
+//     to the child method at runtime (polymorphic dispatch via inheritance or interface).
+//
+// Uses BFS to walk the full parent chain (including grandparents), so transitive overrides
+// are detected. Constructors (__init__, constructor) are excluded since they are not true overrides.
+func (resolver *Resolver) DetectOverridesAndDispatches(heritage []model.RawHeritage) []model.ResolvedRelation {
+	// Step 1: Build parent map — maps each child class qualified name to its parent qualified names.
 	qnParentMap := resolver.getQualifiedParentMap(heritage)
 
-	// Build childQualified → filePath + shortName mapping for helper selection
+	// Step 2: Build lookup maps for language helper selection.
+	// childFileMap: childQN → filePath (determines which language helper to use)
+	// childShortNameMap: childQN → short class name (for constructor detection)
 	childFileMap := make(map[string]string)
 	childShortNameMap := make(map[string]string)
 	for _, entry := range heritage {
@@ -92,6 +99,7 @@ func (resolver *Resolver) DetectOverrides(heritage []model.RawHeritage) []model.
 
 	var relations []model.ResolvedRelation
 
+	// Step 3: For each child class, BFS walk up the parent chain to find overridden methods.
 	for childQN, parentQNs := range qnParentMap {
 		childMethods := resolver.symbolTable.FindMethodsByQualifiedName(childQN)
 		if len(childMethods) == 0 {
@@ -101,6 +109,7 @@ func (resolver *Resolver) DetectOverrides(heritage []model.RawHeritage) []model.
 		helper := resolver.helperForFile(childFileMap[childQN])
 		childShortName := childShortNameMap[childQN]
 
+		// BFS traversal: walk parents, grandparents, etc. to detect transitive overrides.
 		visited := make(map[string]bool)
 		queue := make([]string, len(parentQNs))
 		copy(queue, parentQNs)
@@ -115,7 +124,9 @@ func (resolver *Resolver) DetectOverrides(heritage []model.RawHeritage) []model.
 
 			parentMethods := resolver.symbolTable.FindMethodsByQualifiedName(parentQN)
 
+			// Step 4: Compare each child method against each parent method.
 			for _, childMethod := range childMethods {
+				// Skip constructors — they are not true overrides.
 				if helper != nil && helper.IsConstructor(childMethod, childShortName) {
 					continue
 				} else if helper == nil && childMethod.IsConstructor {
@@ -126,6 +137,7 @@ func (resolver *Resolver) DetectOverrides(heritage []model.RawHeritage) []model.
 					if childMethod.ID == parentMethod.ID {
 						continue
 					}
+					// Match by name + param count (language helper may apply stricter rules).
 					matched := false
 					if helper != nil {
 						matched = helper.IsOverrideMatch(childMethod, parentMethod)
@@ -133,12 +145,15 @@ func (resolver *Resolver) DetectOverrides(heritage []model.RawHeritage) []model.
 						matched = childMethod.Name == parentMethod.Name &&
 							countParams(childMethod.Params) == countParams(parentMethod.Params)
 					}
+					// Step 5: Emit both OVERRIDES and DISPATCHES edges for each match.
 					if matched {
+						// OVERRIDES: child → parent (child overrides parent's method)
 						relations = append(relations, model.ResolvedRelation{
 							SourceID: childMethod.ID, TargetID: parentMethod.ID,
 							Kind: model.RelOverrides, SourceKind: constants.KindFunction,
 							Confidence: 1.0, ResolvedBy: "override_detection", Candidates: 1,
 						})
+						// DISPATCHES: parent → child (calling parent method may dispatch to child at runtime)
 						relations = append(relations, model.ResolvedRelation{
 							SourceID: parentMethod.ID, TargetID: childMethod.ID,
 							Kind: model.RelDispatches, SourceKind: constants.KindFunction,
@@ -148,7 +163,7 @@ func (resolver *Resolver) DetectOverrides(heritage []model.RawHeritage) []model.
 				}
 			}
 
-			// Walk up: parent's parents are also in qnParentMap
+			// Continue BFS: enqueue grandparents.
 			if grandParentQNs, exists := qnParentMap[parentQN]; exists {
 				queue = append(queue, grandParentQNs...)
 			}

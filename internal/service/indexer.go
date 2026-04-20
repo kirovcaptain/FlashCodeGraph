@@ -468,7 +468,7 @@ func (indexer *Indexer) writeSemanticNodes(ctx context.Context, scanCtx *scanCon
 //      Matches "class A extends B" / "class A implements I" against SymbolTable
 //      to create EXTENDS and IMPLEMENTS edges.
 //
-//   6. Override Detection (DetectOverrides):
+//   6. Override Detection (DetectOverridesAndDispatches):
 //      For each child class, finds methods that share the same name as parent class
 //      methods, creating OVERRIDES edges.
 //
@@ -598,11 +598,11 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 	heritageRelations := resolverInstance.ResolveHeritage(allHeritage)
 	indexer.progress.EmitSub(PhaseResolving, SubResolveHeritage, fmt.Sprintf("%d heritage", len(heritageRelations)))
 
-	// Step 6: Override detection — find child methods with same name as parent methods.
-	// Produces OVERRIDES and DISPATCHES edges.
-	indexer.progress.EmitSub(PhaseResolving, SubDetectOverrides, "")
-	overrideRelations := resolverInstance.DetectOverrides(allHeritage)
-	indexer.progress.EmitSub(PhaseResolving, SubDetectOverrides, fmt.Sprintf("%d overrides", len(overrideRelations)))
+	// Step 6: Override and dispatch detection — find child methods overriding parent methods.
+	// Produces OVERRIDES (child→parent) and DISPATCHES (parent→child) edges for polymorphic dispatch.
+	indexer.progress.EmitSub(PhaseResolving, SubDetectOverridesAndDispatches, "")
+	overrideRelations := resolverInstance.DetectOverridesAndDispatches(allHeritage)
+	indexer.progress.EmitSub(PhaseResolving, SubDetectOverridesAndDispatches, fmt.Sprintf("%d overrides", len(overrideRelations)))
 
 	// Dump debug data
 	indexer.dump.OnRawCalls(allCalls)

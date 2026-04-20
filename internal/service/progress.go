@@ -127,7 +127,7 @@ const (
 	SubResolveFixpoint       SubStepID = "resolve fixpoint"
 	SubResolveCalls          SubStepID = "resolve calls"
 	SubResolveHeritage       SubStepID = "resolve heritage"
-	SubDetectOverrides       SubStepID = "detect overrides"
+	SubDetectOverridesAndDispatches       SubStepID = "detect overrides"
 	SubCrossFilePropagation  SubStepID = "cross-file propagation"
 	SubExternalNodes         SubStepID = "external nodes"
 	SubRelationEdges         SubStepID = "relation edges"

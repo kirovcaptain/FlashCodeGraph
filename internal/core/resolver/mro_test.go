@@ -120,7 +120,7 @@ func TestComputeMRO_MiddleClass(t *testing.T) {
 	t.Log("✅ Middle class MRO works")
 }
 
-func TestDetectOverrides(t *testing.T) {
+func TestDetectOverridesAndDispatches(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		{ID: "base_speak", Name: "speak", QualifiedName: "Animal.speak", Kind: "Function", FilePath: "animal.py"},
@@ -135,7 +135,7 @@ func TestDetectOverrides(t *testing.T) {
 		{ChildName: "Dog", ChildQualified: "Dog", ParentName: "Animal", Kind: "extends", FilePath: "dog.py"},
 	}
 
-	overrides := resolver.DetectOverrides(heritage)
+	overrides := resolver.DetectOverridesAndDispatches(heritage)
 	if len(overrides) != 2 {
 		t.Fatalf("expected 2 relations (1 override + 1 dispatch), got %d", len(overrides))
 	}
@@ -148,10 +148,10 @@ func TestDetectOverrides(t *testing.T) {
 	if overrides[0].Kind != model.RelOverrides {
 		t.Fatalf("expected OVERRIDES, got %s", overrides[0].Kind)
 	}
-	t.Log("✅ DetectOverrides works")
+	t.Log("✅ DetectOverridesAndDispatches works")
 }
 
-func TestDetectOverrides_TransitiveGrandparent(t *testing.T) {
+func TestDetectOverridesAndDispatches_TransitiveGrandparent(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		{ID: "base_class", Name: "Base", QualifiedName: "Base", Kind: "Class", FilePath: "base.py"},
@@ -168,7 +168,7 @@ func TestDetectOverrides_TransitiveGrandparent(t *testing.T) {
 		{ChildName: "Middle", ChildQualified: "Middle", ParentName: "Base", Kind: "extends"},
 	}
 
-	overrides := resolver.DetectOverrides(heritage)
+	overrides := resolver.DetectOverridesAndDispatches(heritage)
 	// Leaf.run should override Base.run (skipping Middle which has no run)
 	found := false
 	for _, override := range overrides {
@@ -182,7 +182,7 @@ func TestDetectOverrides_TransitiveGrandparent(t *testing.T) {
 	t.Log("✅ Transitive grandparent override detected")
 }
 
-func TestDetectOverrides_SkipsConstructors(t *testing.T) {
+func TestDetectOverridesAndDispatches_SkipsConstructors(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		{ID: "base_class", Name: "Base", QualifiedName: "Base", Kind: "Class", FilePath: "base.py"},
@@ -196,14 +196,14 @@ func TestDetectOverrides_SkipsConstructors(t *testing.T) {
 		{ChildName: "Child", ChildQualified: "Child", ParentName: "Base", Kind: "extends", FilePath: "child.py"},
 	}
 
-	overrides := resolver.DetectOverrides(heritage)
+	overrides := resolver.DetectOverridesAndDispatches(heritage)
 	if len(overrides) != 0 {
 		t.Fatalf("expected 0 overrides (constructors skipped), got %d", len(overrides))
 	}
 	t.Log("✅ Constructors excluded from overrides")
 }
 
-func TestDetectOverrides_MultipleParents(t *testing.T) {
+func TestDetectOverridesAndDispatches_MultipleParents(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		{ID: "a_class", Name: "A", QualifiedName: "A", Kind: "Class", FilePath: "a.py"},
@@ -220,7 +220,7 @@ func TestDetectOverrides_MultipleParents(t *testing.T) {
 		{ChildName: "C", ChildQualified: "C", ParentName: "B", Kind: "extends"},
 	}
 
-	overrides := resolver.DetectOverrides(heritage)
+	overrides := resolver.DetectOverridesAndDispatches(heritage)
 	// C.run should override both A.run and B.run → 2 OVERRIDES + 2 DISPATCHES = 4
 	if len(overrides) < 4 {
 		t.Fatalf("expected at least 4 relations (2 overrides + 2 dispatches), got %d", len(overrides))
@@ -228,7 +228,7 @@ func TestDetectOverrides_MultipleParents(t *testing.T) {
 	t.Logf("✅ Multiple parent overrides: %d detected", len(overrides))
 }
 
-func TestDetectOverrides_NoMethods(t *testing.T) {
+func TestDetectOverridesAndDispatches_NoMethods(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		{ID: "base_class", Name: "Base", QualifiedName: "Base", Kind: "Class", FilePath: "base.py"},
@@ -240,7 +240,7 @@ func TestDetectOverrides_NoMethods(t *testing.T) {
 		{ChildName: "Child", ChildQualified: "Child", ParentName: "Base", Kind: "extends"},
 	}
 
-	overrides := resolver.DetectOverrides(heritage)
+	overrides := resolver.DetectOverridesAndDispatches(heritage)
 	if len(overrides) != 0 {
 		t.Fatalf("expected 0 overrides for classes with no methods, got %d", len(overrides))
 	}
