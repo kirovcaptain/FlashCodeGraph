@@ -252,60 +252,114 @@ func (resolver *Resolver) resolveByReceiverType(
 	receiverType string,
 ) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
 
+	// Filter candidates to those belonging to the receiver's class.
+	// Example: receiverType="UserService", candidates=[UserService.findById, OrderService.findById]
+	//   → matched=[UserService.findById]
 	matched := filterByOwnerClass(funcCandidates, receiverType)
 
-	// No direct match — try walking the inheritance hierarchy.
-	if len(matched) == 0 && len(resolver.heritage) > 0 {
-		if resolver.isProjectClass(receiverType) {
-			if resolvedMethod := resolver.FindMethodInHierarchy(receiverType, call.CalledName, resolver.heritage); resolvedMethod != nil {
-				relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)
-				relation.Metadata["declared_type"] = receiverType
-				receiverSymbol := resolver.findClassSymbol(receiverType)
-				if receiverSymbol != nil && (receiverSymbol.Kind == constants.KindInterface || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
-					relation.Metadata["polymorphic"] = "true"
-				}
-				return []model.ResolvedRelation{relation}, nil, true
-			}
+	if len(matched) == 0 {
+		// No method found in receiverType's class.
+		// Case: receiverType="Animal", call="speak()", but speak() is defined in parent "Dog"
+		//   → try walking inheritance chain.
+		// Case: receiverType="JdbcTemplate", not a project class
+		//   → create external dependency node.
+		if relations, hint, done := resolver.resolveByHierarchyWalk(call, callerID, receiverType); done {
+			return relations, hint, true
 		}
+		return resolver.resolveAsExternalDependency(call, envs, funcCandidates, callerID, receiverType)
 	}
 
-	// Single exact match — highest confidence.
 	if len(matched) == 1 {
-		relation := makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)
-		relation.Metadata["declared_type"] = receiverType
-		return []model.ResolvedRelation{relation}, nil, true
+		// Exactly one method in the receiver's class matches.
+		// Case: receiverType="UserService", only one "findById" in UserService → direct match.
+		return resolver.resolveExactMatch(call, callerID, matched[0], receiverType)
 	}
 
-	// Multiple matches — disambiguate by scope, file, arg count, arg types.
-	if len(matched) > 1 {
-		matched = langHelper.NarrowByScope(matched, call, envs[call.FilePath], resolver.symbolTable)
-		if len(matched) == 1 {
-			return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil, true
-		}
-		sameFile := filterByFile(matched, call.FilePath)
-		if len(sameFile) == 1 {
-			return []model.ResolvedRelation{makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "type_same_file", 1)}, nil, true
-		}
-		argMatched := filterByArgCount(matched, call.ArgCount)
-		if len(argMatched) == 1 {
-			return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil, true
-		}
-		if len(argMatched) > 1 {
-			typeMatched := filterByArgTypes(argMatched, resolver.enrichArgTypes(call, envs, langHelper), langHelper)
-			if len(typeMatched) == 1 {
-				return []model.ResolvedRelation{makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1)}, nil, true
-			}
-		}
-		finalCandidates := matched
-		if len(argMatched) > 0 {
-			finalCandidates = argMatched
-		}
-		return makeMultiRelations(callerID, finalCandidates, call, ConfidenceTypeParent, "type_multi"), nil, true
-	}
+	// Multiple methods with the same name in the receiver's class (overloaded methods).
+	// Case: receiverType="LoggerUtil", matched=[error(String,Object), error(String,Throwable)]
+	//   → disambiguate by arg count, arg types, scope, etc.
+	return resolver.disambiguateMultipleMatches(call, envs, matched, callerID, langHelper)
+}
 
-	// No match with receiverType — try external dependency resolution.
+// resolveByHierarchyWalk walks the inheritance chain to find a parent method matching the call.
+// Returns done=false if no heritage data or no match found (caller should try other strategies).
+func (resolver *Resolver) resolveByHierarchyWalk(call model.RawCall, callerID, receiverType string) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
+	if len(resolver.heritage) == 0 {
+		return nil, nil, false
+	}
+	if !resolver.isProjectClass(receiverType) {
+		return nil, nil, false
+	}
+	resolvedMethod := resolver.FindMethodInHierarchy(receiverType, call.CalledName, resolver.heritage)
+	if resolvedMethod == nil {
+		return nil, nil, false
+	}
+	relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)
+	relation.Metadata["declared_type"] = receiverType
+	receiverSymbol := resolver.findClassSymbol(receiverType)
+	if receiverSymbol != nil && (receiverSymbol.Kind == constants.KindInterface || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
+		relation.Metadata["polymorphic"] = "true"
+	}
+	return []model.ResolvedRelation{relation}, nil, true
+}
+
+// resolveExactMatch handles the case where exactly one candidate matches the receiver type.
+func (resolver *Resolver) resolveExactMatch(call model.RawCall, callerID string, matched model.Symbol, receiverType string) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
+	relation := makeRelation(callerID, matched.ID, call, ConfidenceTypeExact, "type_exact", 1)
+	relation.Metadata["declared_type"] = receiverType
+	return []model.ResolvedRelation{relation}, nil, true
+}
+
+// disambiguateMultipleMatches narrows down multiple candidates using scope rules,
+// same-file proximity, argument count, and argument type matching.
+func (resolver *Resolver) disambiguateMultipleMatches(
+	call model.RawCall,
+	envs map[string]*model.TypeEnv,
+	matched []model.Symbol,
+	callerID string,
+	langHelper LanguageHelper,
+) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
+	// Narrow by language-specific scope rules.
+	matched = langHelper.NarrowByScope(matched, call, envs[call.FilePath], resolver.symbolTable)
+	if len(matched) == 1 {
+		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil, true
+	}
+	// Same file proximity.
+	sameFile := filterByFile(matched, call.FilePath)
+	if len(sameFile) == 1 {
+		return []model.ResolvedRelation{makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "type_same_file", 1)}, nil, true
+	}
+	// Argument count.
+	argMatched := filterByArgCount(matched, call.ArgCount)
+	if len(argMatched) == 1 {
+		return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil, true
+	}
+	// Argument type matching.
+	if len(argMatched) > 1 {
+		typeMatched := filterByArgTypes(argMatched, resolver.enrichArgTypes(call, envs, langHelper), langHelper)
+		if len(typeMatched) == 1 {
+			return []model.ResolvedRelation{makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1)}, nil, true
+		}
+	}
+	// Still ambiguous — return all with lower confidence.
+	finalCandidates := matched
+	if len(argMatched) > 0 {
+		finalCandidates = argMatched
+	}
+	return makeMultiRelations(callerID, finalCandidates, call, ConfidenceTypeParent, "type_multi"), nil, true
+}
+
+// resolveAsExternalDependency creates virtual external nodes when the receiver type
+// doesn't match any project symbol. Tries FQN, import lookup, wildcard import, and same-package.
+func (resolver *Resolver) resolveAsExternalDependency(
+	call model.RawCall,
+	envs map[string]*model.TypeEnv,
+	funcCandidates []model.Symbol,
+	callerID string,
+	receiverType string,
+) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
+	// FQN receiver type (e.g. "com.example.UserService") — create external node directly.
 	if strings.Contains(receiverType, ".") {
-		// FQN receiver type (e.g. "com.example.UserService") — create external node directly.
 		externalQN := receiverType + "." + call.CalledName
 		externalID := "external:" + externalQN
 		resolver.symbolTable.AddBatch([]model.Symbol{{
@@ -315,7 +369,7 @@ func (resolver *Resolver) resolveByReceiverType(
 		return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
 	}
 
-	// Short receiver type (e.g. "List") — try resolving via imports.
+	// Short receiver type (e.g. "List") — try resolving via direct import match.
 	if env := envs[call.FilePath]; env != nil {
 		for _, imp := range env.Imports {
 			if imp.SymbolName == receiverType {
@@ -331,68 +385,100 @@ func (resolver *Resolver) resolveByReceiverType(
 	}
 
 	// Try wildcard import or same-package resolution.
-	if env := envs[call.FilePath]; env != nil {
-		callerPkg := ""
-		for _, sym := range resolver.symbolTable.FindByFile(call.FilePath) {
-			if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
-				continue
-			}
-			if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
-				callerPkg = sym.QualifiedName[:idx]
-				break
-			}
-		}
-
-		for _, sym := range resolver.symbolTable.FindByName(receiverType) {
-			if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
-				continue
-			}
-			symPkg := ""
-			if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
-				symPkg = sym.QualifiedName[:idx]
-			}
-			isSamePackage := callerPkg != "" && symPkg == callerPkg
-
-			isWildcardImport := false
-			for _, imp := range env.Imports {
-				if strings.HasPrefix(sym.QualifiedName, imp.ModulePath+".") {
-					isWildcardImport = true
-					break
-				}
-			}
-
-			if isSamePackage || isWildcardImport {
-				matched := filterByOwnerClass(funcCandidates, sym.Name)
-				if len(matched) == 1 {
-					return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil, true
-				}
-				if len(matched) > 1 {
-					argMatched := filterByArgCount(matched, call.ArgCount)
-					if len(argMatched) == 1 {
-						return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil, true
-					}
-					return makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "type_multi"), nil, true
-				}
-				break
-			}
-		}
+	if relations, hint, done := resolver.resolveByWildcardOrSamePackage(call, envs, funcCandidates, callerID, receiverType); done {
+		return relations, hint, true
 	}
 
 	// Last attempt: external via import for short receiverType.
-	if env := envs[call.FilePath]; env != nil {
-		for _, imp := range env.Imports {
-			if imp.SymbolName == receiverType {
-				externalQN := imp.ModulePath + "." + call.CalledName
-				externalID := "external:" + externalQN
-				resolver.symbolTable.AddBatch([]model.Symbol{{
-					ID: externalID, Name: call.CalledName,
-					QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
-				}})
-				return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
-			}
+	return resolver.resolveExternalByImport(call, envs, callerID, receiverType)
+}
+
+// resolveByWildcardOrSamePackage checks if the receiver type is a project class accessible
+// via wildcard import (import com.xxx.*) or same-package visibility (no import needed).
+func (resolver *Resolver) resolveByWildcardOrSamePackage(
+	call model.RawCall,
+	envs map[string]*model.TypeEnv,
+	funcCandidates []model.Symbol,
+	callerID string,
+	receiverType string,
+) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
+	env := envs[call.FilePath]
+	if env == nil {
+		return nil, nil, false
+	}
+
+	// Determine caller's package from its class symbols.
+	callerPkg := ""
+	for _, sym := range resolver.symbolTable.FindByFile(call.FilePath) {
+		if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
+			continue
+		}
+		if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
+			callerPkg = sym.QualifiedName[:idx]
+			break
 		}
 	}
 
+	// Check each class matching receiverType for package/import accessibility.
+	for _, sym := range resolver.symbolTable.FindByName(receiverType) {
+		if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
+			continue
+		}
+		symPkg := ""
+		if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
+			symPkg = sym.QualifiedName[:idx]
+		}
+		isSamePackage := callerPkg != "" && symPkg == callerPkg
+
+		isWildcardImport := false
+		for _, imp := range env.Imports {
+			if strings.HasPrefix(sym.QualifiedName, imp.ModulePath+".") {
+				isWildcardImport = true
+				break
+			}
+		}
+
+		if isSamePackage || isWildcardImport {
+			matched := filterByOwnerClass(funcCandidates, sym.Name)
+			if len(matched) == 1 {
+				return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil, true
+			}
+			if len(matched) > 1 {
+				argMatched := filterByArgCount(matched, call.ArgCount)
+				if len(argMatched) == 1 {
+					return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil, true
+				}
+				return makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "type_multi"), nil, true
+			}
+			break
+		}
+	}
+	return nil, nil, false
+}
+
+// resolveExternalByImport creates an external node by matching the receiver type against imports.
+// This is the final fallback when all other strategies fail.
+func (resolver *Resolver) resolveExternalByImport(
+	call model.RawCall,
+	envs map[string]*model.TypeEnv,
+	callerID string,
+	receiverType string,
+) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
+	env := envs[call.FilePath]
+	if env == nil {
+		return nil, nil, true
+	}
+	for _, imp := range env.Imports {
+		if imp.SymbolName == receiverType {
+			externalQN := imp.ModulePath + "." + call.CalledName
+			externalID := "external:" + externalQN
+			resolver.symbolTable.AddBatch([]model.Symbol{{
+				ID: externalID, Name: call.CalledName,
+				QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
+			}})
+			return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
+		}
+	}
 	return nil, nil, true
 }
 
