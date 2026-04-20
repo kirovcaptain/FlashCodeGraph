@@ -45,6 +45,7 @@ type ScannedFile struct {
 // ProjectInfo holds detected project metadata.
 type ProjectInfo struct {
 	ProjectType string
+	Language    string                       // Primary language (java, go, python, typescript, javascript)
 	BuildFiles  []string
 	SubModules  []SubModule
 	SourceDirs  map[string]string            // module name → src dir

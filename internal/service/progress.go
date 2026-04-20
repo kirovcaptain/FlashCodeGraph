@@ -110,6 +110,7 @@ const (
 	SubCleanGraph       SubStepID = "clean graph"
 	SubCleanChanged     SubStepID = "clean changed"
 	SubFindAffected     SubStepID = "find affected"
+	SubFilterLanguage   SubStepID = "filter language"
 	SubLoadSymbols      SubStepID = "load symbols"
 	SubStructuralNodes  SubStepID = "structural nodes"
 	SubSymbolNodes      SubStepID = "symbol nodes"

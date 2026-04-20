@@ -169,7 +169,33 @@ func (indexer *Indexer) scanProject(ctx context.Context, repoPath string, branch
 			result.FilesByLanguage[file.Language]++
 		}
 	}
-	indexer.progress.Emit(PhaseFileScan, result.FilesScanned, result.FilesScanned, fmt.Sprintf("%d files", result.FilesScanned))
+
+	// Determine primary language from file counts
+	projectInfo.Language = determinePrimaryLanguage(result.FilesByLanguage)
+
+	// Filter out non-primary-language source files
+	if projectInfo.Language != "" {
+		skippedByLanguage := make(map[string]int)
+		var primaryFiles []scanner.ScannedFile
+		for _, file := range files {
+			if file.Category == constants.FileSource && file.Language != projectInfo.Language {
+				// TS and JS are treated as the same language family
+				if !isSameLanguageFamily(file.Language, projectInfo.Language) {
+					skippedByLanguage[file.Language]++
+					continue
+				}
+			}
+			primaryFiles = append(primaryFiles, file)
+		}
+		if len(skippedByLanguage) > 0 {
+			for lang, count := range skippedByLanguage {
+				indexer.progress.EmitSub(PhaseFileScan, SubFilterLanguage, fmt.Sprintf("⚠ skipped %d %s files (project language: %s)", count, lang, projectInfo.Language))
+			}
+		}
+		files = primaryFiles
+	}
+
+	indexer.progress.Emit(PhaseFileScan, result.FilesScanned, result.FilesScanned, fmt.Sprintf("%d files, language=%s", result.FilesScanned, projectInfo.Language))
 
 	return &scanContext{
 		absPath:             absPath,
@@ -504,14 +530,8 @@ func (indexer *Indexer) writeSemanticNodes(ctx context.Context, scanCtx *scanCon
 func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable) error {
 	indexer.progress.Emit(PhaseResolving, 0, 0, "relations")
 
-	// Build language helpers
-	langHelpers := map[string]resolver.LanguageHelper{
-		constants.LangJava:       resolverjava.NewHelper(symbolTable),
-		constants.LangGo:         resolvergo.NewHelper(symbolTable),
-		constants.LangPython:     resolverpy.NewHelper(),
-		constants.LangTypeScript: resolverts.NewHelper(),
-		constants.LangJavaScript: resolverts.NewHelper(),
-	}
+	// Build language helper for the project's primary language only
+	langHelpers := buildLanguageHelpers(scanCtx.projectInfo.Language, symbolTable)
 	resolverInstance := resolver.NewResolver(symbolTable, langHelpers)
 	allImports, allCalls, allHeritage := collectRawRelations(parseResults)
 	allFilePaths := collectSourceFilePaths(scanCtx.files)
@@ -1671,3 +1691,40 @@ func capitalizeFirst(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// determinePrimaryLanguage returns the language with the most source files.
+// Returns empty string if no source files exist.
+func determinePrimaryLanguage(filesByLanguage map[string]int) string {
+	maxCount := 0
+	primaryLanguage := ""
+	for lang, count := range filesByLanguage {
+		if count > maxCount {
+			maxCount = count
+			primaryLanguage = lang
+		}
+	}
+	return primaryLanguage
+}
+
+// isSameLanguageFamily returns true if two languages share the same parser/helper.
+// TypeScript and JavaScript are treated as the same family.
+func isSameLanguageFamily(lang1, lang2 string) bool {
+	tsFamily := map[string]bool{"typescript": true, "javascript": true}
+	return tsFamily[lang1] && tsFamily[lang2]
+}
+// buildLanguageHelpers creates resolver helpers only for the project's primary language.
+// TS and JS share the same helper, so both are registered when either is the primary language.
+func buildLanguageHelpers(language string, symbolTable *resolver.SymbolTable) map[string]resolver.LanguageHelper {
+	helpers := make(map[string]resolver.LanguageHelper)
+	switch language {
+	case constants.LangJava:
+		helpers[constants.LangJava] = resolverjava.NewHelper(symbolTable)
+	case constants.LangGo:
+		helpers[constants.LangGo] = resolvergo.NewHelper(symbolTable)
+	case constants.LangPython:
+		helpers[constants.LangPython] = resolverpy.NewHelper()
+	case constants.LangTypeScript, constants.LangJavaScript:
+		helpers[constants.LangTypeScript] = resolverts.NewHelper()
+		helpers[constants.LangJavaScript] = resolverts.NewHelper()
+	}
+	return helpers
+}

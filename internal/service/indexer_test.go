@@ -1772,3 +1772,41 @@ func (s *Service) Bar() string { return "bar_modified" }
 		t.Errorf("BUG-4: expected FilesProcessed >= 2 (service.go + handler.go as affected importer), got %d", result.FilesProcessed)
 	}
 }
+
+func TestDeterminePrimaryLanguage(t *testing.T) {
+	tests := []struct {
+		input    map[string]int
+		expected string
+	}{
+		{map[string]int{"java": 70, "python": 3}, "java"},
+		{map[string]int{"go": 17}, "go"},
+		{map[string]int{"typescript": 10, "javascript": 2}, "typescript"},
+		{map[string]int{}, ""},
+		{nil, ""},
+	}
+	for _, test := range tests {
+		result := determinePrimaryLanguage(test.input)
+		if result != test.expected {
+			t.Errorf("determinePrimaryLanguage(%v) = %q, want %q", test.input, result, test.expected)
+		}
+	}
+}
+
+func TestIsSameLanguageFamily(t *testing.T) {
+	tests := []struct {
+		lang1, lang2 string
+		expected     bool
+	}{
+		{"typescript", "javascript", true},
+		{"javascript", "typescript", true},
+		{"java", "typescript", false},
+		{"go", "python", false},
+		{"typescript", "typescript", true},
+	}
+	for _, test := range tests {
+		result := isSameLanguageFamily(test.lang1, test.lang2)
+		if result != test.expected {
+			t.Errorf("isSameLanguageFamily(%q, %q) = %v, want %v", test.lang1, test.lang2, result, test.expected)
+		}
+	}
+}
