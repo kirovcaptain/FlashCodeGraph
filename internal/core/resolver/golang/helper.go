@@ -120,7 +120,7 @@ func (goHelper *Helper) InferImplements() []model.ResolvedRelation {
 	ifaceIDs := make(map[string]string)              // ifaceQN → symbol ID
 
 	for _, sym := range goHelper.symbolTable.All() {
-		if sym.Kind == constants.KindInterface {
+		if sym.Kind == constants.KindInterface && strings.HasSuffix(sym.FilePath, ".go") {
 			ifaceIDs[sym.QualifiedName] = sym.ID
 			ifaceMethods[sym.QualifiedName] = make(map[string]bool)
 		}
@@ -151,7 +151,7 @@ func (goHelper *Helper) InferImplements() []model.ResolvedRelation {
 	structs := make(map[string]*structInfo)
 
 	for _, sym := range goHelper.symbolTable.All() {
-		if sym.Kind == constants.KindClass || sym.ClassType == constants.ClassTypeStruct {
+		if (sym.Kind == constants.KindClass || sym.ClassType == constants.ClassTypeStruct) && strings.HasSuffix(sym.FilePath, ".go") {
 			structs[sym.QualifiedName] = &structInfo{
 				id:            sym.ID,
 				qualifiedName: sym.QualifiedName,
