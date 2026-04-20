@@ -516,15 +516,48 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	allImports, allCalls, allHeritage := collectRawRelations(parseResults)
 	allFilePaths := collectSourceFilePaths(scanCtx.files)
 
-	// Phase A: Import resolution — File→File IMPORTS edges
+	// Phase A: Import resolution
+	importRelations, err := indexer.resolveImports(ctx, resolverInstance, allImports, allFilePaths, scanCtx.result)
+	if err != nil {
+		return err
+	}
+
+	// Phase B + C: Type inference, call/heritage/override resolution, cross-file propagation
+	callRelations, heritageRelations, overrideRelations, callHints, err := indexer.resolveCallsAndHeritage(
+		ctx, resolverInstance, parseResults, symbolTable, allCalls, allHeritage, importRelations)
+	if err != nil {
+		return err
+	}
+
+	// Phase D: Write all resolved data to graph
+	return indexer.writeResolvedRelations(ctx, scanCtx, symbolTable, langHelpers,
+		callRelations, heritageRelations, overrideRelations, callHints)
+}
+
+// resolveImports resolves raw import statements into File→File IMPORTS edges and writes them.
+func (indexer *Indexer) resolveImports(ctx context.Context, resolverInstance *resolver.Resolver, allImports []model.RawImport, allFilePaths []string, result *model.IndexResult) ([]model.ResolvedRelation, error) {
 	indexer.progress.EmitSub(PhaseResolving, SubImportEdges, "")
 	importRelations := resolverInstance.ResolveImports(allImports, allFilePaths)
-	if err := indexer.writeRelations(ctx, importRelations, scanCtx.result); err != nil {
-		return fmt.Errorf("indexer: write imports: %w", err)
+	if err := indexer.writeRelations(ctx, importRelations, result); err != nil {
+		return nil, fmt.Errorf("indexer: write imports: %w", err)
 	}
 	indexer.progress.EmitSub(PhaseResolving, SubImportEdges, fmt.Sprintf("%d imports", len(importRelations)))
+	return importRelations, nil
+}
 
-	// Phase B: Local type inference → call/heritage/override resolution
+// resolveCallsAndHeritage performs type inference and resolves call/heritage/override relationships.
+func (indexer *Indexer) resolveCallsAndHeritage(
+	ctx context.Context,
+	resolverInstance *resolver.Resolver,
+	parseResults []model.ParseResult,
+	symbolTable *resolver.SymbolTable,
+	allCalls []model.RawCall,
+	allHeritage []model.RawHeritage,
+	importRelations []model.ResolvedRelation,
+) ([]model.ResolvedRelation, []model.ResolvedRelation, []model.ResolvedRelation, []model.UnresolvedHint, error) {
+
+	// Step 1: Local type inference — build per-file TypeEnv from constructor calls and type annotations.
+	// Example: "UserService svc = new UserService()" → svc maps to type UserService.
 	indexer.progress.EmitSub(PhaseResolving, SubInferLocal, "")
 	typeInfer := typeinfer.New()
 	envs := make(map[string]*model.TypeEnv)
@@ -533,14 +566,16 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	}
 	indexer.progress.EmitSub(PhaseResolving, SubInferLocal, fmt.Sprintf("%d files", len(parseResults)))
 
-	// Multi-return value type inference (needs complete SymbolTable)
+	// Step 2: Multi-return value type inference — resolve variables from multi-return functions.
+	// Example (Go): "store, err := kuzu.New()" → store maps to *kuzu.Store.
 	indexer.progress.EmitSub(PhaseResolving, SubInferMultiReturn, "")
 	for _, env := range envs {
 		typeInfer.InferMultiReturn(env, symbolTable.FindByName)
 	}
 	indexer.progress.EmitSub(PhaseResolving, SubInferMultiReturn, fmt.Sprintf("%d files", len(envs)))
 
-	// Fixpoint propagation: resolve copy/callResult/fieldAccess/methodCallResult chains
+	// Step 3: Fixpoint propagation — iteratively resolve copy/callResult/fieldAccess/methodCallResult
+	// chains until no new types can be inferred. Handles transitive assignments like "x = y".
 	indexer.progress.EmitSub(PhaseResolving, SubResolveFixpoint, "")
 	for _, parseResult := range parseResults {
 		if len(parseResult.PendingAssignments) > 0 {
@@ -551,51 +586,47 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 
 	resolverInstance.SetHeritage(allHeritage)
 
+	// Step 4: Call resolution — match raw calls against SymbolTable using TypeEnv for receiver types.
+	// Produces CALLS edges with confidence scores (type_exact=0.95, arg_count=0.85, etc.).
 	indexer.progress.EmitSub(PhaseResolving, SubResolveCalls, "")
 	callRelations, callHints := resolverInstance.ResolveCalls(allCalls, envs)
 	indexer.progress.EmitSub(PhaseResolving, SubResolveCalls, fmt.Sprintf("%d calls, %d hints", len(callRelations), len(callHints)))
 
+	// Step 5: Heritage resolution — match "extends"/"implements" declarations against SymbolTable.
+	// Produces EXTENDS and IMPLEMENTS edges.
 	indexer.progress.EmitSub(PhaseResolving, SubResolveHeritage, "")
 	heritageRelations := resolverInstance.ResolveHeritage(allHeritage)
 	indexer.progress.EmitSub(PhaseResolving, SubResolveHeritage, fmt.Sprintf("%d heritage", len(heritageRelations)))
 
+	// Step 6: Override detection — find child methods with same name as parent methods.
+	// Produces OVERRIDES and DISPATCHES edges.
 	indexer.progress.EmitSub(PhaseResolving, SubDetectOverrides, "")
 	overrideRelations := resolverInstance.DetectOverrides(allHeritage)
 	indexer.progress.EmitSub(PhaseResolving, SubDetectOverrides, fmt.Sprintf("%d overrides", len(overrideRelations)))
 
 	// Dump debug data
+	indexer.dump.OnRawCalls(allCalls)
+	indexer.dump.OnResolved(callRelations, callHints)
 	if _, ok := indexer.dump.(*FileDumpManager); ok {
-		indexer.progress.EmitSub(PhaseResolving, SubDebugDump, "")
-		indexer.dump.OnRawCalls(allCalls)
-		indexer.dump.OnResolved(callRelations, callHints)
 		indexer.progress.EmitSub(PhaseResolving, SubDebugDump, fmt.Sprintf("%d calls, %d resolved", len(allCalls), len(callRelations)))
-	} else {
-		indexer.dump.OnRawCalls(allCalls)
-		indexer.dump.OnResolved(callRelations, callHints)
 	}
 
-	// Phase C: Cross-file type propagation (conditional)
-	// Count calls resolved as "best_guess" — these have low confidence (0.25)
-	// because the resolver couldn't determine the receiver type from local scope.
+	// Step 7: Cross-file type propagation (conditional) — triggered when >3% of calls are best_guess.
+	// Propagates types along import edges, then re-resolves affected calls for higher confidence.
 	unresolvedWithReceiver := 0
 	for _, relation := range callRelations {
 		if relation.ResolvedBy == "best_guess" {
 			unresolvedWithReceiver++
 		}
 	}
-	// Only trigger propagation if >3% of calls are unresolved.
-	// Below this threshold, local inference handles most cases well enough.
 	const propagationThreshold = 0.03
 	if len(allCalls) > 0 {
 		ratio := float64(unresolvedWithReceiver) / float64(len(allCalls))
 		if ratio > propagationThreshold {
 			indexer.progress.EmitSub(PhaseResolving, SubCrossFilePropagation, "")
-			// Build import dependency graph for type propagation
 			importGraph := buildImportGraphFromRelations(importRelations)
-			// Propagate exported types along import edges to enrich TypeEnvs
 			updatedEnvs, affectedFiles := typeInfer.Propagate(parseResults, importGraph, envs)
 			if len(affectedFiles) > 0 {
-				// Collect calls from files whose TypeEnv was enriched
 				affectedSet := make(map[string]bool, len(affectedFiles))
 				for _, f := range affectedFiles {
 					affectedSet[f] = true
@@ -606,7 +637,6 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 						affectedCalls = append(affectedCalls, call)
 					}
 				}
-				// Re-resolve with enriched type info, replacing best_guess results
 				if len(affectedCalls) > 0 {
 					reResolved, reHints := resolverInstance.ResolveCalls(affectedCalls, updatedEnvs)
 					callRelations = mergeCallRelations(callRelations, reResolved, affectedFiles)
@@ -617,7 +647,20 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 		}
 	}
 
-	// Write external dependency virtual nodes
+	return callRelations, heritageRelations, overrideRelations, callHints, nil
+}
+
+// writeResolvedRelations writes external nodes and all relation edges to the graph.
+func (indexer *Indexer) writeResolvedRelations(
+	ctx context.Context,
+	scanCtx *scanContext,
+	symbolTable *resolver.SymbolTable,
+	langHelpers map[string]resolver.LanguageHelper,
+	callRelations, heritageRelations, overrideRelations []model.ResolvedRelation,
+	callHints []model.UnresolvedHint,
+) error {
+	// Step 1: Write external dependency virtual nodes — creates Function nodes for symbols
+	// referenced but not defined in source (e.g. third-party library calls like "spring.JdbcTemplate.query").
 	indexer.progress.EmitSub(PhaseResolving, SubExternalNodes, "")
 	var externalNodes []model.Node
 	for _, sym := range symbolTable.All() {
@@ -640,7 +683,9 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	}
 	indexer.progress.EmitSub(PhaseResolving, SubExternalNodes, fmt.Sprintf("%d nodes", len(externalNodes)))
 
-	// Write all resolved edges: CALLS + EXTENDS + IMPLEMENTS + OVERRIDES
+	// Step 2: Write all resolved relation edges (CALLS + EXTENDS + IMPLEMENTS + OVERRIDES).
+	// Also invokes InferImplements on language helpers for implicit interface implementations
+	// (e.g. Go structs satisfying interfaces without explicit "implements" keyword).
 	allRelations := append(callRelations, heritageRelations...)
 	allRelations = append(allRelations, overrideRelations...)
 	var implementsRelations []model.ResolvedRelation
@@ -655,7 +700,8 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	}
 	indexer.progress.EmitSub(PhaseResolving, SubRelationEdges, fmt.Sprintf("%d edges", len(allRelations)))
 
-	// Write UNRESOLVED_CALL edges for hints with candidates in the graph
+	// Step 3: Write UNRESOLVED_CALL hint edges — preserves candidate information for calls
+	// that could not be confidently resolved, enabling downstream tools to show possible targets.
 	if len(callHints) > 0 {
 		indexer.progress.EmitSub(PhaseResolving, SubUnresolvedHints, "")
 		var hintEdges []model.Edge
