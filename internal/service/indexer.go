@@ -433,20 +433,29 @@ func (indexer *Indexer) writeSemanticNodes(ctx context.Context, scanCtx *scanCon
 
 // resolveAndWriteRelations resolves cross-symbol relationships and writes them as graph edges.
 //
-// This function implements a 3-phase relationship resolution pipeline:
+// This function implements a multi-phase relationship resolution pipeline:
 //
 // Phase A — Import Resolution:
 //   Matches raw import statements (e.g. "import com.example.UserService") against known
 //   source file paths to create File→File IMPORTS edges. Uses path-based matching:
 //   "com.example.UserService" → "src/main/java/com/example/UserService.java".
 //
-// Phase B — Call, Heritage, and Override Resolution:
+// Phase B — Type Inference + Call/Heritage/Override Resolution:
 //   1. Local Type Inference (InferLocal):
 //      For each file, builds a TypeEnv mapping variable names to type names using
 //      constructor calls and type annotations within that file.
 //      Example: "UserService svc = new UserService()" → svc:UserService
 //
-//   2. Call Resolution (ResolveCalls):
+//   2. Multi-Return Value Inference (InferMultiReturn):
+//      Resolves variables assigned from multi-return functions (e.g. Go's "store, err := New()").
+//      Requires the complete SymbolTable to look up function return types.
+//
+//   3. Fixpoint Propagation (ResolveFixpoint):
+//      Iteratively resolves copy/callResult/fieldAccess/methodCallResult assignment chains
+//      until no new types can be inferred. Handles cases like "x = y" where y's type
+//      was inferred in a previous step.
+//
+//   4. Call Resolution (ResolveCalls):
 //      Matches raw calls (e.g. "svc.findById()") against the SymbolTable.
 //      Resolution strategies (in priority order, each assigns a confidence score):
 //        - type_exact (0.95): receiver type known from TypeEnv → exact match
@@ -455,11 +464,11 @@ func (indexer *Indexer) writeSemanticNodes(ctx context.Context, scanCtx *scanCon
 //        - name_unique (0.70): globally unique function name
 //        - best_guess (0.25): multiple candidates, pick first (low confidence)
 //
-//   3. Heritage Resolution (ResolveHeritage):
+//   5. Heritage Resolution (ResolveHeritage):
 //      Matches "class A extends B" / "class A implements I" against SymbolTable
 //      to create EXTENDS and IMPLEMENTS edges.
 //
-//   4. Override Detection (DetectOverrides):
+//   6. Override Detection (DetectOverrides):
 //      For each child class, finds methods that share the same name as parent class
 //      methods, creating OVERRIDES edges.
 //
@@ -483,6 +492,15 @@ func (indexer *Indexer) writeSemanticNodes(ctx context.Context, scanCtx *scanCon
 //
 //   This avoids the O(N²) cost of global type resolution by only propagating
 //   along actual import dependencies, and only when the benefit is likely.
+//
+// Phase D — Write Results:
+//   1. External Nodes: creates virtual Function nodes for external dependencies
+//      (symbols with ID prefix "external:") that were referenced but not defined in source.
+//   2. Relation Edges: writes all resolved CALLS + EXTENDS + IMPLEMENTS + OVERRIDES edges.
+//   3. InferImplements: language helpers infer additional IMPLEMENTS edges
+//      (e.g. Go struct satisfying an interface without explicit declaration).
+//   4. Unresolved Hint Edges: writes UNRESOLVED_CALL edges for calls that could not be
+//      confidently resolved, preserving candidate information for downstream analysis.
 func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable) error {
 	indexer.progress.Emit(PhaseResolving, 0, 0, "relations")
 
