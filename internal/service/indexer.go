@@ -211,13 +211,9 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	}
 
 	// Write symbol-related CONTAINS edges (File→Symbol, Class→Function) after symbol nodes exist
-	indexer.progress.EmitSub(PhaseWriting, SubContainsEdges, "")
-	if len(symbolEdges) > 0 {
-		if err := indexer.graphStore.CreateEdges(ctx, symbolEdges); err != nil {
-			return nil, fmt.Errorf("indexer: write symbol edges: %w", err)
-		}
+	if err := indexer.writeSymbolContainsEdges(ctx, symbolEdges); err != nil {
+		return nil, err
 	}
-	indexer.progress.EmitSub(PhaseWriting, SubContainsEdges, fmt.Sprintf("%d edges", len(symbolEdges)))
 
 	// Resolve and write relationships
 	if err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable); err != nil {
@@ -313,13 +309,9 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	}
 
 	// Write symbol-related CONTAINS edges (File→Symbol, Class→Function) after symbol nodes exist
-	indexer.progress.EmitSub(PhaseWriting, SubContainsEdges, "")
-	if len(symbolEdges) > 0 {
-		if err := indexer.graphStore.CreateEdges(ctx, symbolEdges); err != nil {
-			return nil, fmt.Errorf("indexer: write symbol edges: %w", err)
-		}
+	if err := indexer.writeSymbolContainsEdges(ctx, symbolEdges); err != nil {
+		return nil, err
 	}
-	indexer.progress.EmitSub(PhaseWriting, SubContainsEdges, fmt.Sprintf("%d edges", len(symbolEdges)))
 
 	// Resolve and write relationships
 	if err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable); err != nil {
@@ -1033,6 +1025,19 @@ func (indexer *Indexer) cleanEmptyDirectories(ctx context.Context, deletedFiles 
 			indexer.graphStore.DeleteNodeByID(ctx, dirID)
 		}
 	}
+}
+
+// writeSymbolContainsEdges writes CONTAINS edges between File→Symbol and Class→Function.
+// These edges must be written after symbol nodes exist in the graph.
+func (indexer *Indexer) writeSymbolContainsEdges(ctx context.Context, symbolEdges []model.Edge) error {
+	indexer.progress.EmitSub(PhaseWriting, SubContainsEdges, "")
+	if len(symbolEdges) > 0 {
+		if err := indexer.graphStore.CreateEdges(ctx, symbolEdges); err != nil {
+			return fmt.Errorf("indexer: write symbol contains edges: %w", err)
+		}
+	}
+	indexer.progress.EmitSub(PhaseWriting, SubContainsEdges, fmt.Sprintf("%d edges", len(symbolEdges)))
+	return nil
 }
 
 func (indexer *Indexer) writeStructuralNodes(ctx context.Context, absPath string, files []scanner.ScannedFile, parseResults []model.ParseResult, result *model.IndexResult) ([]model.Edge, error) {
