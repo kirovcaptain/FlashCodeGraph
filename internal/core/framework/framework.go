@@ -85,6 +85,8 @@ func detectMavenFrameworks(content string) []Framework {
 		{"graphql-java", "graphql", "graphql"},
 		{"dubbo", "dubbo", "rpc"},
 		{"org.apache.dubbo", "dubbo", "rpc"},
+		{"xxl-job", "xxl-job", "schedule"},
+		{"xuxueli", "xxl-job", "schedule"},
 	}
 	seen := make(map[string]bool)
 	for _, p := range patterns {
@@ -113,6 +115,8 @@ func detectGradleFrameworks(content string) []Framework {
 		{"graphql-java", "graphql", "graphql"},
 		{"spring-graphql", "graphql", "graphql"},
 		{"dubbo", "dubbo", "rpc"},
+		{"xxl-job", "xxl-job", "schedule"},
+		{"xuxueli", "xxl-job", "schedule"},
 	}
 	seen := make(map[string]bool)
 	for _, p := range patterns {

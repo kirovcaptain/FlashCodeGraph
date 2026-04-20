@@ -21,6 +21,7 @@ var (
 	queryKinds      string
 	queryLimit      int
 	queryAnnotation string
+	queryParams     string
 	queryLayer      string
 	queryCategory   string
 	queryMethods    bool
@@ -46,6 +47,7 @@ func init() {
 	queryCmd.Flags().StringVar(&queryKinds, "kinds", "", "Filter by kinds (comma-separated: Function,Class,Interface)")
 	queryCmd.Flags().IntVar(&queryLimit, "limit", 20, "Max results")
 	queryCmd.Flags().StringVar(&queryAnnotation, "annotation", "", "Filter by annotation name (e.g. Service)")
+	queryCmd.Flags().StringVar(&queryParams, "params", "", "Filter by annotation params (substring match)")
 	queryCmd.Flags().StringVar(&queryLayer, "layer", "", "Filter by layer (controller/service/repository/model)")
 	queryCmd.Flags().StringVar(&queryCategory, "category", "", "Filter by annotation category (security/behavior/etc)")
 	queryCmd.Flags().BoolVar(&queryMethods, "methods", false, "List methods of a class")
@@ -149,7 +151,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 
 	// Annotation-based queries
 	if queryAnnotation != "" {
-		nodes, err := querier.QueryByAnnotation(ctx, queryAnnotation, queryKinds, queryLimit)
+		nodes, err := querier.QueryByAnnotation(ctx, queryAnnotation, queryParams, queryKinds, queryLimit)
 		if err != nil {
 			return err
 		}

@@ -179,8 +179,9 @@ func (srv *Server) registerTools() {
 	), srv.handleQueryDependencies)
 
 	srv.mcpServer.AddTool(mcp.NewTool("query_by_annotation",
-		mcp.WithDescription("Find symbols annotated with a specific annotation (e.g. Service, RestController)"),
+		mcp.WithDescription("Find symbols annotated with a specific annotation (e.g. Service, RestController, XxlJob)"),
 		mcp.WithString("annotation", mcp.Required(), mcp.Description("Annotation name")),
+		mcp.WithString("params", mcp.Description("Filter by annotation params (substring match, e.g. 'completeSettlementJob')")),
 		mcp.WithString("kind", mcp.Description("Filter by symbol kind (Function, Class, Interface)")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
@@ -556,17 +557,18 @@ func (srv *Server) handleQueryByAnnotation(ctx context.Context, request mcp.Call
 	if annotation == "" {
 		return mcp.NewToolResultError("annotation is required"), nil
 	}
+	params, _ := request.GetArguments()["params"].(string)
 	kind, _ := request.GetArguments()["kind"].(string)
 	limit := intArg(request, "limit", 50)
 	path, _ := request.GetArguments()["path"].(string)
-	branch, _ := request.GetArguments()["branch"].(string)
+	branchName, _ := request.GetArguments()["branch"].(string)
 
-	querier, store, err := srv.createQuerier(path, branch)
+	querier, store, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	defer store.Close()
-	nodes, err := querier.QueryByAnnotation(ctx, annotation, kind, limit)
+	nodes, err := querier.QueryByAnnotation(ctx, annotation, params, kind, limit)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

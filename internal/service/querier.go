@@ -26,33 +26,40 @@ func (querier *Querier) QuerySymbol(ctx context.Context, name string, opts model
 }
 
 // QueryByAnnotation returns symbols that have a specific annotation.
-func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string, kind string, limit int) ([]model.Node, error) {
-	anns, err := querier.graphStore.QueryNodesByName(ctx, annotation, model.QueryOpts{Kinds: []string{"Annotation"}})
+// When params is non-empty, only annotations whose params contain the given substring are matched.
+func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string, params string, kind string, limit int) ([]model.Node, error) {
+	annotationNodes, err := querier.graphStore.QueryNodesByName(ctx, annotation, model.QueryOpts{Kinds: []string{"Annotation"}})
 	if err != nil {
 		return nil, err
 	}
-	var matched []string
-	for _, a := range anns {
-		matched = append(matched, a.ID)
+	var matchedAnnotationIDs []string
+	for _, annotationNode := range annotationNodes {
+		if params != "" {
+			annotationParams := propString(annotationNode.Properties, "params")
+			if !strings.Contains(annotationParams, params) {
+				continue
+			}
+		}
+		matchedAnnotationIDs = append(matchedAnnotationIDs, annotationNode.ID)
 	}
-	if len(matched) == 0 {
+	if len(matchedAnnotationIDs) == 0 {
 		return nil, nil
 	}
 	// Find source nodes via HAS_ANNOTATION edges
 	var results []model.Node
 	seen := map[string]bool{}
-	for _, annID := range matched {
-		for _, srcKind := range []string{"Class", "Interface", "Function"} {
-			edges, err := querier.graphStore.QueryEdges(ctx, annID, srcKind, model.RelHasAnnotation, model.Incoming)
+	for _, annotationID := range matchedAnnotationIDs {
+		for _, sourceKind := range []string{"Class", "Interface", "Function"} {
+			edges, err := querier.graphStore.QueryEdges(ctx, annotationID, sourceKind, model.RelHasAnnotation, model.Incoming)
 			if err != nil {
 				continue
 			}
-			for _, e := range edges {
-				if seen[e.SourceID] {
+			for _, edge := range edges {
+				if seen[edge.SourceID] {
 					continue
 				}
-				seen[e.SourceID] = true
-				node, err := querier.graphStore.QueryNodeByID(ctx, e.SourceID)
+				seen[edge.SourceID] = true
+				node, err := querier.graphStore.QueryNodeByID(ctx, edge.SourceID)
 				if err != nil || node == nil {
 					continue
 				}

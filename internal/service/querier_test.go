@@ -402,7 +402,7 @@ func TestQuerier_QueryByAnnotation(t *testing.T) {
 	ctx := context.Background()
 
 	// Find @Service annotated classes
-	nodes, err := querier.QueryByAnnotation(ctx, "Service", "", 50)
+	nodes, err := querier.QueryByAnnotation(ctx, "Service", "", "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestQuerier_QueryByAnnotation(t *testing.T) {
 	}
 
 	// Find @RestController
-	nodes, err = querier.QueryByAnnotation(ctx, "RestController", "", 50)
+	nodes, err = querier.QueryByAnnotation(ctx, "RestController", "", "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func TestQuerier_QueryByAnnotation(t *testing.T) {
 	}
 
 	// Find @Mapper
-	nodes, err = querier.QueryByAnnotation(ctx, "Mapper", "", 50)
+	nodes, err = querier.QueryByAnnotation(ctx, "Mapper", "", "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ func TestQuerier_QueryByAnnotation(t *testing.T) {
 	}
 
 	// Non-existent annotation returns empty
-	nodes, err = querier.QueryByAnnotation(ctx, "NonExistent", "", 50)
+	nodes, err = querier.QueryByAnnotation(ctx, "NonExistent", "", "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,7 +614,7 @@ func TestQuerier_QueryByAnnotation_WithKindFilter(t *testing.T) {
 	ctx := context.Background()
 
 	// @Transactional is on a function — filter by Class should return empty
-	nodes, err := querier.QueryByAnnotation(ctx, "Transactional", "Class", 50)
+	nodes, err := querier.QueryByAnnotation(ctx, "Transactional", "", "Class", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -623,7 +623,7 @@ func TestQuerier_QueryByAnnotation_WithKindFilter(t *testing.T) {
 	}
 
 	// @Transactional on Function should return results
-	nodes, err = querier.QueryByAnnotation(ctx, "Transactional", "Function", 50)
+	nodes, err = querier.QueryByAnnotation(ctx, "Transactional", "", "Function", 50)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -66,6 +66,9 @@ var DefaultAnnotations = map[string][]AnnotationDef{
 	"fastapi": {
 		{Name: "Depends", Category: "behavior", Framework: "fastapi"},
 	},
+	"xxl-job": {
+		{Name: "XxlJob", Category: "behavior", Framework: "xxl-job"},
+	},
 	"_test": {
 		{Name: "Test", Category: "test", Framework: "junit"},
 		{Name: "SpringBootTest", Category: "test", Framework: "spring"},
