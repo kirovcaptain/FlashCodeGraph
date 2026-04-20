@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/liuymcn/flash-code-graph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
 	"github.com/spf13/cobra"
 )
 

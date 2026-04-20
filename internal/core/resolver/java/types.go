@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // IsTypeCompatible checks Java type assignability: exact match + boxing + JDK hierarchy.

@@ -4,8 +4,8 @@ import (
 	"encoding/xml"
 	"strings"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/sqlutil"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/sqlutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // mybatisMapper represents the root <mapper> element in a MyBatis XML file.

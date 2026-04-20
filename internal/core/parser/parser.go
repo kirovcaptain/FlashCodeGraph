@@ -24,13 +24,13 @@ import (
 
 	// Languages without official Go bindings use smacker's
 
-	"github.com/liuymcn/flash-code-graph/internal/core/scanner"
-	"github.com/liuymcn/flash-code-graph/internal/model"
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/astutil"
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/java"
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/python"
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/golang"
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/typescript"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/astutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/java"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/python"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/golang"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/typescript"
 )
 
 // newLanguage wraps unsafe.Pointer into a tree-sitter Language.

@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // Python route decorator patterns

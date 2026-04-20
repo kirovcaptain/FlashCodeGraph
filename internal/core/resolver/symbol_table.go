@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // ShardCount is the number of shards for the SymbolTable.

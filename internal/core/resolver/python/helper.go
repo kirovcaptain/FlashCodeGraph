@@ -3,8 +3,8 @@ package python
 import (
 	"strings"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/resolver"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // Helper implements resolver.LanguageHelper for Python.

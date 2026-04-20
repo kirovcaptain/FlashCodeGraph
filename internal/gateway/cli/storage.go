@@ -6,12 +6,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/liuymcn/flash-code-graph/internal/config"
-	"github.com/liuymcn/flash-code-graph/internal/model"
-	"github.com/liuymcn/flash-code-graph/internal/storage"
-	"github.com/liuymcn/flash-code-graph/internal/storage/branch"
-	"github.com/liuymcn/flash-code-graph/internal/storage/falkor"
-	"github.com/liuymcn/flash-code-graph/internal/storage/kuzu"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/falkor"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/kuzu"
 )
 
 // openGraphStore creates a GraphStore based on config and project path.

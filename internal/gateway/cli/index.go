@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/liuymcn/flash-code-graph/internal/config"
-	"github.com/liuymcn/flash-code-graph/internal/model"
-	"github.com/liuymcn/flash-code-graph/internal/service"
-	"github.com/liuymcn/flash-code-graph/internal/status"
-	"github.com/liuymcn/flash-code-graph/internal/storage"
-	"github.com/liuymcn/flash-code-graph/internal/storage/branch"
-	"github.com/liuymcn/flash-code-graph/internal/storage/lock"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/service"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/status"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/lock"
 	"github.com/spf13/cobra"
 )
 

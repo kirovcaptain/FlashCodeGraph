@@ -6,9 +6,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/liuymcn/flash-code-graph/internal/model"
-	"github.com/liuymcn/flash-code-graph/internal/service"
-	"github.com/liuymcn/flash-code-graph/internal/status"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/service"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/status"
 	"github.com/spf13/cobra"
 )
 

@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	gokuzu "github.com/kuzudb/go-kuzu"
-	"github.com/liuymcn/flash-code-graph/internal/constants"
-	"github.com/liuymcn/flash-code-graph/internal/model"
-	"github.com/liuymcn/flash-code-graph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 )
 
 // Store implements storage.GraphStore backed by KùzuDB.

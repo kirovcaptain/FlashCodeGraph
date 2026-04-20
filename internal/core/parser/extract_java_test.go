@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
 )
 
 func TestExtractJava_FullClass(t *testing.T) {

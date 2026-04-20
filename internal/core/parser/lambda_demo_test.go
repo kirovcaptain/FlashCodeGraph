@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/scanner"
-	"github.com/liuymcn/flash-code-graph/internal/core/typeinfer"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/typeinfer"
 )
 
 func TestLambdaParameterTypeInference(t *testing.T) {

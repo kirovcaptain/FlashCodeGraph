@@ -3,7 +3,7 @@ package typeinfer
 import (
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func TestInferLocal_Tier0_TypeAnnotations(t *testing.T) {

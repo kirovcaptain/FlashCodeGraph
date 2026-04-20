@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/liuymcn/flash-code-graph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
 )
 
 // DefaultFalkorDBSocket returns the default FalkorDB Lite socket path.

@@ -1,4 +1,4 @@
-module github.com/liuymcn/flash-code-graph
+module github.com/kirovcaptain/FlashCodeGraph
 
 go 1.23.0
 

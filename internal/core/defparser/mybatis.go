@@ -3,8 +3,8 @@ package defparser
 import (
 	"bytes"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/java"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/java"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // MybatisParser parses MyBatis XML mapper files.

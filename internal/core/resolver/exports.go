@@ -3,7 +3,7 @@ package resolver
 // Exported wrappers for use by language helper subpackages (resolver/java, etc).
 // Internal callers continue using the unexported versions.
 
-import "github.com/liuymcn/flash-code-graph/internal/model"
+import "github.com/kirovcaptain/FlashCodeGraph/internal/model"
 
 func FilterByOwnerClass(candidates []model.Symbol, className string) []model.Symbol {
 	return filterByOwnerClass(candidates, className)

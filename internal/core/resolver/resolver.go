@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/typeinfer"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/typeinfer"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // Base confidence scores by match type.

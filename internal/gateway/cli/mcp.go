@@ -3,10 +3,10 @@ package cli
 import (
 	"fmt"
 
-	"github.com/liuymcn/flash-code-graph/internal/config"
-	fcgmcp "github.com/liuymcn/flash-code-graph/internal/gateway/mcp"
-	"github.com/liuymcn/flash-code-graph/internal/storage"
-	"github.com/liuymcn/flash-code-graph/internal/storage/falkor"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
+	fcgmcp "github.com/kirovcaptain/FlashCodeGraph/internal/gateway/mcp"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/falkor"
 	"github.com/spf13/cobra"
 )
 

@@ -1,6 +1,6 @@
 package resolver
 
-import "github.com/liuymcn/flash-code-graph/internal/model"
+import "github.com/kirovcaptain/FlashCodeGraph/internal/model"
 
 // LanguageHelper provides language-specific call resolution strategies.
 // The resolver delegates to the appropriate helper based on call.Language.

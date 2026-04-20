@@ -4,11 +4,11 @@ import (
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/astutil"
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/urlutil"
-	"github.com/liuymcn/flash-code-graph/internal/core/resolver"
-	"github.com/liuymcn/flash-code-graph/internal/model"
-	"github.com/liuymcn/flash-code-graph/internal/constants"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/astutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/urlutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 )
 
 // HTTP client receivers

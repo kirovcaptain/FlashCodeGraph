@@ -1,7 +1,7 @@
 // Package defparser defines interfaces and managers for non-source file parsing.
 package defparser
 
-import "github.com/liuymcn/flash-code-graph/internal/model"
+import "github.com/kirovcaptain/FlashCodeGraph/internal/model"
 
 // DefParser parses non-source definition files (XML mappers, GraphQL schemas, etc).
 type DefParser interface {

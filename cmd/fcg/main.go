@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/liuymcn/flash-code-graph/internal/gateway/cli"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/gateway/cli"
 )
 
 func main() {

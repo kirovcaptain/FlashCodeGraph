@@ -1,6 +1,6 @@
 package defparser
 
-import "github.com/liuymcn/flash-code-graph/internal/constants"
+import "github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 
 // BuildManagers creates ORM and Schema managers based on detected frameworks.
 func BuildManagers(frameworks []string) (orm *Manager, schema *Manager) {

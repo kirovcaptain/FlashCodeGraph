@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liuymcn/flash-code-graph/internal/storage"
-	"github.com/liuymcn/flash-code-graph/internal/storage/branch"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
 )
 
 // IndexStatus describes whether a project's index is up-to-date with its source files.

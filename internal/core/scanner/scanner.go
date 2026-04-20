@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/liuymcn/flash-code-graph/internal/constants"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // DefaultMaxFileSize is the default threshold for skipping large files (512KB).

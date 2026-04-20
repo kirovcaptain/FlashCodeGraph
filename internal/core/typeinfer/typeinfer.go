@@ -4,7 +4,7 @@ package typeinfer
 import (
 	"strings"
 
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // TypeInfer performs type inference on parsed results.

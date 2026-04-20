@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/java"
-	"github.com/liuymcn/flash-code-graph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/java"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
 )
 
 func TestExtractMybatisMapper_ValidMapper(t *testing.T) {

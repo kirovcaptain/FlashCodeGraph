@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/liuymcn/flash-code-graph/internal/config"
-	"github.com/liuymcn/flash-code-graph/internal/constants"
-	"github.com/liuymcn/flash-code-graph/internal/model"
-	"github.com/liuymcn/flash-code-graph/internal/storage"
-	"github.com/liuymcn/flash-code-graph/internal/storage/branch"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
 )
 
 // allNodeLabels is the ordered list of all node labels, Function first for fast lookup.

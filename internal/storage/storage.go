@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // GraphStore is the interface for graph data persistence.

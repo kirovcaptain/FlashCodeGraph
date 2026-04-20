@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/constants"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func setupTestStore(t *testing.T) *Store {

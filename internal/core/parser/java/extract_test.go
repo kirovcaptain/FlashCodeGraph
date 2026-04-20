@@ -5,8 +5,8 @@ import (
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
-	"github.com/liuymcn/flash-code-graph/internal/core/scanner"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func parse(code []byte) (*tree_sitter.Node, func()) {

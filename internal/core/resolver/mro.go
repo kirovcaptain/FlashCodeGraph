@@ -1,6 +1,6 @@
 package resolver
 
-import "github.com/liuymcn/flash-code-graph/internal/model"
+import "github.com/kirovcaptain/FlashCodeGraph/internal/model"
 
 // ComputeMRO computes Method Resolution Order for a class in an inheritance hierarchy.
 //

@@ -3,7 +3,7 @@ package resolver
 import (
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func TestComputeMRO_SingleInheritance(t *testing.T) {

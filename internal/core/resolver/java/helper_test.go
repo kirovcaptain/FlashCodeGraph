@@ -3,9 +3,9 @@ package java_test
 import (
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/resolver"
-	java "github.com/liuymcn/flash-code-graph/internal/core/resolver/java"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
+	java "github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver/java"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func newJavaResolver(table *resolver.SymbolTable) *resolver.Resolver {

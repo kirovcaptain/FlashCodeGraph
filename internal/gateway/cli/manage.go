@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liuymcn/flash-code-graph/internal/config"
-	"github.com/liuymcn/flash-code-graph/internal/model"
-	"github.com/liuymcn/flash-code-graph/internal/status"
-	"github.com/liuymcn/flash-code-graph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/status"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 	"github.com/spf13/cobra"
 )
 

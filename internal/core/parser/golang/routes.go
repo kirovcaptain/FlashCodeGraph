@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/astutil"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/astutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 var routeMethodNames = map[string]string{

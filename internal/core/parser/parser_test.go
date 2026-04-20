@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
 )
 
 func TestParseFile_Go(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
 )
 
 func TestExtractPython_FullClass(t *testing.T) {

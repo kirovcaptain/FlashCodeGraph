@@ -3,9 +3,9 @@ package typescript_test
 import (
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/resolver"
-	tshelper "github.com/liuymcn/flash-code-graph/internal/core/resolver/typescript"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
+	tshelper "github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver/typescript"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func TestTSHelper_ResolveSuperCall_Method(t *testing.T) {

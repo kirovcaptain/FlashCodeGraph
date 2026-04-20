@@ -1,8 +1,8 @@
 package defparser
 
 import (
-	gqlParser "github.com/liuymcn/flash-code-graph/internal/core/parser/graphql"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	gqlParser "github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/graphql"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // GraphQLSchemaParser parses .graphql/.gql schema files.

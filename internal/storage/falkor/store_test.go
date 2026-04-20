@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func getTestSocket() string {

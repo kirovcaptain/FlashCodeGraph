@@ -3,9 +3,9 @@ package golang_test
 import (
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/resolver"
-	gohelper "github.com/liuymcn/flash-code-graph/internal/core/resolver/golang"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
+	gohelper "github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver/golang"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func TestGoHelper_NarrowByScope_SamePackageDir(t *testing.T) {

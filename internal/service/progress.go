@@ -1,6 +1,6 @@
 package service
 
-import "github.com/liuymcn/flash-code-graph/internal/model"
+import "github.com/kirovcaptain/FlashCodeGraph/internal/model"
 
 // PhaseID identifies an indexing phase.
 type PhaseID int

@@ -3,9 +3,9 @@ package python_test
 import (
 	"testing"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/resolver"
-	pyhelper "github.com/liuymcn/flash-code-graph/internal/core/resolver/python"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
+	pyhelper "github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver/python"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func TestPythonHelper_ResolveSuperCall(t *testing.T) {

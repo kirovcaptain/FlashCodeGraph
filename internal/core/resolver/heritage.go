@@ -3,7 +3,7 @@ package resolver
 import (
 	"strings"
 
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // ResolveHeritage resolves inheritance/implementation relationships.

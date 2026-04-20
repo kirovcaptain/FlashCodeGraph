@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liuymcn/flash-code-graph/internal/core/parser/urlutil"
-	"github.com/liuymcn/flash-code-graph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/urlutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 // MatchRoute checks if a remote call matches a route.
