@@ -456,10 +456,6 @@ func (store *Store) QueryNodeByQualifiedName(ctx context.Context, qualifiedName 
 }
 // QueryNodesByName returns nodes matching a name.
 func (store *Store) QueryNodesByName(ctx context.Context, name string, opts model.QueryOpts) ([]model.Node, error) {
-	limit := 100
-	if opts.Limit > 0 {
-		limit = opts.Limit
-	}
 
 	labels := []string{"Function", "Class", "Interface"}
 	if len(opts.Kinds) > 0 {
@@ -485,7 +481,10 @@ func (store *Store) QueryNodesByName(ctx context.Context, name string, opts mode
 			"MATCH (n:%s) WHERE n.name = '%s' RETURN %s",
 			label, escapeCypher(name), allCols))
 	}
-	cypher := strings.Join(parts, " UNION ") + fmt.Sprintf(" LIMIT %d", limit)
+	cypher := strings.Join(parts, " UNION ")
+	if opts.Limit > 0 {
+		cypher += fmt.Sprintf(" LIMIT %d", opts.Limit)
+	}
 
 	rows, err := store.query(ctx, cypher)
 	if err != nil {
@@ -735,7 +734,7 @@ func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) 
 	var parts []string
 	for _, label := range []string{"Function", "Class", "Interface"} {
 		parts = append(parts, fmt.Sprintf(
-			"MATCH (n:%s) WHERE n.name CONTAINS '%s' RETURN n.id, '%s', n.name, n.file_path, n.qualified_name",
+			"MATCH (n:%s) WHERE n.name CONTAINS '%s' RETURN n.id AS id, '%s' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name",
 			label, escapeCypher(queryText), label))
 	}
 	cypher := strings.Join(parts, " UNION ") + fmt.Sprintf(" LIMIT %d", limit)

@@ -140,14 +140,14 @@ func (indexer *Indexer) scanProject(ctx context.Context, repoPath string, branch
 	if err != nil {
 		return nil, fmt.Errorf("indexer: phase 0: %w", err)
 	}
-	indexer.progress.Emit(PhaseProjectDetection, 1, 1, fmt.Sprintf("%s project, %d submodules", projectInfo.ProjectType, len(projectInfo.SubModules)))
-
 	// Framework detection
 	detected := framework.Detect(absPath, projectInfo.BuildFiles)
 	projectInfo.Frameworks = make([]string, 0, len(detected))
 	for _, fw := range detected {
 		projectInfo.Frameworks = append(projectInfo.Frameworks, fw.Name)
 	}
+
+	indexer.progress.Emit(PhaseProjectDetection, 1, 1, fmt.Sprintf("%s project, %d submodules, frameworks=%v", projectInfo.ProjectType, len(projectInfo.SubModules), projectInfo.Frameworks))
 
 	annotationWhitelist := annotation.BuildWhitelist(projectInfo.Frameworks, indexer.config.Annotations.Include, indexer.config.Annotations.Exclude)
 
@@ -1247,6 +1247,7 @@ func (indexer *Indexer) writeRouteNodes(ctx context.Context, parseResults []mode
 		}
 	}
 	if len(nodes) > 0 {
+		indexer.dump.OnRoutes(nodes)
 		if err := indexer.graphStore.CreateNodes(ctx, nodes); err != nil {
 			return err
 		}
@@ -1464,6 +1465,7 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 	}
 
 	if len(nodes) > 0 {
+		indexer.dump.OnAnnotations(nodes, edges)
 		if err := indexer.graphStore.CreateNodes(ctx, nodes); err != nil {
 			return err
 		}

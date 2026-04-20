@@ -15,6 +15,8 @@ type DumpManager interface {
 	OnRawCalls(calls []model.RawCall)
 	OnResolved(relations []model.ResolvedRelation, hints []model.UnresolvedHint)
 	OnAllRelations(heritage, overrides, implements []model.ResolvedRelation)
+	OnAnnotations(nodes []model.Node, edges []model.Edge)
+	OnRoutes(nodes []model.Node)
 }
 
 // NopDumpManager does nothing (debug=false).
@@ -23,6 +25,8 @@ type NopDumpManager struct{}
 func (NopDumpManager) OnRawCalls([]model.RawCall)                                 {}
 func (NopDumpManager) OnResolved([]model.ResolvedRelation, []model.UnresolvedHint) {}
 func (NopDumpManager) OnAllRelations(_, _, _ []model.ResolvedRelation)             {}
+func (NopDumpManager) OnAnnotations([]model.Node, []model.Edge)                   {}
+func (NopDumpManager) OnRoutes([]model.Node)                                      {}
 
 // FileDumpManager writes CSV files to .fcg/debug/.
 type FileDumpManager struct {
@@ -151,4 +155,79 @@ func (d *FileDumpManager) OnAllRelations(heritage, overrides, implements []model
 	dump("overrides.csv", overrides)
 	dump("implements.csv", implements)
 	log.Printf("[debug] dumped %d heritage, %d overrides, %d implements to .fcg/debug/", len(heritage), len(overrides), len(implements))
+}
+
+func (d *FileDumpManager) OnAnnotations(nodes []model.Node, edges []model.Edge) {
+	if len(nodes) == 0 {
+		return
+	}
+	header := []string{"id", "name", "params", "category", "framework", "file_path", "line", "source_id"}
+	writer, file := d.createCSV("annotations.csv", header)
+	if writer == nil {
+		return
+	}
+	// Build edge lookup: annotation_id -> source_id
+	sourceMap := make(map[string]string, len(edges))
+	for _, edge := range edges {
+		sourceMap[edge.TargetID] = edge.SourceID
+	}
+	for _, node := range nodes {
+		props := node.Properties
+		writer.Write([]string{
+			node.ID,
+			propStr(props, "name"),
+			propStr(props, "params"),
+			propStr(props, "category"),
+			propStr(props, "framework"),
+			propStr(props, "file_path"),
+			propStr(props, "line"),
+			sourceMap[node.ID],
+		})
+	}
+	writer.Flush()
+	file.Close()
+	log.Printf("[debug] dumped %d annotations to .fcg/debug/annotations.csv", len(nodes))
+}
+
+func (d *FileDumpManager) OnRoutes(nodes []model.Node) {
+	if len(nodes) == 0 {
+		return
+	}
+	header := []string{"id", "method", "path", "handler", "file_path", "line"}
+	writer, file := d.createCSV("routes.csv", header)
+	if writer == nil {
+		return
+	}
+	for _, node := range nodes {
+		props := node.Properties
+		writer.Write([]string{
+			node.ID,
+			propStr(props, "method"),
+			propStr(props, "path"),
+			propStr(props, "handler"),
+			propStr(props, "file_path"),
+			propStr(props, "line"),
+		})
+	}
+	writer.Flush()
+	file.Close()
+	log.Printf("[debug] dumped %d routes to .fcg/debug/routes.csv", len(nodes))
+}
+
+func propStr(properties map[string]any, key string) string {
+	if properties == nil {
+		return ""
+	}
+	value, ok := properties[key]
+	if !ok {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case int:
+		return strconv.Itoa(typed)
+	default:
+		return ""
+	}
 }
