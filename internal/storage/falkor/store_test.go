@@ -290,3 +290,68 @@ func TestTraverseCallChain_DispatchEdge(t *testing.T) {
 
 	t.Log("✅ DISPATCHES edge traversal test completed")
 }
+
+func TestQueryNodesByProperty(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	store.Migrate(ctx)
+	nodes := []model.Node{
+		{ID: "r1", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/api/users", "file_path": "a.java"}},
+		{ID: "r2", Kind: "Route", Properties: map[string]any{"method": "POST", "path_pattern": "/api/users", "file_path": "a.java"}},
+		{ID: "r3", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/api/orders/{id}", "file_path": "b.java"}},
+		{ID: "r4", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/coin/register/free", "file_path": "c.java"}},
+	}
+	if err := store.WriteNodes(ctx, nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exact match
+	results, err := store.QueryNodesByProperty(ctx, "Route", "path_pattern", "/api/users", "exact", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Errorf("exact match: expected 2, got %d", len(results))
+	}
+
+	// Contains match
+	results, err = store.QueryNodesByProperty(ctx, "Route", "path_pattern", "/register/free", "contains", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("contains match: expected 1, got %d", len(results))
+	}
+	if len(results) > 0 && fmt.Sprint(results[0].Properties["path_pattern"]) != "/coin/register/free" {
+		t.Errorf("contains match: expected /coin/register/free, got %v", results[0].Properties["path_pattern"])
+	}
+
+	// No match
+	results, err = store.QueryNodesByProperty(ctx, "Route", "path_pattern", "/nonexistent", "exact", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("no match: expected 0, got %d", len(results))
+	}
+
+	// Single quote in value (escape test)
+	results, err = store.QueryNodesByProperty(ctx, "Route", "path_pattern", "/api/user's", "exact", 0)
+	if err != nil {
+		t.Fatalf("single quote should not cause error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("single quote: expected 0, got %d", len(results))
+	}
+
+	// Limit
+	results, err = store.QueryNodesByProperty(ctx, "Route", "path_pattern", "/api", "contains", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("limit: expected 1, got %d", len(results))
+	}
+}

@@ -18,8 +18,7 @@ import (
 )
 
 // allNodeLabels is the ordered list of all node labels, Function first for fast lookup.
-var allNodeLabels = []string{"Function", "Class", "Interface", "File", "Directory",
-	"Repository", "Route", "QueryNode", "Annotation", "ExternalService"}
+var allNodeLabels = constants.AllNodeKinds
 
 // Store implements storage.GraphStore backed by FalkorDB.
 type Store struct {
@@ -97,24 +96,22 @@ func (store *Store) query(ctx context.Context, cypher string) ([]interface{}, er
 
 // Migrate creates indexes on node ID properties for fast MATCH lookups.
 func (store *Store) Migrate(ctx context.Context) error {
-	labels := []string{"Function", "Class", "Interface", "File", "Directory",
-		"Repository", "Route", "QueryNode", "Annotation", "ExternalService"}
-	for _, label := range labels {
+	for _, label := range constants.AllNodeKinds {
 		cypher := fmt.Sprintf("CREATE INDEX ON :%s(id)", label)
 		store.query(ctx, cypher) // ignore error if already exists
 	}
 	// Index file_path for QueryNodesByFile (locate_function)
-	for _, label := range []string{"Function", "Class", "Interface"} {
+	for _, label := range constants.BaseSymbolKinds {
 		cypher := fmt.Sprintf("CREATE INDEX ON :%s(file_path)", label)
 		store.query(ctx, cypher)
 	}
 	// Index name for QueryNodesByName
-	for _, label := range []string{"Function", "Class", "Interface", "Annotation"} {
+	for _, label := range []string{constants.KindFunction, constants.KindClass, constants.KindInterface, constants.KindAnnotation} {
 		cypher := fmt.Sprintf("CREATE INDEX ON :%s(name)", label)
 		store.query(ctx, cypher)
 	}
 	// Index qualified_name for QueryNodeByQualifiedName
-	for _, label := range []string{"Function", "Class", "Interface"} {
+	for _, label := range constants.BaseSymbolKinds {
 		cypher := fmt.Sprintf("CREATE INDEX ON :%s(qualified_name)", label)
 		store.query(ctx, cypher)
 	}
@@ -267,51 +264,51 @@ func buildSingleEdgeCypher(sourceLabel, targetLabel, relType string, edge model.
 func edgeLabels(kind model.RelationKind, sourceKind string) (string, string) {
 	switch kind {
 	case model.RelCalls:
-		return "Function", "Function"
+		return constants.KindFunction, constants.KindFunction
 	case model.RelExtends:
-		return "Class", "Class"
+		return constants.KindClass, constants.KindClass
 	case model.RelImplements:
-		return "Class", "Interface"
+		return constants.KindClass, constants.KindInterface
 	case model.RelOverrides:
-		return "Function", "Function"
+		return constants.KindFunction, constants.KindFunction
 	case model.RelDispatches:
-		return "Function", "Function"
+		return constants.KindFunction, constants.KindFunction
 	case model.RelImports:
-		return "File", "File"
+		return constants.KindFile, constants.KindFile
 	case model.RelHandles:
-		return "Function", "Route"
+		return constants.KindFunction, constants.KindRoute
 	case model.RelExecutes:
-		return "Function", "QueryNode"
+		return constants.KindFunction, constants.KindQueryNode
 	case model.RelHasAnnotation:
 		switch sourceKind {
-		case "Class":
-			return "Class", "Annotation"
-		case "Interface":
-			return "Interface", "Annotation"
+		case constants.KindClass:
+			return constants.KindClass, constants.KindAnnotation
+		case constants.KindInterface:
+			return constants.KindInterface, constants.KindAnnotation
 		default:
-			return "Function", "Annotation"
+			return constants.KindFunction, constants.KindAnnotation
 		}
 	case model.RelContains:
 		switch sourceKind {
-		case "Directory":
-			return "Directory", "File"
+		case constants.KindDirectory:
+			return constants.KindDirectory, constants.KindFile
 		case constants.SourceKindClassFunc:
-			return "Class", "Function"
+			return constants.KindClass, constants.KindFunction
 		case constants.SourceKindFile, constants.SourceKindFileClass, constants.SourceKindFileInterface:
-			return "File", "Function" // FalkorDB doesn't need exact target label
+			return constants.KindFile, constants.KindFunction // FalkorDB doesn't need exact target label
 		default:
-			return "Repository", "File"
+			return constants.KindRepository, constants.KindFile
 		}
 	case model.RelStep:
-		return "Process", "Function"
+		return constants.KindProcess, constants.KindFunction
 	default:
-		return "Function", "Function"
+		return constants.KindFunction, constants.KindFunction
 	}
 }
 
 // DeleteNodesByFile removes all nodes associated with a file path.
 func (store *Store) DeleteNodesByFile(ctx context.Context, filePath string) error {
-	for _, label := range []string{"Function", "Class", "Interface", "File", "Route", "QueryNode", "Annotation"} {
+	for _, label := range []string{constants.KindFunction, constants.KindClass, constants.KindInterface, constants.KindFile, constants.KindRoute, constants.KindQueryNode, constants.KindAnnotation} {
 		cypher := fmt.Sprintf("MATCH (n:%s) WHERE n.file_path = '%s' DETACH DELETE n", label, escapeCypher(filePath))
 		if _, err := store.query(ctx, cypher); err != nil {
 			return err
@@ -410,7 +407,7 @@ func (store *Store) QueryNodeByID(ctx context.Context, id string) (*model.Node, 
 
 // QueryNodeByQualifiedName returns a single node by its qualified name.
 func (store *Store) QueryNodeByQualifiedName(ctx context.Context, qualifiedName string) (*model.Node, error) {
-	for _, label := range []string{"Function", "Class", "Interface"} {
+	for _, label := range constants.BaseSymbolKinds {
 		returnClause := model.QueryReturnClause(label)
 		cypher := fmt.Sprintf("MATCH (n:%s {qualified_name: '%s'}) RETURN %s LIMIT 1", label, escapeCypher(qualifiedName), returnClause)
 		rows, err := store.query(ctx, cypher)
@@ -459,7 +456,7 @@ func (store *Store) QueryNodeByQualifiedName(ctx context.Context, qualifiedName 
 // QueryNodesByName returns nodes matching a name.
 func (store *Store) QueryNodesByName(ctx context.Context, name string, opts model.QueryOpts) ([]model.Node, error) {
 
-	labels := []string{"Function", "Class", "Interface"}
+	labels := constants.BaseSymbolKinds
 	if len(opts.Kinds) > 0 {
 		labels = opts.Kinds
 	}
@@ -501,7 +498,7 @@ func (store *Store) QueryEdges(ctx context.Context, nodeID string, nodeKind stri
 	relType := mapRelationType(relKind)
 	label := nodeKind
 	if label == "" {
-		label = "Function"
+		label = constants.KindFunction
 	}
 	var cypher string
 	switch direction {
@@ -658,7 +655,7 @@ func (store *Store) BatchUpdateNodeProperties(ctx context.Context, kind string, 
 // QueryNodesByFile returns Function, Class, and Interface nodes in a file.
 func (store *Store) QueryNodesByFile(ctx context.Context, filePath string) ([]model.Node, error) {
 	var parts []string
-	for _, label := range []string{"Function", "Class", "Interface"} {
+	for _, label := range constants.BaseSymbolKinds {
 		parts = append(parts, fmt.Sprintf(
 			"MATCH (n:%s) WHERE n.file_path = '%s' AND n.start_line IS NOT NULL AND n.end_line IS NOT NULL RETURN n.id, labels(n)[0], n.qualified_name, n.start_line, n.end_line",
 			label, escapeCypher(filePath)))
@@ -731,10 +728,76 @@ func (store *Store) QueryAllByKind(ctx context.Context, kind string, limit int) 
 	return nodes, nil
 }
 
+// QueryNodesByProperty returns nodes of a specific kind where the given property matches the value.
+// matchMode: "exact" for equality, "contains" for substring match.
+func (store *Store) QueryNodesByProperty(ctx context.Context, kind string, key string, value string, matchMode string, limit int) ([]model.Node, error) {
+	returnClause := model.QueryReturnClause(kind)
+	var whereClause string
+	switch matchMode {
+	case "contains":
+		whereClause = fmt.Sprintf("WHERE n.%s CONTAINS '%s'", key, escapeCypher(value))
+	default: // exact
+		whereClause = fmt.Sprintf("WHERE n.%s = '%s'", key, escapeCypher(value))
+	}
+	limitClause := ""
+	if limit > 0 {
+		limitClause = fmt.Sprintf(" LIMIT %d", limit)
+	}
+	cypher := fmt.Sprintf("MATCH (n:%s) %s RETURN %s%s", kind, whereClause, returnClause, limitClause)
+	rows, err := store.query(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rows) < 2 {
+		return nil, nil
+	}
+
+	headerRow, ok := rows[0].([]interface{})
+	if !ok {
+		return parseSimpleNodeResults(rows), nil
+	}
+	var colNames []string
+	for _, h := range headerRow {
+		name, _ := h.(string)
+		if len(name) > 2 && name[:2] == "n." {
+			name = name[2:]
+		}
+		colNames = append(colNames, name)
+	}
+
+	dataRows, ok := rows[1].([]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	var nodes []model.Node
+	for _, row := range dataRows {
+		rowSlice, ok := row.([]interface{})
+		if !ok {
+			continue
+		}
+		nodeProps := make(map[string]any)
+		nodeID := ""
+		for i, val := range rowSlice {
+			if i >= len(colNames) {
+				break
+			}
+			if colNames[i] == "id" {
+				nodeID = fmt.Sprint(val)
+			} else if val != nil {
+				nodeProps[colNames[i]] = convertByType(val, model.GetColumnType(kind, colNames[i]))
+			}
+		}
+		nodes = append(nodes, model.Node{ID: nodeID, Kind: kind, Properties: nodeProps})
+	}
+	return nodes, nil
+}
+
 // SearchFTS performs full-text search on node names.
 func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) ([]storage.SearchResult, error) {
 	var parts []string
-	for _, label := range []string{"Function", "Class", "Interface"} {
+	for _, label := range constants.BaseSymbolKinds {
 		parts = append(parts, fmt.Sprintf(
 			"MATCH (n:%s) WHERE n.name CONTAINS '%s' RETURN n.id AS id, '%s' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name",
 			label, escapeCypher(queryText), label))
@@ -757,9 +820,7 @@ func (store *Store) GetStats(ctx context.Context) (*model.GraphStats, error) {
 		FilesByLang: make(map[string]int),
 	}
 
-	labels := []string{"Function", "Class", "Interface", "Variable", "File", "Route",
-		"Repository", "Directory", "QueryNode", "ExternalService", "Annotation"}
-	for _, label := range labels {
+	for _, label := range constants.AllNodeKinds {
 		cypher := fmt.Sprintf("MATCH (n:%s) RETURN count(n)", label)
 		rows, err := store.query(ctx, cypher)
 		if err != nil {
@@ -771,7 +832,7 @@ func (store *Store) GetStats(ctx context.Context) (*model.GraphStats, error) {
 			stats.NodeCount += count
 		}
 	}
-	stats.FileCount = stats.NodesByKind["File"]
+	stats.FileCount = stats.NodesByKind[constants.KindFile]
 
 	// Edge counts
 	edgeTypes := []string{"CALLS", "EXTENDS", "IMPLEMENTS", "OVERRIDES", "IMPORTS",

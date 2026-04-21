@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/annotation"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/service"
@@ -424,7 +425,7 @@ func runRoutes(cmd *cobra.Command, args []string) error {
 	defer store.Close()
 
 	ctx := context.Background()
-	routes, err := store.QueryAllByKind(ctx, "Route", 0)
+	routes, err := store.QueryAllByKind(ctx, constants.KindRoute, 0)
 	if err != nil {
 		return err
 	}

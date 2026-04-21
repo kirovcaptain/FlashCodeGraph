@@ -40,6 +40,10 @@ type GraphStore interface {
 	// Query all nodes of a specific kind
 	QueryAllByKind(ctx context.Context, kind string, limit int) ([]model.Node, error)
 
+	// QueryNodesByProperty returns nodes of a specific kind where the given property matches the value.
+	// matchMode controls matching: "exact" for equality, "contains" for substring match.
+	QueryNodesByProperty(ctx context.Context, kind string, key string, value string, matchMode string, limit int) ([]model.Node, error)
+
 	// QueryNodesByFile returns Function, Class, and Interface nodes in a file (for locate_function).
 	QueryNodesByFile(ctx context.Context, filePath string) ([]model.Node, error)
 

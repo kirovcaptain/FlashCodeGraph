@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	gokuzu "github.com/kuzudb/go-kuzu"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	gokuzu "github.com/kuzudb/go-kuzu"
 )
 
 // Store implements storage.GraphStore backed by KùzuDB.
@@ -323,37 +323,37 @@ var allRelTypes = []struct {
 	sourceLabel string
 	targetLabel string
 }{
-	{"CALLS", "Function", "Function"},
-	{"OVERRIDES", "Function", "Function"},
-	{"INJECTS", "Function", "Function"},
-	{"HANDLES", "Function", "Route"},
-	{"EXECUTES", "Function", "QueryNode"},
-	{"EXTENDS", "Class", "Class"},
-	{"IMPLEMENTS", "Class", "Interface"},
-	{"IMPORTS", "File", "File"},
-	{"CONTAINS", "Repository", "File"},
-	{"FILE_CONTAINS", "File", "Function"},
-	{"FILE_CONTAINS_CLASS", "File", "Class"},
-	{"FILE_CONTAINS_IFACE", "File", "Interface"},
-	{"FILE_CONTAINS_VAR", "File", "Variable"},
-	{"CLASS_CONTAINS_FUNC", "Class", "Function"},
-	{"CLASS_CONTAINS_VAR", "Class", "Variable"},
-	{"MEMBER_OF_FUNC", "Function", "Community"},
-	{"MEMBER_OF_CLASS", "Class", "Community"},
-	{"DEPENDS_ON", "Directory", "Directory"},
-	{"REMOTE_CALLS_ROUTE", "Function", "Route"},
-	{"REMOTE_CALLS_EXT", "Function", "ExternalService"},
-	{"FETCHES", "Function", "Route"},
-	{"MIDDLEWARE", "Route", "Function"},
-	{"STEP", "Process", "Function"},
-	{"HAS_ANNOTATION_FUNC", "Function", "Annotation"},
-	{"HAS_ANNOTATION_CLASS", "Class", "Annotation"},
-	{"HAS_ANNOTATION_IFACE", "Interface", "Annotation"},
+	{"CALLS", constants.KindFunction, constants.KindFunction},
+	{"OVERRIDES", constants.KindFunction, constants.KindFunction},
+	{"INJECTS", constants.KindFunction, constants.KindFunction},
+	{"HANDLES", constants.KindFunction, constants.KindRoute},
+	{"EXECUTES", constants.KindFunction, constants.KindQueryNode},
+	{"EXTENDS", constants.KindClass, constants.KindClass},
+	{"IMPLEMENTS", constants.KindClass, constants.KindInterface},
+	{"IMPORTS", constants.KindFile, constants.KindFile},
+	{"CONTAINS", constants.KindRepository, constants.KindFile},
+	{"FILE_CONTAINS", constants.KindFile, constants.KindFunction},
+	{"FILE_CONTAINS_CLASS", constants.KindFile, constants.KindClass},
+	{"FILE_CONTAINS_IFACE", constants.KindFile, constants.KindInterface},
+	{"FILE_CONTAINS_VAR", constants.KindFile, constants.KindVariable},
+	{"CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction},
+	{"CLASS_CONTAINS_VAR", constants.KindClass, constants.KindVariable},
+	{"MEMBER_OF_FUNC", constants.KindFunction, constants.KindCommunity},
+	{"MEMBER_OF_CLASS", constants.KindClass, constants.KindCommunity},
+	{"DEPENDS_ON", constants.KindDirectory, constants.KindDirectory},
+	{"REMOTE_CALLS_ROUTE", constants.KindFunction, constants.KindRoute},
+	{"REMOTE_CALLS_EXT", constants.KindFunction, constants.KindExternalService},
+	{"FETCHES", constants.KindFunction, constants.KindRoute},
+	{"MIDDLEWARE", constants.KindRoute, constants.KindFunction},
+	{"STEP", constants.KindProcess, constants.KindFunction},
+	{"HAS_ANNOTATION_FUNC", constants.KindFunction, constants.KindAnnotation},
+	{"HAS_ANNOTATION_CLASS", constants.KindClass, constants.KindAnnotation},
+	{"HAS_ANNOTATION_IFACE", constants.KindInterface, constants.KindAnnotation},
 }
 
 // DeleteNodesByFile removes all nodes associated with a file path.
 func (store *Store) DeleteNodesByFile(_ context.Context, filePath string) error {
-	tables := []string{"Function", "Class", "Interface", "Variable", "Route", "QueryNode", "Annotation", "ExternalService"}
+	tables := []string{constants.KindFunction, constants.KindClass, constants.KindInterface, constants.KindVariable, constants.KindRoute, constants.KindQueryNode, constants.KindAnnotation, constants.KindExternalService}
 	for _, table := range tables {
 		query := fmt.Sprintf("MATCH (n:%s) WHERE n.file_path = $filePath DETACH DELETE n", table)
 		result, err := store.exec(query, map[string]any{"filePath": filePath})
@@ -429,9 +429,7 @@ func (store *Store) ClearAll(_ context.Context) error {
 
 // QueryNodeByID returns a single node by ID.
 func (store *Store) QueryNodeByID(_ context.Context, id string) (*model.Node, error) {
-	tables := []string{"Function", "Class", "Interface", "Variable", "File", "Directory",
-		"Repository", "Route", "Community", "Process", "QueryNode", "Annotation", "ExternalService"}
-	for _, table := range tables {
+	for _, table := range constants.AllNodeKinds {
 		returnClause := model.QueryReturnClause(table)
 		colNames := append([]string{"id"}, model.ColumnNames(table)...)
 
@@ -465,7 +463,7 @@ func (store *Store) QueryNodeByID(_ context.Context, id string) (*model.Node, er
 
 // QueryNodeByQualifiedName returns a single node by its qualified name.
 func (store *Store) QueryNodeByQualifiedName(_ context.Context, qualifiedName string) (*model.Node, error) {
-	for _, table := range []string{"Function", "Class", "Interface"} {
+	for _, table := range constants.BaseSymbolKinds {
 		returnClause := model.QueryReturnClause(table)
 		colNames := append([]string{"id"}, model.ColumnNames(table)...)
 
@@ -495,7 +493,7 @@ func (store *Store) QueryNodeByQualifiedName(_ context.Context, qualifiedName st
 	return nil, nil
 }
 func (store *Store) QueryNodesByName(_ context.Context, name string, opts model.QueryOpts) ([]model.Node, error) {
-	tables := []string{"Function", "Class", "Interface"}
+	tables := constants.BaseSymbolKinds
 	if len(opts.Kinds) > 0 {
 		tables = opts.Kinds
 	}
@@ -581,20 +579,20 @@ func (store *Store) QueryAllEdges(_ context.Context, relKind model.RelationKind,
 	type relDef struct{ rel, src, tgt string }
 	multiTable := map[model.RelationKind][]relDef{
 		model.RelHasAnnotation: {
-			{"HAS_ANNOTATION_FUNC", "Function", "Annotation"},
-			{"HAS_ANNOTATION_CLASS", "Class", "Annotation"},
-			{"HAS_ANNOTATION_IFACE", "Interface", "Annotation"},
+			{"HAS_ANNOTATION_FUNC", constants.KindFunction, constants.KindAnnotation},
+			{"HAS_ANNOTATION_CLASS", constants.KindClass, constants.KindAnnotation},
+			{"HAS_ANNOTATION_IFACE", constants.KindInterface, constants.KindAnnotation},
 		},
 		model.RelContains: {
-			{"CONTAINS", "Repository", "File"},
-			{"DIR_CONTAINS", "Directory", "File"},
-			{"FILE_CONTAINS", "File", "Function"},
-			{"FILE_CONTAINS_CLASS", "File", "Class"},
-			{"FILE_CONTAINS_IFACE", "File", "Interface"},
+			{"CONTAINS", constants.KindRepository, constants.KindFile},
+			{"DIR_CONTAINS", constants.KindDirectory, constants.KindFile},
+			{"FILE_CONTAINS", constants.KindFile, constants.KindFunction},
+			{"FILE_CONTAINS_CLASS", constants.KindFile, constants.KindClass},
+			{"FILE_CONTAINS_IFACE", constants.KindFile, constants.KindInterface},
 		},
-		model.RelRemoteCallsRoute: {{"REMOTE_CALLS_ROUTE", "Function", "Route"}},
-		model.RelRemoteCallsExt:   {{"REMOTE_CALLS_EXT", "Function", "ExternalService"}},
-		model.RelStep:             {{"STEP", "Process", "Function"}},
+		model.RelRemoteCallsRoute: {{"REMOTE_CALLS_ROUTE", constants.KindFunction, constants.KindRoute}},
+		model.RelRemoteCallsExt:   {{"REMOTE_CALLS_EXT", constants.KindFunction, constants.KindExternalService}},
+		model.RelStep:             {{"STEP", constants.KindProcess, constants.KindFunction}},
 	}
 
 	tables, isMulti := multiTable[relKind]
@@ -671,8 +669,8 @@ func (store *Store) traverseRecursive(nodeID string, depth int, direction model.
 		isGetter, _ := row.GetValue(3)
 		isSetter, _ := row.GetValue(4)
 		subgraph.Nodes = append(subgraph.Nodes, model.Node{
-			ID:   fmt.Sprint(id),
-			Kind: "Function",
+			ID:         fmt.Sprint(id),
+			Kind:       constants.KindFunction,
 			Properties: map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter},
 		})
 	}
@@ -717,8 +715,8 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				visited[targetID] = true
 				nextQueue = append(nextQueue, targetID)
 				subgraph.Nodes = append(subgraph.Nodes, model.Node{
-					ID:   targetID,
-					Kind: "Function",
+					ID:         targetID,
+					Kind:       constants.KindFunction,
 					Properties: map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter},
 				})
 			}
@@ -829,11 +827,55 @@ func (store *Store) QueryAllByKind(_ context.Context, kind string, limit int) ([
 	return nodes, nil
 }
 
+// QueryNodesByProperty returns nodes of a specific kind where the given property matches the value.
+// matchMode: "exact" for equality, "contains" for substring match.
+func (store *Store) QueryNodesByProperty(_ context.Context, kind string, key string, value string, matchMode string, limit int) ([]model.Node, error) {
+	returnClause := model.QueryReturnClause(kind)
+	colNames := append([]string{"id"}, model.ColumnNames(kind)...)
+
+	escapedValue := strings.ReplaceAll(value, "\\", "\\\\")
+	escapedValue = strings.ReplaceAll(escapedValue, "'", "\\'")
+
+	var whereClause string
+	switch matchMode {
+	case "contains":
+		whereClause = fmt.Sprintf("WHERE n.%s CONTAINS '%s'", key, escapedValue)
+	default: // exact
+		whereClause = fmt.Sprintf("WHERE n.%s = '%s'", key, escapedValue)
+	}
+	limitClause := ""
+	if limit > 0 {
+		limitClause = fmt.Sprintf(" LIMIT %d", limit)
+	}
+	query := fmt.Sprintf("MATCH (n:%s) %s RETURN %s%s", kind, whereClause, returnClause, limitClause)
+	result, err := store.conn.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer result.Close()
+
+	var nodes []model.Node
+	for result.HasNext() {
+		row, _ := result.Next()
+		props := make(map[string]any)
+		nodeID := ""
+		for i, col := range colNames {
+			val, _ := row.GetValue(uint64(i))
+			if col == "id" {
+				nodeID = fmt.Sprint(val)
+			} else if val != nil {
+				props[col] = val
+			}
+		}
+		nodes = append(nodes, model.Node{ID: nodeID, Kind: kind, Properties: props})
+	}
+	return nodes, nil
+}
+
 // SearchFTS performs full-text search on node names.
 func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]storage.SearchResult, error) {
-	tables := []string{"Function", "Class", "Interface"}
 	var results []storage.SearchResult
-	for _, table := range tables {
+	for _, table := range constants.BaseSymbolKinds {
 		cypherQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.name CONTAINS $query RETURN n.id, n.name, n.file_path, n.qualified_name LIMIT %d", table, limit)
 		result, err := store.exec(cypherQuery, map[string]any{"query": query})
 		if err != nil {
@@ -865,9 +907,7 @@ func (store *Store) GetStats(_ context.Context) (*model.GraphStats, error) {
 		EdgesByKind: make(map[string]int),
 		FilesByLang: make(map[string]int),
 	}
-	tables := []string{"Function", "Class", "Interface", "Variable", "File", "Route",
-		"Repository", "Directory", "QueryNode", "ExternalService", "Annotation"}
-	for _, table := range tables {
+	for _, table := range constants.AllNodeKinds {
 		result, err := store.conn.Query(fmt.Sprintf("MATCH (n:%s) RETURN count(n)", table))
 		if err != nil {
 			continue
@@ -882,7 +922,7 @@ func (store *Store) GetStats(_ context.Context) (*model.GraphStats, error) {
 		}
 		result.Close()
 	}
-	stats.FileCount = stats.NodesByKind["File"]
+	stats.FileCount = stats.NodesByKind[constants.KindFile]
 
 	// Edge counts
 	edgeTypes := []string{"CALLS", "EXTENDS", "IMPLEMENTS", "OVERRIDES", "IMPORTS",
@@ -933,67 +973,67 @@ func (store *Store) Close() error {
 func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLabel, targetLabel string) {
 	switch kind {
 	case model.RelCalls:
-		return "CALLS", "Function", "Function"
+		return "CALLS", constants.KindFunction, constants.KindFunction
 	case model.RelExtends:
-		return "EXTENDS", "Class", "Class"
+		return "EXTENDS", constants.KindClass, constants.KindClass
 	case model.RelImplements:
-		return "IMPLEMENTS", "Class", "Interface"
+		return "IMPLEMENTS", constants.KindClass, constants.KindInterface
 	case model.RelImports:
-		return "IMPORTS", "File", "File"
+		return "IMPORTS", constants.KindFile, constants.KindFile
 	case model.RelOverrides:
-		return "OVERRIDES", "Function", "Function"
+		return "OVERRIDES", constants.KindFunction, constants.KindFunction
 	case model.RelDispatches:
-		return "DISPATCHES", "Function", "Function"
+		return "DISPATCHES", constants.KindFunction, constants.KindFunction
 	case model.RelHandles:
-		return "HANDLES", "Function", "Route"
+		return "HANDLES", constants.KindFunction, constants.KindRoute
 	case model.RelExecutes:
-		return "EXECUTES", "Function", "QueryNode"
+		return "EXECUTES", constants.KindFunction, constants.KindQueryNode
 	case model.RelContains:
 		switch sourceKind {
-		case "Directory":
-			return "DIR_CONTAINS", "Directory", "File"
-		case constants.SourceKindClassFunc, "Class":
-			return "CLASS_CONTAINS_FUNC", "Class", "Function"
+		case constants.KindDirectory:
+			return "DIR_CONTAINS", constants.KindDirectory, constants.KindFile
+		case constants.SourceKindClassFunc, constants.KindClass:
+			return "CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction
 		case constants.SourceKindFile:
-			return "FILE_CONTAINS", "File", "Function"
+			return "FILE_CONTAINS", constants.KindFile, constants.KindFunction
 		case constants.SourceKindFileClass:
-			return "FILE_CONTAINS_CLASS", "File", "Class"
+			return "FILE_CONTAINS_CLASS", constants.KindFile, constants.KindClass
 		case constants.SourceKindFileInterface:
-			return "FILE_CONTAINS_IFACE", "File", "Interface"
+			return "FILE_CONTAINS_IFACE", constants.KindFile, constants.KindInterface
 		default:
-			return "CONTAINS", "Repository", "File"
+			return "CONTAINS", constants.KindRepository, constants.KindFile
 		}
 	case model.RelMemberOf:
 		switch sourceKind {
-		case "Class":
-			return "MEMBER_OF_CLASS", "Class", "Community"
+		case constants.KindClass:
+			return "MEMBER_OF_CLASS", constants.KindClass, constants.KindCommunity
 		default:
-			return "MEMBER_OF_FUNC", "Function", "Community"
+			return "MEMBER_OF_FUNC", constants.KindFunction, constants.KindCommunity
 		}
 	case model.RelDependsOn:
-		return "DEPENDS_ON", "Directory", "Directory"
+		return "DEPENDS_ON", constants.KindDirectory, constants.KindDirectory
 	case model.RelFetches:
-		return "FETCHES", "Function", "Route"
+		return "FETCHES", constants.KindFunction, constants.KindRoute
 	case model.RelMiddleware:
-		return "MIDDLEWARE", "Route", "Function"
+		return "MIDDLEWARE", constants.KindRoute, constants.KindFunction
 	case model.RelStep:
-		return "STEP", "Process", "Function"
+		return "STEP", constants.KindProcess, constants.KindFunction
 	case model.RelInjects:
-		return "INJECTS", "Function", "Function"
+		return "INJECTS", constants.KindFunction, constants.KindFunction
 	case model.RelRemoteCallsRoute:
-		return "REMOTE_CALLS_ROUTE", "Function", "Route"
+		return "REMOTE_CALLS_ROUTE", constants.KindFunction, constants.KindRoute
 	case model.RelRemoteCallsExt:
-		return "REMOTE_CALLS_EXT", "Function", "ExternalService"
+		return "REMOTE_CALLS_EXT", constants.KindFunction, constants.KindExternalService
 	case model.RelUnresolvedCall:
-		return "UNRESOLVED_CALL", "Function", "Function"
+		return "UNRESOLVED_CALL", constants.KindFunction, constants.KindFunction
 	case model.RelHasAnnotation:
 		switch sourceKind {
-		case "Class":
-			return "HAS_ANNOTATION_CLASS", "Class", "Annotation"
-		case "Interface":
-			return "HAS_ANNOTATION_IFACE", "Interface", "Annotation"
+		case constants.KindClass:
+			return "HAS_ANNOTATION_CLASS", constants.KindClass, constants.KindAnnotation
+		case constants.KindInterface:
+			return "HAS_ANNOTATION_IFACE", constants.KindInterface, constants.KindAnnotation
 		default:
-			return "HAS_ANNOTATION_FUNC", "Function", "Annotation"
+			return "HAS_ANNOTATION_FUNC", constants.KindFunction, constants.KindAnnotation
 		}
 	default:
 		return "", "", ""

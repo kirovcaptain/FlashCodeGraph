@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
@@ -953,4 +954,67 @@ func TestQuerier_QueryAffectedRoutes(t *testing.T) {
 		t.Error("expected scheduled_task route")
 	}
 	t.Log("✅ QueryAffectedRoutes: found http_endpoint + scheduled_task")
+}
+
+func TestQuerier_QueryRouteChain_ContainsFallback(t *testing.T) {
+	_, _, querier, store := setupSpringProject(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	// Get a known route to extract a partial path
+	routes, _ := store.QueryAllByKind(ctx, "Route", 100)
+	if len(routes) == 0 {
+		t.Skip("no routes indexed")
+	}
+
+	var fullPath string
+	for _, r := range routes {
+		p := fmt.Sprint(r.Properties["path_pattern"])
+		// Find a route with at least 2 segments for partial match
+		if len(p) > 5 && p[0] == '/' {
+			fullPath = p
+			break
+		}
+	}
+	if fullPath == "" {
+		t.Skip("no suitable route for contains test")
+	}
+
+	// Use last segment as partial path
+	parts := strings.Split(fullPath, "/")
+	if len(parts) < 2 {
+		t.Skip("route too short for partial match")
+	}
+	partial := "/" + parts[len(parts)-1]
+
+	// Count how many routes contain this partial path
+	matchCount := 0
+	for _, r := range routes {
+		p := fmt.Sprint(r.Properties["path_pattern"])
+		if strings.Contains(p, partial) {
+			matchCount++
+		}
+	}
+
+	if matchCount == 1 {
+		// Single match — should succeed via contains fallback
+		chain, err := querier.QueryRouteChain(ctx, partial, "", 10)
+		if err != nil {
+			t.Fatalf("contains fallback should find unique match: %v", err)
+		}
+		if chain.Route != fullPath {
+			t.Errorf("expected route=%s, got %s", fullPath, chain.Route)
+		}
+		t.Logf("✅ contains fallback: %s → %s", partial, fullPath)
+	} else if matchCount > 1 {
+		// Multiple matches — should return error with candidates
+		_, err := querier.QueryRouteChain(ctx, partial, "", 10)
+		if err == nil {
+			t.Fatal("expected error for multiple matches")
+		}
+		if !strings.Contains(err.Error(), "multiple routes match") {
+			t.Errorf("expected 'multiple routes match' error, got: %v", err)
+		}
+		t.Logf("✅ multiple match error: %s matched %d routes", partial, matchCount)
+	}
 }

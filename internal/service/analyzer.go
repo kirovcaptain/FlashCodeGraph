@@ -154,7 +154,7 @@ func (analyzer *Analyzer) ClassifyRoots(ctx context.Context, forest *CallForest)
 	handlerRoute := make(map[string]routeInfo)
 
 	// Batch-load all Route nodes to avoid N+1 queries
-	routeNodes, _ := analyzer.graphStore.QueryAllByKind(ctx, "Route", 0)
+	routeNodes, _ := analyzer.graphStore.QueryAllByKind(ctx, constants.KindRoute, 0)
 	routeNodeMap := make(map[string]*model.Node, len(routeNodes))
 	for i := range routeNodes {
 		routeNodeMap[routeNodes[i].ID] = &routeNodes[i]
@@ -316,7 +316,7 @@ func (analyzer *Analyzer) BuildLayerMap(ctx context.Context) map[string]string {
 	m := map[string]string{}
 
 	// Load all annotations
-	anns, err := analyzer.graphStore.QueryAllByKind(ctx, "Annotation", 0)
+	anns, err := analyzer.graphStore.QueryAllByKind(ctx, constants.KindAnnotation, 0)
 	if err != nil {
 		return m
 	}
@@ -443,7 +443,7 @@ func (analyzer *Analyzer) WriteEntryPoints(ctx context.Context, entries []EntryP
 
 // ClearAnalysisData removes old Process nodes and STEP edges.
 func (analyzer *Analyzer) ClearAnalysisData(ctx context.Context) {
-	analyzer.graphStore.DeleteAllByKind(ctx, "Process")
+	analyzer.graphStore.DeleteAllByKind(ctx, constants.KindProcess)
 }
 
 // WriteProcesses persists Process nodes and STEP edges to the graph.
@@ -468,7 +468,7 @@ func (analyzer *Analyzer) WriteProcesses(ctx context.Context, entries []EntryPoi
 		processID := fmt.Sprintf("process:%s", entry.NodeID)
 		nodes = append(nodes, model.Node{
 			ID:   processID,
-			Kind: "Process",
+			Kind: constants.KindProcess,
 			Properties: map[string]any{
 				"name":         entry.Name,
 				"entry_point":  entry.NodeID,

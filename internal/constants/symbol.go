@@ -2,10 +2,31 @@ package constants
 
 // Kind — unified node kind, used across parser, storage, and query layers.
 const (
-	KindFunction  = "Function"
-	KindClass     = "Class"
-	KindInterface = "Interface"
+	KindFunction        = "Function"
+	KindClass           = "Class"
+	KindInterface       = "Interface"
+	KindVariable        = "Variable"
+	KindFile            = "File"
+	KindDirectory       = "Directory"
+	KindRepository      = "Repository"
+	KindRoute           = "Route"
+	KindQueryNode       = "QueryNode"
+	KindCommunity       = "Community"
+	KindProcess         = "Process"
+	KindAnnotation      = "Annotation"
+	KindExternalService = "ExternalService"
 )
+
+// AllNodeKinds is the complete list of all node kinds in the graph.
+var AllNodeKinds = []string{
+	KindFunction, KindClass, KindInterface, KindVariable,
+	KindFile, KindDirectory, KindRepository,
+	KindRoute, KindQueryNode, KindCommunity, KindProcess,
+	KindAnnotation, KindExternalService,
+}
+
+// BaseSymbolKinds is the list of base code symbol kinds (Function, Class, Interface).
+var BaseSymbolKinds = []string{KindFunction, KindClass, KindInterface}
 
 // ParserKind — fine-grained parser output, mapped to Kind before storage.
 const (

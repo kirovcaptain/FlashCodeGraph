@@ -148,7 +148,7 @@ func runListEntries(cmd *cobra.Command, args []string) error {
 
 	// Batch-load route info: Function → HANDLES → Route
 	handlesEdges, _ := store.QueryAllEdges(ctx, "HANDLES", 0)
-	routeNodes, _ := store.QueryAllByKind(ctx, "Route", 0)
+	routeNodes, _ := store.QueryAllByKind(ctx, constants.KindRoute, 0)
 	routeMap := make(map[string]*model.Node, len(routeNodes))
 	for i := range routeNodes {
 		routeMap[routeNodes[i].ID] = &routeNodes[i]

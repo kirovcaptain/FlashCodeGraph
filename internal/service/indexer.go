@@ -1075,7 +1075,7 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 		parsedFiles[f.RelPath] = true
 	}
 
-	for _, kind := range []string{constants.KindFunction, constants.KindClass, constants.KindInterface} {
+	for _, kind := range constants.BaseSymbolKinds {
 		nodes, err := indexer.graphStore.QueryAllByKind(ctx, kind, 0)
 		if err != nil {
 			continue
@@ -1153,7 +1153,7 @@ func (indexer *Indexer) cleanEmptyDirectories(ctx context.Context, deletedFiles 
 	// Check each directory — if no CONTAINS edges remain, delete it
 	for dir := range dirs {
 		dirID := fmt.Sprintf("dir:%s", dir)
-		edges, err := indexer.graphStore.QueryEdges(ctx, dirID, "Directory", model.RelContains, model.Outgoing)
+		edges, err := indexer.graphStore.QueryEdges(ctx, dirID, constants.KindDirectory, model.RelContains, model.Outgoing)
 		if err != nil || len(edges) == 0 {
 			indexer.graphStore.DeleteNodeByID(ctx, dirID)
 		}
@@ -1218,7 +1218,7 @@ func (indexer *Indexer) writeIncrementalFileSystemNodes(ctx context.Context, abs
 
 	var mergeNodes, createNodes []model.Node
 	for _, n := range nodes {
-		if n.Kind == "Repository" || n.Kind == "Directory" {
+		if n.Kind == constants.KindRepository || n.Kind == constants.KindDirectory {
 			mergeNodes = append(mergeNodes, n)
 		} else {
 			createNodes = append(createNodes, n)
@@ -1248,7 +1248,7 @@ func buildStructuralData(repoID, repoName, absPath string, files []scanner.Scann
 
 	// Repository node
 	nodes = append(nodes, model.Node{
-		ID: repoID, Kind: "Repository",
+		ID: repoID, Kind: constants.KindRepository,
 		Properties: map[string]any{"name": repoName, "path": absPath, "index_timestamp": time.Now().Unix()},
 	})
 
@@ -1261,12 +1261,12 @@ func buildStructuralData(repoID, repoName, absPath string, files []scanner.Scann
 		}
 		fileID := fmt.Sprintf("file:%s", file.RelPath)
 		nodes = append(nodes, model.Node{
-			ID: fileID, Kind: "File",
+			ID: fileID, Kind: constants.KindFile,
 			Properties: map[string]any{"path": file.RelPath, "language": file.Language},
 		})
 		edges = append(edges, model.Edge{
 			SourceID: repoID, TargetID: fileID,
-			Kind: model.RelContains, SourceKind: "Repository",
+			Kind: model.RelContains, SourceKind: constants.KindRepository,
 		})
 		dir := filepath.Dir(file.RelPath)
 		if dir != "." && dir != "" {
@@ -1277,13 +1277,13 @@ func buildStructuralData(repoID, repoName, absPath string, files []scanner.Scann
 	for dir := range dirs {
 		dirID := fmt.Sprintf("dir:%s", dir)
 		nodes = append(nodes, model.Node{
-			ID: dirID, Kind: "Directory",
+			ID: dirID, Kind: constants.KindDirectory,
 			Properties: map[string]any{"path": dir},
 		})
 		for _, fileID := range dirFiles[dir] {
 			edges = append(edges, model.Edge{
 				SourceID: dirID, TargetID: fileID,
-				Kind: model.RelContains, SourceKind: "Directory",
+				Kind: model.RelContains, SourceKind: constants.KindDirectory,
 			})
 		}
 	}
@@ -1354,7 +1354,7 @@ func (indexer *Indexer) writeRouteNodes(ctx context.Context, parseResults []mode
 			routeID := fmt.Sprintf("route:%s:%s:%s", route.Method, route.PathPattern, route.FilePath)
 			nodes = append(nodes, model.Node{
 				ID:   routeID,
-				Kind: "Route",
+				Kind: constants.KindRoute,
 				Properties: map[string]any{
 					"method":         route.Method,
 					"path_pattern":   route.PathPattern,
@@ -1495,7 +1495,7 @@ func (indexer *Indexer) writeQueryNodes(ctx context.Context, parseResults []mode
 			queryID := fmt.Sprintf("query:%s:%d", query.CallerName, query.Line)
 			nodes = append(nodes, model.Node{
 				ID:   queryID,
-				Kind: "QueryNode",
+				Kind: constants.KindQueryNode,
 				Properties: map[string]any{
 					"sql_text":   query.SQLText,
 					"query_type": query.QueryType,
@@ -1570,7 +1570,7 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 				annID := symbol.ID + "::" + baseName
 				nodes = append(nodes, model.Node{
 					ID:   annID,
-					Kind: "Annotation",
+					Kind: constants.KindAnnotation,
 					Properties: map[string]any{
 						"name":      baseName,
 						"category":  def.Category,
@@ -1613,7 +1613,7 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 
 func (indexer *Indexer) writeRemoteCallEdges(ctx context.Context, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, result *model.IndexResult) error {
 	// Collect all Route nodes for matching
-	allRoutes, _ := indexer.graphStore.QueryAllByKind(ctx, "Route", 100000)
+	allRoutes, _ := indexer.graphStore.QueryAllByKind(ctx, constants.KindRoute, 100000)
 
 	var nodes []model.Node
 	var edges []model.Edge
@@ -1647,7 +1647,7 @@ func (indexer *Indexer) writeRemoteCallEdges(ctx context.Context, parseResults [
 				if !seenExtIDs[extID] {
 					seenExtIDs[extID] = true
 					nodes = append(nodes, model.Node{
-						ID: extID, Kind: "ExternalService",
+						ID: extID, Kind: constants.KindExternalService,
 						Properties: map[string]any{
 							"name":          rc.TargetService,
 							"discovered_by": rc.CallerName,

@@ -30,7 +30,7 @@ func (querier *Querier) QuerySymbol(ctx context.Context, name string, opts model
 // QueryByAnnotation returns symbols that have a specific annotation.
 // When params is non-empty, only annotations whose params contain the given substring are matched.
 func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string, params string, kind string, limit int) ([]model.Node, error) {
-	annotationNodes, err := querier.graphStore.QueryNodesByName(ctx, annotation, model.QueryOpts{Kinds: []string{"Annotation"}})
+	annotationNodes, err := querier.graphStore.QueryNodesByName(ctx, annotation, model.QueryOpts{Kinds: []string{constants.KindAnnotation}})
 	if err != nil {
 		return nil, err
 	}
@@ -80,32 +80,28 @@ func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string
 
 // QueryByLayer returns symbols annotated with a specific layer (controller/service/repository/model).
 func (querier *Querier) QueryByLayer(ctx context.Context, layer string, limit int) ([]model.Node, error) {
-	anns, err := querier.graphStore.QueryAllByKind(ctx, "Annotation", 0)
+	annotations, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindAnnotation, "layer", layer, "exact", 0)
 	if err != nil {
 		return nil, err
 	}
-	var annIDs []string
-	for _, a := range anns {
-		if propString(a.Properties, "layer") == layer {
-			annIDs = append(annIDs, a.ID)
-		}
+	annotationIDs := make([]string, len(annotations))
+	for idx, annotation := range annotations {
+		annotationIDs[idx] = annotation.ID
 	}
-	return querier.resolveAnnotatedNodes(ctx, annIDs, limit)
+	return querier.resolveAnnotatedNodes(ctx, annotationIDs, limit)
 }
 
 // QueryByAnnotationCategory returns symbols annotated with a specific category (security/behavior/etc).
 func (querier *Querier) QueryByAnnotationCategory(ctx context.Context, category string, limit int) ([]model.Node, error) {
-	anns, err := querier.graphStore.QueryAllByKind(ctx, "Annotation", 0)
+	annotations, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindAnnotation, "category", category, "exact", 0)
 	if err != nil {
 		return nil, err
 	}
-	var annIDs []string
-	for _, a := range anns {
-		if propString(a.Properties, "category") == category {
-			annIDs = append(annIDs, a.ID)
-		}
+	annotationIDs := make([]string, len(annotations))
+	for idx, annotation := range annotations {
+		annotationIDs[idx] = annotation.ID
 	}
-	return querier.resolveAnnotatedNodes(ctx, annIDs, limit)
+	return querier.resolveAnnotatedNodes(ctx, annotationIDs, limit)
 }
 
 func (querier *Querier) resolveAnnotatedNodes(ctx context.Context, annIDs []string, limit int) ([]model.Node, error) {
@@ -455,7 +451,7 @@ func (querier *Querier) LocateFunction(ctx context.Context, repoPath string, req
 
 	results := make([]model.LocateResult, len(requests))
 	for i, req := range requests {
-		results[i] = model.LocateResult{FilePath: req.FilePath, Line: req.Line, Kind: "File"}
+		results[i] = model.LocateResult{FilePath: req.FilePath, Line: req.Line, Kind: constants.KindFile}
 		bestSpan := int(^uint(0) >> 1)
 		for _, node := range fileNodes[req.FilePath] {
 			startLine := propInt(node.Properties, "start_line")
@@ -481,7 +477,7 @@ func (querier *Querier) Report(ctx context.Context) (*model.GraphReport, error) 
 		EdgeCounts: make(map[string]int),
 	}
 
-	nodeKinds := []string{"Repository", "Directory", "File", constants.KindFunction, constants.KindClass, constants.KindInterface, "Route", "QueryNode", "ExternalService"}
+	nodeKinds := constants.AllNodeKinds
 	seenIDs := make(map[string]bool)
 	
 
@@ -521,13 +517,13 @@ func (querier *Querier) Report(ctx context.Context) (*model.GraphReport, error) 
 				report.Classes = append(report.Classes, detail)
 			case constants.KindInterface:
 				report.Interfaces = append(report.Interfaces, detail)
-			case "Route":
+			case constants.KindRoute:
 				report.RouteDetails = append(report.RouteDetails, model.RouteDetail{
 					Method:      propString(node.Properties, "method"),
 					PathPattern: propString(node.Properties, "path_pattern"),
 					Handler:     propString(node.Properties, "handler_method"),
 				})
-			case "QueryNode":
+			case constants.KindQueryNode:
 				report.QueryDetails = append(report.QueryDetails, model.QueryDetail{
 					SQLText:   propString(node.Properties, "sql_text"),
 					QueryType: propString(node.Properties, "query_type"),
@@ -569,28 +565,72 @@ func (querier *Querier) Report(ctx context.Context) (*model.GraphReport, error) 
 	return report, nil
 }
 
+// findRouteNode finds a route node by path_pattern. Tries exact match first, then contains fallback.
+// Returns error with candidate list if multiple routes match via contains.
+func (querier *Querier) findRouteNode(ctx context.Context, routePath string, method string) (*model.Node, error) {
+	// 1. Exact match
+	exactMatches, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindRoute, "path_pattern", routePath, "exact", 0)
+	if err != nil {
+		return nil, err
+	}
+	if node := filterByMethod(exactMatches, method); node != nil {
+		return node, nil
+	}
+
+	// 2. Contains fallback
+	containsMatches, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindRoute, "path_pattern", routePath, "contains", 0)
+	if err != nil {
+		return nil, err
+	}
+	filtered := filterAllByMethod(containsMatches, method)
+	if len(filtered) == 1 {
+		return &filtered[0], nil
+	}
+	if len(filtered) > 1 {
+		var candidates []string
+		for _, r := range filtered {
+			candidates = append(candidates, fmt.Sprintf("  %s %s", propString(r.Properties, "method"), propString(r.Properties, "path_pattern")))
+		}
+		return nil, fmt.Errorf("multiple routes match \"%s\":\n%s\nPlease specify the full route path", routePath, strings.Join(candidates, "\n"))
+	}
+
+	return nil, fmt.Errorf("route not found: %s %s", method, routePath)
+}
+
+// filterByMethod returns the first node matching the method filter, or nil if none match.
+func filterByMethod(nodes []model.Node, method string) *model.Node {
+	for i := range nodes {
+		if method == "" || propString(nodes[i].Properties, "method") == method {
+			return &nodes[i]
+		}
+	}
+	return nil
+}
+
+// filterAllByMethod returns all nodes matching the method filter.
+func filterAllByMethod(nodes []model.Node, method string) []model.Node {
+	if method == "" {
+		return nodes
+	}
+	var result []model.Node
+	for _, node := range nodes {
+		if propString(node.Properties, "method") == method {
+			result = append(result, node)
+		}
+	}
+	return result
+}
+
 // QueryRouteChain traces a route through HANDLES → BFS CALLS → EXECUTES, annotating each node with its layer.
 func (querier *Querier) QueryRouteChain(ctx context.Context, routePath string, method string, maxDepth int) (*model.RouteChain, error) {
 	if maxDepth <= 0 {
 		maxDepth = 10
 	}
 
-	// Find matching route
-	routes, err := querier.graphStore.QueryAllByKind(ctx, "Route", 0)
+	// Find matching route: exact match first, then contains fallback
+	routeNode, err := querier.findRouteNode(ctx, routePath, method)
 	if err != nil {
 		return nil, err
-	}
-	var routeNode *model.Node
-	for _, r := range routes {
-		rPath := propString(r.Properties, "path_pattern")
-		rMethod := propString(r.Properties, "method")
-		if rPath == routePath && (method == "" || rMethod == method) {
-			routeNode = &r
-			break
-		}
-	}
-	if routeNode == nil {
-		return nil, fmt.Errorf("route not found: %s %s", method, routePath)
 	}
 
 	chain := &model.RouteChain{
@@ -599,7 +639,7 @@ func (querier *Querier) QueryRouteChain(ctx context.Context, routePath string, m
 	}
 
 	// HANDLES edges: Route ← Function
-	handles, err := querier.graphStore.QueryEdges(ctx, routeNode.ID, "Route", model.RelHandles, model.Incoming)
+	handles, err := querier.graphStore.QueryEdges(ctx, routeNode.ID, constants.KindRoute, model.RelHandles, model.Incoming)
 	if err != nil || len(handles) == 0 {
 		return chain, nil
 	}
@@ -623,7 +663,7 @@ func (querier *Querier) QueryRouteChain(ctx context.Context, routePath string, m
 		execMap[edge.SourceID] = append(execMap[edge.SourceID], edge.TargetID)
 	}
 
-	queryNodes, _ := querier.graphStore.QueryAllByKind(ctx, "QueryNode", 0)
+	queryNodes, _ := querier.graphStore.QueryAllByKind(ctx, constants.KindQueryNode, 0)
 	queryMap := make(map[string]*model.Node, len(queryNodes))
 	for i := range queryNodes {
 		queryMap[queryNodes[i].ID] = &queryNodes[i]
@@ -689,7 +729,7 @@ func (querier *Querier) traceCallChainMem(nodeID string, maxDepth int, funcMap m
 
 func (querier *Querier) buildLayerMapBatch(ctx context.Context, funcs []model.Node) map[string]string {
 	m := map[string]string{}
-	anns, err := querier.graphStore.QueryAllByKind(ctx, "Annotation", 0)
+	anns, err := querier.graphStore.QueryAllByKind(ctx, constants.KindAnnotation, 0)
 	if err != nil {
 		return m
 	}
@@ -754,7 +794,7 @@ type AffectedRoute struct {
 // Returns affected routes and an optional hint message. Requires analyze data (Process/STEP).
 func (querier *Querier) QueryAffectedRoutes(ctx context.Context, nodeIDs []string, repoPath string) ([]AffectedRoute, string) {
 	// Load all Process nodes
-	processes, err := querier.graphStore.QueryAllByKind(ctx, "Process", 0)
+	processes, err := querier.graphStore.QueryAllByKind(ctx, constants.KindProcess, 0)
 	if err != nil || len(processes) == 0 {
 		return nil, "Run analyze_repository to see affected entry points."
 	}
