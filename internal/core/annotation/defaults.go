@@ -78,6 +78,9 @@ var DefaultAnnotations = map[string][]AnnotationDef{
 	"rocketmq": {
 		{Name: "RocketMQMessageListener", Category: "event_listener", EntryType: "event_handler", Framework: "rocketmq"},
 	},
+	"swagger": {
+		{Name: "ApiOperation", Category: "doc", Framework: "swagger"},
+	},
 	"_test": {
 		{Name: "Test", Category: "test", Framework: "junit"},
 		{Name: "SpringBootTest", Category: "test", Framework: "spring"},

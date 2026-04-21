@@ -87,6 +87,10 @@ func detectMavenFrameworks(content string) []Framework {
 		{"org.apache.dubbo", "dubbo", "rpc"},
 		{"xxl-job", "xxl-job", "schedule"},
 		{"xuxueli", "xxl-job", "schedule"},
+		{"springfox", "swagger", "doc"},
+		{"springdoc", "swagger", "doc"},
+		{"swagger", "swagger", "doc"},
+		{"rocketmq", "rocketmq", "mq"},
 	}
 	seen := make(map[string]bool)
 	for _, p := range patterns {
@@ -117,6 +121,10 @@ func detectGradleFrameworks(content string) []Framework {
 		{"dubbo", "dubbo", "rpc"},
 		{"xxl-job", "xxl-job", "schedule"},
 		{"xuxueli", "xxl-job", "schedule"},
+		{"springfox", "swagger", "doc"},
+		{"springdoc", "swagger", "doc"},
+		{"swagger", "swagger", "doc"},
+		{"rocketmq", "rocketmq", "mq"},
 	}
 	seen := make(map[string]bool)
 	for _, p := range patterns {
