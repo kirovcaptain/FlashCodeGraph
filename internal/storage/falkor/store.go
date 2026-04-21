@@ -575,15 +575,15 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 	switch direction {
 	case model.Outgoing:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: '%s'})-[:CALLS*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name",
+			"MATCH (a:Function {id: '%s'})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name",
 			escapeCypher(nodeID), depth)
 	case model.Incoming:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a)-[:CALLS*1..%d]->(b:Function {id: '%s'}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name",
+			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: '%s'}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name",
 			depth, escapeCypher(nodeID))
 	default:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: '%s'})-[:CALLS*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name",
+			"MATCH (a:Function {id: '%s'})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name",
 			escapeCypher(nodeID), depth)
 	}
 
@@ -604,7 +604,7 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 		nodeIDs = append(nodeIDs, "'"+escapeCypher(n.ID)+"'")
 	}
 	edgeCypher := fmt.Sprintf(
-		"MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id IN [%s] AND b.id IN [%s] RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, type(r)",
+		"MATCH (a:Function)-[r:CALLS|DISPATCHES]->(b:Function) WHERE a.id IN [%s] AND b.id IN [%s] RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, type(r)",
 		strings.Join(nodeIDs, ","), strings.Join(nodeIDs, ","))
 	edgeRows, err := store.query(ctx, edgeCypher)
 	if err == nil {

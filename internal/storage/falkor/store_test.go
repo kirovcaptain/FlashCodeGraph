@@ -218,3 +218,75 @@ func TestSchemaRoundtrip_WriteAndQueryAllProperties(t *testing.T) {
 
 	t.Log("✅ FalkorDB schema roundtrip: all properties saved and queryable")
 }
+
+// TestTraverseCallChain_DispatchEdge verifies that TraverseCallChain follows
+// DISPATCHES edges when traversing. This simulates the Feign interface pattern:
+//   caller --CALLS--> InterfaceMethod --DISPATCHES--> ImplMethod --CALLS--> service
+// Reverse traversal from ImplMethod should reach caller via DISPATCHES.
+func TestTraverseCallChain_DispatchEdge(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+	defer store.DeleteGraph(context.Background())
+	ctx := context.Background()
+
+	// Setup: caller -> interfaceMethod -> (DISPATCHES) -> implMethod -> service
+	nodes := []model.Node{
+		{ID: "caller", Kind: "Function", Properties: map[string]any{"name": "saveBasicInfo", "file_path": "app/UserController.java", "qualified_name": "app.UserController.saveBasicInfo"}},
+		{ID: "iface_method", Kind: "Function", Properties: map[string]any{"name": "changeBasicInfo", "file_path": "contract/UserFeign.java", "qualified_name": "contract.UserFeign.changeBasicInfo"}},
+		{ID: "impl_method", Kind: "Function", Properties: map[string]any{"name": "changeBasicInfo", "file_path": "biz/UserController.java", "qualified_name": "biz.UserController.changeBasicInfo"}},
+		{ID: "service", Kind: "Function", Properties: map[string]any{"name": "doWork", "file_path": "core/UserService.java", "qualified_name": "core.UserService.doWork"}},
+	}
+	if err := store.WriteNodes(ctx, nodes); err != nil {
+		t.Fatal("write nodes:", err)
+	}
+
+	edges := []model.Edge{
+		{SourceID: "caller", TargetID: "iface_method", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.95}},
+		{SourceID: "iface_method", TargetID: "impl_method", Kind: model.RelDispatches, Properties: map[string]any{"confidence": 1.0}},
+		{SourceID: "impl_method", TargetID: "service", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.95}},
+	}
+	if err := store.WriteEdges(ctx, edges); err != nil {
+		t.Fatal("write edges:", err)
+	}
+
+	// Forward from caller: should reach iface_method, impl_method, service
+	fwd, err := store.TraverseCallChain(ctx, "caller", 3, model.Outgoing, 0)
+	if err != nil {
+		t.Fatal("forward traverse:", err)
+	}
+	fwdIDs := make(map[string]bool)
+	for _, n := range fwd.Nodes {
+		fwdIDs[n.ID] = true
+	}
+	if !fwdIDs["service"] {
+		t.Errorf("forward: expected to reach 'service' through DISPATCHES, got nodes: %v", fwdIDs)
+	}
+
+	// Reverse from impl_method: should reach caller via DISPATCHES -> iface_method -> CALLS
+	rev, err := store.TraverseCallChain(ctx, "impl_method", 3, model.Incoming, 0)
+	if err != nil {
+		t.Fatal("reverse traverse:", err)
+	}
+	revIDs := make(map[string]bool)
+	for _, n := range rev.Nodes {
+		revIDs[n.ID] = true
+	}
+	if !revIDs["caller"] {
+		t.Errorf("reverse: expected to reach 'caller' through DISPATCHES, got nodes: %v", revIDs)
+	}
+
+	// Forward from impl_method: should reach service
+	fwd2, err := store.TraverseCallChain(ctx, "impl_method", 3, model.Outgoing, 0)
+	if err != nil {
+		t.Fatal("forward from impl:", err)
+	}
+	fwd2IDs := make(map[string]bool)
+	for _, n := range fwd2.Nodes {
+		fwd2IDs[n.ID] = true
+	}
+	if !fwd2IDs["service"] {
+		t.Errorf("forward from impl: expected to reach 'service', got nodes: %v", fwd2IDs)
+	}
+
+	t.Log("✅ DISPATCHES edge traversal test completed")
+}
