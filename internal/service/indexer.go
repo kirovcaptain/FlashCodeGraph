@@ -188,9 +188,12 @@ func (indexer *Indexer) scanProject(ctx context.Context, repoPath string, branch
 			primaryFiles = append(primaryFiles, file)
 		}
 		if len(skippedByLanguage) > 0 {
+			var parts []string
 			for lang, count := range skippedByLanguage {
-				indexer.progress.EmitSub(PhaseFileScan, SubFilterLanguage, fmt.Sprintf("⚠ skipped %d %s files (project language: %s)", count, lang, projectInfo.Language))
+				parts = append(parts, fmt.Sprintf("%d %s", count, lang))
 			}
+			indexer.progress.EmitSub(PhaseFileScan, SubFilterLanguage, "")
+			indexer.progress.EmitSub(PhaseFileScan, SubFilterLanguage, fmt.Sprintf("⚠ skipped %s files (project language: %s)", strings.Join(parts, ", "), projectInfo.Language))
 		}
 		files = primaryFiles
 	}
