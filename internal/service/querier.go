@@ -38,7 +38,7 @@ func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string
 	for _, annotationNode := range annotationNodes {
 		if params != "" {
 			annotationParams := propString(annotationNode.Properties, "params")
-			if !strings.Contains(annotationParams, params) {
+			if !strings.Contains(strings.ToLower(annotationParams), strings.ToLower(params)) {
 				continue
 			}
 		}
