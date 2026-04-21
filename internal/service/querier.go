@@ -253,6 +253,58 @@ func (querier *Querier) QueryCallChainByNodeID(ctx context.Context, nodeID strin
 	return querier.graphStore.TraverseCallChain(ctx, nodeID, depth, direction, minConfidence)
 }
 
+// FilterCoreSubgraph removes accessor (is_getter/is_setter) and external (file_path=="[external]") nodes
+// and their associated edges from a subgraph, returning a simplified core call chain.
+func FilterCoreSubgraph(sg *model.Subgraph) *model.Subgraph {
+	if sg == nil {
+		return sg
+	}
+	excluded := map[string]bool{}
+	var nodes []model.Node
+	for _, n := range sg.Nodes {
+		props := n.Properties
+		if props["is_getter"] == true || props["is_setter"] == true {
+			excluded[n.ID] = true
+			continue
+		}
+		if fp, _ := props["file_path"].(string); fp == "[external]" || fp == "" {
+			excluded[n.ID] = true
+			continue
+		}
+		nodes = append(nodes, n)
+	}
+	var edges []model.Edge
+	for _, e := range sg.Edges {
+		if !excluded[e.SourceID] && !excluded[e.TargetID] {
+			edges = append(edges, e)
+		}
+	}
+	return &model.Subgraph{Nodes: nodes, Edges: edges}
+}
+
+// FilterCoreRouteChain removes accessor and external nodes from a route chain.
+func FilterCoreRouteChain(chain *model.RouteChain) *model.RouteChain {
+	if chain == nil {
+		return chain
+	}
+	var filtered []model.ChainNode
+	for _, cn := range chain.Chain {
+		if cn.FilePath == "[external]" || cn.FilePath == "" {
+			continue
+		}
+		if cn.IsGetter || cn.IsSetter {
+			continue
+		}
+		filtered = append(filtered, cn)
+	}
+	return &model.RouteChain{
+		Route:   chain.Route,
+		Method:  chain.Method,
+		Chain:   filtered,
+		Queries: chain.Queries,
+	}
+}
+
 // ImpactAnalysis finds all symbols affected by changes to a given symbol.
 func (querier *Querier) ImpactAnalysis(ctx context.Context, symbolName string, depth int) (*model.Subgraph, error) {
 	node, _, err := querier.ResolveFunction(ctx, symbolName)
@@ -346,6 +398,12 @@ func propString(props map[string]any, key string) string {
 		return s
 	}
 	return fmt.Sprint(v)
+}
+
+// propBool extracts a boolean property from a node properties map.
+func propBool(props map[string]any, key string) bool {
+	v, _ := props[key].(bool)
+	return v
 }
 
 // propInt safely extracts an int property from various numeric types.
@@ -599,6 +657,8 @@ func (querier *Querier) traceCallChainMem(nodeID string, maxDepth int, funcMap m
 		Kind:          node.Kind,
 		FilePath:      propString(node.Properties, "file_path"),
 		Layer:         layerMap[node.ID],
+		IsGetter:      propBool(node.Properties, "is_getter"),
+		IsSetter:      propBool(node.Properties, "is_setter"),
 	})
 
 	callerName := propString(node.Properties, "qualified_name")

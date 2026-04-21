@@ -812,3 +812,70 @@ func TestQuerier_QueryRouteChain_LayerPropagation(t *testing.T) {
 
 	t.Logf("✅ RouteChain layer propagation: %d nodes, hasLayerOnFunction=%v", len(chain.Chain), hasLayerOnFunction)
 }
+
+func TestFilterCoreSubgraph(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "a", Kind: "Function", Properties: map[string]any{"name": "processOrder", "file_path": "Order.java"}},
+			{ID: "b", Kind: "Function", Properties: map[string]any{"name": "getName", "file_path": "User.java", "is_getter": true}},
+			{ID: "c", Kind: "Function", Properties: map[string]any{"name": "setAge", "file_path": "User.java", "is_setter": true}},
+			{ID: "d", Kind: "Function", Properties: map[string]any{"name": "List.size", "file_path": "[external]"}},
+			{ID: "e", Kind: "Function", Properties: map[string]any{"name": "save", "file_path": "Repo.java"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "a", TargetID: "b", Kind: "CALLS"},
+			{SourceID: "a", TargetID: "c", Kind: "CALLS"},
+			{SourceID: "a", TargetID: "d", Kind: "CALLS"},
+			{SourceID: "a", TargetID: "e", Kind: "CALLS"},
+		},
+	}
+
+	filtered := FilterCoreSubgraph(sg)
+
+	if len(filtered.Nodes) != 2 {
+		t.Fatalf("expected 2 core nodes (a, e), got %d", len(filtered.Nodes))
+	}
+	nodeIDs := map[string]bool{}
+	for _, n := range filtered.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	if !nodeIDs["a"] || !nodeIDs["e"] {
+		t.Fatalf("expected nodes a and e, got %v", nodeIDs)
+	}
+	if len(filtered.Edges) != 1 {
+		t.Fatalf("expected 1 edge (a→e), got %d", len(filtered.Edges))
+	}
+	if filtered.Edges[0].SourceID != "a" || filtered.Edges[0].TargetID != "e" {
+		t.Fatalf("expected edge a→e, got %s→%s", filtered.Edges[0].SourceID, filtered.Edges[0].TargetID)
+	}
+	t.Log("✅ FilterCoreSubgraph: accessor + external filtered, edges pruned")
+}
+
+func TestFilterCoreSubgraph_EmptyResult(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "a", Kind: "Function", Properties: map[string]any{"name": "getName", "file_path": "User.java", "is_getter": true}},
+			{ID: "b", Kind: "Function", Properties: map[string]any{"name": "List.size", "file_path": "[external]"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "a", TargetID: "b", Kind: "CALLS"},
+		},
+	}
+
+	filtered := FilterCoreSubgraph(sg)
+
+	if len(filtered.Nodes) != 0 {
+		t.Fatalf("expected 0 nodes, got %d", len(filtered.Nodes))
+	}
+	if len(filtered.Edges) != 0 {
+		t.Fatalf("expected 0 edges, got %d", len(filtered.Edges))
+	}
+	t.Log("✅ FilterCoreSubgraph: all filtered → empty result")
+}
+
+func TestFilterCoreSubgraph_Nil(t *testing.T) {
+	if FilterCoreSubgraph(nil) != nil {
+		t.Fatal("expected nil for nil input")
+	}
+	t.Log("✅ FilterCoreSubgraph: nil input → nil output")
+}

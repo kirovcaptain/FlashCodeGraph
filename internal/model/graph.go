@@ -148,6 +148,8 @@ type ChainNode struct {
 	Kind          string `json:"kind"`
 	FilePath      string `json:"file_path"`
 	Layer         string `json:"layer,omitempty"`
+	IsGetter      bool   `json:"is_getter,omitempty"`  // accessor getter (for core mode filtering)
+	IsSetter      bool   `json:"is_setter,omitempty"`  // accessor setter (for core mode filtering)
 }
 
 // RouteChain represents the full call chain from a route entry point.

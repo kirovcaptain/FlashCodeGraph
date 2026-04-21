@@ -31,6 +31,8 @@ var NodeColumns = map[string][]ColumnDef{
 		{"is_constructor", "BOOLEAN"},
 		{"is_generator", "BOOLEAN"},
 		{"is_lambda", "BOOLEAN"},
+		{"is_getter", "BOOLEAN"},
+		{"is_setter", "BOOLEAN"},
 		{"lambda_context", "STRING"},
 		{"complexity", "INT32"},
 		{"docstring", "STRING"},
@@ -140,6 +142,17 @@ func ColumnNames(kind string) []string {
 		names[i] = col.Name
 	}
 	return names
+}
+
+// GetColumnType returns the type of a column for the given node kind.
+// Returns empty string if the column is not found.
+func GetColumnType(kind, name string) string {
+	for _, col := range NodeColumns[kind] {
+		if col.Name == name {
+			return col.Type
+		}
+	}
+	return ""
 }
 
 // QueryReturnClause generates "n.id, n.name, n.qualified_name, ..." for a node kind.

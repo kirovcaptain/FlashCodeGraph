@@ -60,6 +60,19 @@ type callChild struct {
 	declaredType string
 }
 
+// isFoldableNode returns true if a node should be folded in core mode (accessor or external).
+func isFoldableNode(nodeID string, nodeMap map[string]*model.Node) bool {
+	node := nodeMap[nodeID]
+	if node == nil {
+		return false
+	}
+	if node.Properties["is_getter"] == true || node.Properties["is_setter"] == true {
+		return true
+	}
+	fp, _ := node.Properties["file_path"].(string)
+	return fp == "[external]" || fp == ""
+}
+
 func printCallTree(subgraph *model.Subgraph, rootName string) {
 	nodeMap := make(map[string]*model.Node)
 	for i := range subgraph.Nodes {
@@ -215,6 +228,29 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 
 	if callchainFlow {
 		renderWithFlow(folded, nodeMap, children, visited, childPrefix)
+	} else if callchainMode != "full" {
+		// Core mode: fold accessor/external children into summary lines
+		var coreChildren []foldedChild
+		foldedCount := 0
+		for _, fc := range folded {
+			if isFoldableNode(fc.targetID, nodeMap) {
+				foldedCount++
+			} else {
+				coreChildren = append(coreChildren, fc)
+			}
+		}
+		for i, fc := range coreChildren {
+			last := i == len(coreChildren)-1 && foldedCount == 0
+			if fc.implCount > 0 {
+				printFoldedNode(fc, nodeMap, childPrefix, last)
+			} else {
+				printCallNode(fc.targetID, nodeMap, children, visited, childPrefix, last, fc.declaredType)
+			}
+		}
+		if foldedCount > 0 {
+			connector := "└── "
+			fmt.Printf("%s%s[%d accessors/externals folded]\n", childPrefix, connector, foldedCount)
+		}
 	} else {
 		for i, fc := range folded {
 			last := i == len(folded)-1

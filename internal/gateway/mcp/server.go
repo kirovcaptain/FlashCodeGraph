@@ -136,6 +136,7 @@ func (srv *Server) registerTools() {
 		mcp.WithNumber("min_confidence", mcp.Description("Min confidence filter (default 0)")),
 		mcp.WithBoolean("reverse", mcp.Description("Show callers instead of callees")),
 		mcp.WithBoolean("include_unresolved", mcp.Description("Include UNRESOLVED_CALL hint edges (default false)")),
+		mcp.WithString("mode", mcp.Description("Display mode: 'core' (default, hides getters/setters/externals) or 'full' (show all nodes)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected from current branch if omitted)")),
 	), srv.handleQueryCallChain)
@@ -202,6 +203,7 @@ func (srv *Server) registerTools() {
 		mcp.WithString("route", mcp.Required(), mcp.Description("Route path (e.g. /api/users)")),
 		mcp.WithString("method", mcp.Description("HTTP method filter (GET/POST/etc)")),
 		mcp.WithNumber("max_depth", mcp.Description("Max traversal depth (default 10)")),
+		mcp.WithString("mode", mcp.Description("Display mode: 'core' (default, hides getters/setters/externals) or 'full' (show all nodes)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
 	), srv.handleQueryRouteChain)
@@ -227,6 +229,7 @@ func (srv *Server) registerTools() {
 		mcp.WithNumber("depth", mcp.Description("Max tree depth (default: 5)")),
 		mcp.WithNumber("min_confidence", mcp.Description("Min confidence filter (default: 0.0)")),
 		mcp.WithBoolean("include_unresolved", mcp.Description("Include UNRESOLVED_CALL hint edges (default false)")),
+		mcp.WithString("mode", mcp.Description("Display mode: 'core' (default, hides getters/setters/externals) or 'full' (show all nodes)")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected if omitted)")),
 	), srv.handleQueryCallForest)
 
@@ -357,6 +360,7 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	minConfidence := floatArg(request, "min_confidence", 0)
 	reverse, _ := request.GetArguments()["reverse"].(bool)
 	includeUnresolved, _ := request.GetArguments()["include_unresolved"].(bool)
+	mode := stringArg(request, "mode", "core")
 
 	direction := model.Outgoing
 	if reverse {
@@ -375,9 +379,17 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	if mode != "full" {
+		subgraph = service.FilterCoreSubgraph(subgraph)
+	}
+
 	warning := checkStalenessWarning(ctx, path, branchName)
 	resultJSON, _ := json.Marshal(subgraph)
-	return mcp.NewToolResultText(injectWarning(resultJSON, warning)), nil
+	result := injectWarning(resultJSON, warning)
+	if mode != "full" {
+		result = injectHint([]byte(result), "Showing core call chain (getters/setters and external dependencies are hidden). Use mode='full' to see all nodes.")
+	}
+	return mcp.NewToolResultText(result), nil
 }
 
 func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -606,6 +618,7 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 	}
 	method, _ := request.GetArguments()["method"].(string)
 	maxDepth := intArg(request, "max_depth", 10)
+	mode := stringArg(request, "mode", "core")
 	path, _ := request.GetArguments()["path"].(string)
 	branch, _ := request.GetArguments()["branch"].(string)
 
@@ -618,8 +631,15 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	if mode != "full" {
+		chain = service.FilterCoreRouteChain(chain)
+	}
 	data, _ := json.Marshal(chain)
-	return mcp.NewToolResultText(string(data)), nil
+	result := string(data)
+	if mode != "full" {
+		result = injectHint(data, "Showing core route chain (getters/setters and external dependencies are hidden). Use mode='full' to see all nodes.")
+	}
+	return mcp.NewToolResultText(result), nil
 }
 
 // Helpers
@@ -633,6 +653,14 @@ func intArg(request mcp.CallToolRequest, key string, defaultValue int) int {
 
 func floatArg(request mcp.CallToolRequest, key string, defaultValue float64) float64 {
 	if value, ok := request.GetArguments()[key].(float64); ok {
+		return value
+	}
+	return defaultValue
+}
+
+// stringArg extracts a string argument from an MCP request with a default value.
+func stringArg(request mcp.CallToolRequest, key string, defaultValue string) string {
+	if value, ok := request.GetArguments()[key].(string); ok && value != "" {
 		return value
 	}
 	return defaultValue
@@ -737,6 +765,7 @@ func (srv *Server) handleQueryCallForest(ctx context.Context, request mcp.CallTo
 	}
 	entryType, _ := request.GetArguments()["type"].(string)
 	depth := intArg(request, "depth", 5)
+	mode := stringArg(request, "mode", "core")
 	branchName, _ := request.GetArguments()["branch"].(string)
 
 	_, store, err := srv.createQuerier(path, branchName)
@@ -769,11 +798,19 @@ func (srv *Server) handleQueryCallForest(ctx context.Context, request mcp.CallTo
 		}
 		name, _ := f.Properties["name"].(string)
 		process := analyzer.TraceProcess(forest, f.ID, name, depth, layerMap)
-		trees = append(trees, processStepToMap(process))
+		tree := processStepToMap(process)
+		if mode != "full" {
+			tree = filterCoreForestTree(tree)
+		}
+		trees = append(trees, tree)
 	}
 
 	data, _ := json.Marshal(trees)
-	return mcp.NewToolResultText(string(data)), nil
+	result := string(data)
+	if mode != "full" {
+		result = injectHint(data, "Showing core call forest (getters/setters and external dependencies are hidden). Use mode='full' to see all nodes.")
+	}
+	return mcp.NewToolResultText(result), nil
 }
 
 func processStepToMap(step *service.ProcessStep) map[string]any {
@@ -787,6 +824,12 @@ func processStepToMap(step *service.ProcessStep) map[string]any {
 	if step.Layer != "" {
 		m["layer"] = step.Layer
 	}
+	if step.IsGetter {
+		m["is_getter"] = true
+	}
+	if step.IsSetter {
+		m["is_setter"] = true
+	}
 	if len(step.Children) > 0 {
 		children := make([]map[string]any, 0, len(step.Children))
 		for _, child := range step.Children {
@@ -795,6 +838,50 @@ func processStepToMap(step *service.ProcessStep) map[string]any {
 		m["children"] = children
 	}
 	return m
+}
+
+// filterCoreForestTree removes accessor/external nodes from a forest tree map.
+// Skipped nodes' children are promoted to the parent level to preserve connectivity.
+func filterCoreForestTree(tree map[string]any) map[string]any {
+	result := make(map[string]any)
+	for k, v := range tree {
+		if k != "children" {
+			result[k] = v
+		}
+	}
+	children, _ := tree["children"].([]map[string]any)
+	if len(children) > 0 {
+		filtered := collectCoreChildren(children)
+		if len(filtered) > 0 {
+			result["children"] = filtered
+		}
+	}
+	return result
+}
+
+// collectCoreChildren filters child nodes for core mode. Excluded nodes (accessor/external)
+// are removed and their children promoted recursively, so chains of excluded nodes are fully collapsed.
+func collectCoreChildren(children []map[string]any) []map[string]any {
+	var result []map[string]any
+	for _, child := range children {
+		if isCoreExcluded(child) {
+			if grandchildren, ok := child["children"].([]map[string]any); ok {
+				result = append(result, collectCoreChildren(grandchildren)...)
+			}
+		} else {
+			result = append(result, filterCoreForestTree(child))
+		}
+	}
+	return result
+}
+
+// isCoreExcluded returns true if a forest tree node should be excluded in core mode (accessor or external).
+func isCoreExcluded(node map[string]any) bool {
+	if node["is_getter"] == true || node["is_setter"] == true {
+		return true
+	}
+	fp, _ := node["file_path"].(string)
+	return fp == "[external]" || fp == ""
 }
 
 func (srv *Server) handleLocateFunction(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -842,6 +929,21 @@ func injectWarning(originalJSON []byte, warning string) string {
 	if len(originalJSON) > 0 && originalJSON[0] == '{' {
 		warningJSON, _ := json.Marshal(warning)
 		return "{\"warning\":" + string(warningJSON) + "," + string(originalJSON[1:])
+	}
+	return string(originalJSON)
+}
+
+// injectHint prepends a "hint" field into a JSON object string.
+func injectHint(originalJSON []byte, hint string) string {
+	if hint == "" {
+		return string(originalJSON)
+	}
+	hintJSON, _ := json.Marshal(hint)
+	if len(originalJSON) > 0 && originalJSON[0] == '{' {
+		return "{\"hint\":" + string(hintJSON) + "," + string(originalJSON[1:])
+	}
+	if len(originalJSON) > 0 && originalJSON[0] == '[' {
+		return "{\"hint\":" + string(hintJSON) + ",\"items\":" + string(originalJSON) + "}"
 	}
 	return string(originalJSON)
 }

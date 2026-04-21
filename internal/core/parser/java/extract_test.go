@@ -440,3 +440,130 @@ public class Foo {
 	}
 	t.Log("✅ Local variable TypeHint: no scope conflict between field and methods")
 }
+
+func TestExtract_AccessorDetection(t *testing.T) {
+	code := []byte(`package com.example;
+
+public class User {
+    private String name;
+    private int age;
+    private boolean active;
+
+    public String getName() {
+        return this.name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public boolean isActive() {
+        return this.active;
+    }
+
+    public void setAge(int age) {
+        this.age = age;
+    }
+}
+`)
+	result := parseJavaFile(t, string(code), "User.java")
+
+	accessors := map[string]struct{ getter, setter bool }{}
+	for _, sym := range result.Symbols {
+		if sym.Kind != "Function" {
+			continue
+		}
+		accessors[sym.Name] = struct{ getter, setter bool }{sym.IsGetter, sym.IsSetter}
+	}
+
+	// Simple getters
+	if !accessors["getName"].getter {
+		t.Error("getName should be IsGetter=true")
+	}
+	if !accessors["isActive"].getter {
+		t.Error("isActive should be IsGetter=true")
+	}
+	// Simple setters
+	if !accessors["setName"].setter {
+		t.Error("setName should be IsSetter=true")
+	}
+	if !accessors["setAge"].setter {
+		t.Error("setAge should be IsSetter=true")
+	}
+	// Getters should not be setters and vice versa
+	if accessors["getName"].setter {
+		t.Error("getName should not be IsSetter")
+	}
+	if accessors["setName"].getter {
+		t.Error("setName should not be IsGetter")
+	}
+	t.Log("✅ Java accessor detection: simple getters/setters")
+}
+
+func TestExtract_NonAccessor_ComplexGetter(t *testing.T) {
+	code := []byte(`package com.example;
+
+public class OrderService {
+    public Order getOrder(Long id) {
+        Order order = repository.findById(id);
+        if (order == null) {
+            throw new NotFoundException();
+        }
+        return order;
+    }
+
+    public void setStatus(Long id, String status) {
+        Order order = repository.findById(id);
+        order.setStatus(status);
+        repository.save(order);
+    }
+}
+`)
+	result := parseJavaFile(t, string(code), "OrderService.java")
+
+	for _, sym := range result.Symbols {
+		if sym.Name == "getOrder" && sym.IsGetter {
+			t.Error("getOrder has complex logic, should not be IsGetter")
+		}
+		if sym.Name == "setStatus" && sym.IsSetter {
+			t.Error("setStatus has complex logic, should not be IsSetter")
+		}
+	}
+	t.Log("✅ Java non-accessor: complex getXxx/setXxx not marked")
+}
+
+func TestExtract_LombokAccessorMarking(t *testing.T) {
+	code := []byte(`package com.example;
+
+import lombok.Data;
+
+@Data
+public class UserDTO {
+    private String name;
+    private int age;
+}
+`)
+	result := parseJavaFile(t, string(code), "UserDTO.java")
+
+	found := map[string]struct{ getter, setter, synthetic bool }{}
+	for _, sym := range result.Symbols {
+		if sym.Kind != "Function" {
+			continue
+		}
+		found[sym.Name] = struct{ getter, setter, synthetic bool }{sym.IsGetter, sym.IsSetter, sym.IsSynthetic}
+	}
+
+	if !found["getName"].getter || !found["getName"].synthetic {
+		t.Error("Lombok getName should be IsGetter=true, IsSynthetic=true")
+	}
+	if !found["setName"].setter || !found["setName"].synthetic {
+		t.Error("Lombok setName should be IsSetter=true, IsSynthetic=true")
+	}
+	if !found["getAge"].getter {
+		t.Error("Lombok getAge should be IsGetter=true")
+	}
+	if !found["setAge"].setter {
+		t.Error("Lombok setAge should be IsSetter=true")
+	}
+	t.Log("✅ Lombok @Data: getter/setter + synthetic marked")
+}

@@ -894,6 +894,8 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"is_static":      symbol.IsStatic,
 					"is_constructor": symbol.IsConstructor,
 					"is_lambda":      symbol.IsLambda,
+					"is_getter":      symbol.IsGetter,
+					"is_setter":      symbol.IsSetter,
 					"complexity":     symbol.Complexity,
 					"class_type":     symbol.ClassType,
 				},

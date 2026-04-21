@@ -72,6 +72,8 @@ type ProcessStep struct {
 	Layer      string
 	Confidence float64
 	Depth      int
+	IsGetter   bool // accessor getter (for CLI core mode folding)
+	IsSetter   bool // accessor setter (for CLI core mode folding)
 	Children   []*ProcessStep
 }
 
@@ -403,9 +405,13 @@ func (analyzer *Analyzer) traceDFS(forest *CallForest, step *ProcessStep, visite
 		visited[edge.TargetID] = true
 		name := edge.TargetID
 		filePath := ""
+		isGetter := false
+		isSetter := false
 		if node, ok := forest.Nodes[edge.TargetID]; ok {
 			name = nodeProperty(&node, "name")
 			filePath = nodeProperty(&node, "file_path")
+			isGetter, _ = node.Properties["is_getter"].(bool)
+			isSetter, _ = node.Properties["is_setter"].(bool)
 		}
 		child := &ProcessStep{
 			NodeID:     edge.TargetID,
@@ -414,6 +420,8 @@ func (analyzer *Analyzer) traceDFS(forest *CallForest, step *ProcessStep, visite
 			Layer:      layerMap[edge.TargetID],
 			Confidence: edge.Confidence,
 			Depth:      step.Depth + 1,
+			IsGetter:   isGetter,
+			IsSetter:   isSetter,
 		}
 		step.Children = append(step.Children, child)
 		analyzer.traceDFS(forest, child, visited, maxDepth, layerMap)

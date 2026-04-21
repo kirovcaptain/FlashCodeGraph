@@ -27,6 +27,7 @@ var (
 	callchainMinConf float64
 	callchainReverse bool
 	callchainFlow    bool
+	callchainMode    string
 	impactDepth      int
 	impactMinConf    float64
 	traceMethod      string
@@ -84,6 +85,7 @@ func init() {
 	callchainCmd.Flags().Float64Var(&callchainMinConf, "min-confidence", 0, "Min confidence filter")
 	callchainCmd.Flags().BoolVar(&callchainReverse, "reverse", false, "Show callers instead of callees")
 	callchainCmd.Flags().BoolVar(&callchainFlow, "flow", false, "Show control flow context (if/else/loop/defer)")
+	callchainCmd.Flags().StringVar(&callchainMode, "mode", "core", "Display mode: core (fold accessors/externals) or full (show all)")
 	rootCmd.AddCommand(callchainCmd)
 
 	// fcg impact <function>
@@ -296,6 +298,9 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 
 	printCallTree(subgraph, args[0])
 	fmt.Printf("\nTotal: %d %s\n", len(subgraph.Nodes), dirLabel)
+	if callchainMode != "full" {
+		fmt.Println("ℹ Showing core call chain. Use --mode=full to see all nodes including accessors and externals.")
+	}
 	return nil
 }
 

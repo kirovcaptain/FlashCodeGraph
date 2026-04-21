@@ -25,6 +25,8 @@ type Symbol struct {
 	IsConstructor   bool   `json:"is_constructor,omitempty"`
 	IsGenerator     bool   `json:"is_generator,omitempty"`
 	IsLambda        bool   `json:"is_lambda,omitempty"`
+	IsGetter        bool   `json:"is_getter,omitempty"`        // true if method is a simple accessor getter (getXxx/isXxx or @property)
+	IsSetter        bool   `json:"is_setter,omitempty"`        // true if method is a simple accessor setter (setXxx or @xxx.setter)
 	LambdaContext   string `json:"lambda_context,omitempty"`
 	Complexity      int    `json:"complexity,omitempty"`
 	EntryPointScore float64 `json:"entry_point_score,omitempty"`

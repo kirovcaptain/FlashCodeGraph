@@ -278,6 +278,8 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, className s
 
 	isAsync := false
 	isStatic := false
+	isGetter := false  // TypeScript `get xxx()` accessor
+	isSetter := false  // TypeScript `set xxx(v)` accessor
 	isConstructor := methodName == "constructor"
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -287,6 +289,12 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, className s
 		}
 		if text == "static" {
 			isStatic = true
+		}
+		if text == "get" && child.Kind() == "get" {
+			isGetter = true
+		}
+		if text == "set" && child.Kind() == "set" {
+			isSetter = true
 		}
 	}
 
@@ -310,6 +318,8 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, className s
 		IsAsync:       isAsync,
 		IsStatic:      isStatic,
 		IsConstructor: isConstructor,
+		IsGetter:      isGetter,
+		IsSetter:      isSetter,
 		Complexity:    complexity,
 	})
 

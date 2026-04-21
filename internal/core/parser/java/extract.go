@@ -282,6 +282,7 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 }
 
 // extractJavaMethod extracts a method/constructor declaration.
+// Also infers accessor status (IsGetter/IsSetter) based on naming pattern, complexity, and body line count.
 func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName, className string, classAnnotations []string, result *model.ParseResult) {
 	nameNode := node.ChildByFieldName("name")
 	methodName := ""
@@ -407,6 +408,8 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 		IsExported:    isExported,
 		IsConstructor: isConstructor,
 		IsAbstract:    isAbstract,
+		IsGetter:      isAccessorGetter(methodName, isStatic, len(paramTypes), returnTypes, complexity, node),
+		IsSetter:      isAccessorSetter(methodName, isStatic, len(paramTypes), returnTypes, complexity, node),
 		Annotations:   string(annotationsJSON),
 		Complexity:    complexity,
 	})
@@ -419,6 +422,39 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 
 	// Extract ORM queries
 	ExtractORM(annotations, bodyNode, content, qualifiedName, filePath, int(node.StartPosition().Row)+1, result)
+}
+
+// isAccessorGetter checks if a method is a simple getter (getXxx/isXxx with no params, no branches, single-line body).
+func isAccessorGetter(name string, isStatic bool, paramCount int, returnTypes []string, complexity int, node *tree_sitter.Node) bool {
+	if isStatic || paramCount != 0 || len(returnTypes) == 0 {
+		return false
+	}
+	if !(strings.HasPrefix(name, "get") || strings.HasPrefix(name, "is")) || len(name) <= 3 {
+		return false
+	}
+	if complexity > 1 {
+		return false
+	}
+	bodyLines := int(node.EndPosition().Row) - int(node.StartPosition().Row) - 1
+	return bodyLines <= 1
+}
+
+// isAccessorSetter checks if a method is a simple setter (setXxx with one param, void return, no branches, single-line body).
+func isAccessorSetter(name string, isStatic bool, paramCount int, returnTypes []string, complexity int, node *tree_sitter.Node) bool {
+	if isStatic || paramCount != 1 {
+		return false
+	}
+	if !strings.HasPrefix(name, "set") || len(name) <= 3 {
+		return false
+	}
+	if len(returnTypes) > 0 && !(len(returnTypes) == 1 && returnTypes[0] == "void") {
+		return false
+	}
+	if complexity > 1 {
+		return false
+	}
+	bodyLines := int(node.EndPosition().Row) - int(node.StartPosition().Row) - 1
+	return bodyLines <= 1
 }
 
 // extractJavaField extracts a field declaration.
@@ -471,6 +507,7 @@ func generateLombokAccessors(classAnnotations []string, fields []fieldInfo, file
 				ReturnTypes:   []string{f.typeName},
 				Params:        "[]",
 				IsSynthetic:   true,
+				IsGetter:      true,
 				IsExported:    true,
 			})
 		}
@@ -485,6 +522,7 @@ func generateLombokAccessors(classAnnotations []string, fields []fieldInfo, file
 				StartLine:     f.line,
 				Params:        `[{"name":"` + f.name + `","type":"` + f.typeName + `"}]`,
 				IsSynthetic:   true,
+				IsSetter:      true,
 				IsExported:    true,
 			})
 		}

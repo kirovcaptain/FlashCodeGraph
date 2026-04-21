@@ -398,7 +398,7 @@ func (store *Store) QueryNodeByID(ctx context.Context, id string) (*model.Node, 
 			if col == "id" {
 				nodeID = fmt.Sprint(cols[i])
 			} else if cols[i] != nil {
-				props[col] = cols[i]
+				props[col] = convertByType(cols[i], model.GetColumnType(label, col))
 			}
 		}
 		return &model.Node{ID: nodeID, Kind: label, Properties: props}, nil
@@ -447,7 +447,7 @@ func (store *Store) QueryNodeByQualifiedName(ctx context.Context, qualifiedName 
 			if col == "id" {
 				nodeID = fmt.Sprint(cols[i])
 			} else if cols[i] != nil {
-				props[col] = cols[i]
+				props[col] = convertByType(cols[i], model.GetColumnType(label, col))
 			}
 		}
 		return &model.Node{ID: nodeID, Kind: label, Properties: props}, nil
@@ -575,15 +575,15 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 	switch direction {
 	case model.Outgoing:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: '%s'})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name",
+			"MATCH (a:Function {id: '%s'})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter",
 			escapeCypher(nodeID), depth)
 	case model.Incoming:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: '%s'}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name",
+			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: '%s'}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter",
 			depth, escapeCypher(nodeID))
 	default:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: '%s'})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name",
+			"MATCH (a:Function {id: '%s'})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter",
 			escapeCypher(nodeID), depth)
 	}
 
@@ -720,8 +720,8 @@ func (store *Store) QueryAllByKind(ctx context.Context, kind string, limit int) 
 			}
 			if colNames[i] == "id" {
 				nodeID = fmt.Sprint(val)
-			} else {
-				nodeProps[colNames[i]] = val
+			} else if val != nil {
+				nodeProps[colNames[i]] = convertByType(val, model.GetColumnType(kind, colNames[i]))
 			}
 		}
 		nodes = append(nodes, model.Node{ID: nodeID, Kind: kind, Properties: nodeProps})
@@ -846,6 +846,23 @@ func escapeCypher(s string) string {
 	return s
 }
 
+// convertByType converts a FalkorDB result value to the proper Go type based on schema column type.
+// FalkorDB may return booleans as string "true"/"false" — this normalizes them to Go bool.
+func convertByType(val interface{}, colType string) interface{} {
+	switch colType {
+	case "BOOLEAN":
+		switch b := val.(type) {
+		case bool:
+			return b
+		case string:
+			return b == "true"
+		}
+		return false
+	default:
+		return val
+	}
+}
+
 func formatCypherValue(value interface{}) string {
 	switch v := value.(type) {
 	case string:
@@ -885,14 +902,21 @@ func parseCallChainResults(rows []interface{}) []model.Node {
 		if !ok || len(cols) < 4 {
 			continue
 		}
+		props := map[string]interface{}{
+			"name":           cols[1],
+			"file_path":      cols[2],
+			"qualified_name": cols[3],
+		}
+		if len(cols) > 4 && cols[4] != nil {
+			props["is_getter"] = convertByType(cols[4], "BOOLEAN")
+		}
+		if len(cols) > 5 && cols[5] != nil {
+			props["is_setter"] = convertByType(cols[5], "BOOLEAN")
+		}
 		nodes = append(nodes, model.Node{
-			ID:   fmt.Sprint(cols[0]),
-			Kind: "Function",
-			Properties: map[string]interface{}{
-				"name":           cols[1],
-				"file_path":      cols[2],
-				"qualified_name": cols[3],
-			},
+			ID:         fmt.Sprint(cols[0]),
+			Kind:       "Function",
+			Properties: props,
 		})
 	}
 	return nodes

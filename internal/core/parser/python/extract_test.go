@@ -161,3 +161,46 @@ def process():
 	}
 	t.Log("✅ Python PendingAssignment: 4 kinds extracted")
 }
+
+func TestExtract_PythonPropertyAccessor(t *testing.T) {
+	code := []byte(`class User:
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        self._name = value
+
+    def greet(self):
+        return "hello " + self._name
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "user.py", Language: "python"}
+	Extract(root, code, file, result)
+
+	found := map[string]struct{ getter, setter bool }{}
+	for _, sym := range result.Symbols {
+		if sym.Kind != "Function" {
+			continue
+		}
+		found[sym.Name] = struct{ getter, setter bool }{sym.IsGetter, sym.IsSetter}
+	}
+
+	if !found["name"].getter && !found["name"].setter {
+		t.Fatal("Python @property 'name' not detected")
+	}
+	if found["greet"].getter || found["greet"].setter {
+		t.Error("greet is a normal method, should not be accessor")
+	}
+	if found["__init__"].getter || found["__init__"].setter {
+		t.Error("__init__ should not be accessor")
+	}
+	t.Log("✅ Python @property/@setter accessor detection")
+}

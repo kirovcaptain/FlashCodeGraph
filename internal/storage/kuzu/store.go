@@ -647,13 +647,13 @@ func (store *Store) traverseRecursive(nodeID string, depth int, direction model.
 	switch direction {
 	case model.Outgoing:
 		query = fmt.Sprintf(
-			"MATCH (a:Function)-[r:CALLS*1..%d]->(b:Function) WHERE a.id = $id RETURN DISTINCT b.id, b.name, b.file_path", depth)
+			"MATCH (a:Function)-[r:CALLS*1..%d]->(b:Function) WHERE a.id = $id RETURN DISTINCT b.id, b.name, b.file_path, b.is_getter, b.is_setter", depth)
 	case model.Incoming:
 		query = fmt.Sprintf(
-			"MATCH (a:Function)-[r:CALLS*1..%d]->(b:Function) WHERE b.id = $id RETURN DISTINCT a.id, a.name, a.file_path", depth)
+			"MATCH (a:Function)-[r:CALLS*1..%d]->(b:Function) WHERE b.id = $id RETURN DISTINCT a.id, a.name, a.file_path, a.is_getter, a.is_setter", depth)
 	default:
 		query = fmt.Sprintf(
-			"MATCH (a:Function)-[r:CALLS*1..%d]-(b:Function) WHERE a.id = $id RETURN DISTINCT b.id, b.name, b.file_path", depth)
+			"MATCH (a:Function)-[r:CALLS*1..%d]-(b:Function) WHERE a.id = $id RETURN DISTINCT b.id, b.name, b.file_path, b.is_getter, b.is_setter", depth)
 	}
 
 	result, err := store.exec(query, map[string]any{"id": nodeID})
@@ -668,10 +668,12 @@ func (store *Store) traverseRecursive(nodeID string, depth int, direction model.
 		id, _ := row.GetValue(0)
 		name, _ := row.GetValue(1)
 		filePath, _ := row.GetValue(2)
+		isGetter, _ := row.GetValue(3)
+		isSetter, _ := row.GetValue(4)
 		subgraph.Nodes = append(subgraph.Nodes, model.Node{
 			ID:   fmt.Sprint(id),
 			Kind: "Function",
-			Properties: map[string]any{"name": name, "file_path": filePath},
+			Properties: map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter},
 		})
 	}
 	return subgraph, nil
@@ -687,11 +689,11 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 	var queryTpl string
 	switch direction {
 	case model.Outgoing:
-		queryTpl = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id AND r.confidence >= $minConf RETURN b.id, b.name, b.file_path, r.confidence"
+		queryTpl = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id AND r.confidence >= $minConf RETURN b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter"
 	case model.Incoming:
-		queryTpl = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id AND r.confidence >= $minConf RETURN a.id, a.name, a.file_path, r.confidence"
+		queryTpl = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id AND r.confidence >= $minConf RETURN a.id, a.name, a.file_path, r.confidence, a.is_getter, a.is_setter"
 	default:
-		queryTpl = "MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id AND r.confidence >= $minConf RETURN b.id, b.name, b.file_path, r.confidence"
+		queryTpl = "MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id AND r.confidence >= $minConf RETURN b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter"
 	}
 
 	for level := 0; level < depth && len(queue) > 0; level++ {
@@ -706,6 +708,8 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				id, _ := row.GetValue(0)
 				name, _ := row.GetValue(1)
 				filePath, _ := row.GetValue(2)
+				isGetter, _ := row.GetValue(4)
+				isSetter, _ := row.GetValue(5)
 				targetID := fmt.Sprint(id)
 				if visited[targetID] {
 					continue
@@ -715,7 +719,7 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				subgraph.Nodes = append(subgraph.Nodes, model.Node{
 					ID:   targetID,
 					Kind: "Function",
-					Properties: map[string]any{"name": name, "file_path": filePath},
+					Properties: map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter},
 				})
 			}
 			result.Close()

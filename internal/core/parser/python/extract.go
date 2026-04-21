@@ -278,14 +278,25 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 		extractCalls(body, content, filePath, qualifiedName, result)
 	}
 
-	// Detect @abstractmethod decorator
+	// Detect @abstractmethod, @property, @xxx.setter decorators
+	// @property → getter, @xxx.setter → setter (Python property accessor pattern)
 	isAbstract := false
+	isGetter := false
+	isSetter := false
 	if parent := node.Parent(); parent != nil && parent.Kind() == "decorated_definition" {
 		for i := uint(0); i < parent.ChildCount(); i++ {
 			dec := parent.Child(i)
-			if dec.Kind() == "decorator" && strings.Contains(dec.Utf8Text(content), "abstractmethod") {
-				isAbstract = true
-				break
+			if dec.Kind() == "decorator" {
+				decText := dec.Utf8Text(content)
+				if strings.Contains(decText, "abstractmethod") {
+					isAbstract = true
+				}
+				if strings.Contains(decText, "@property") {
+					isGetter = true
+				}
+				if strings.HasSuffix(decText, ".setter") {
+					isSetter = true
+				}
 			}
 		}
 	}
@@ -304,6 +315,8 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 		IsExported:    isExported,
 		IsConstructor: funcName == "__init__",
 		IsAbstract:    isAbstract,
+		IsGetter:      isGetter,
+		IsSetter:      isSetter,
 		Complexity:    complexity,
 	})
 

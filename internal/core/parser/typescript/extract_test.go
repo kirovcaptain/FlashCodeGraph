@@ -236,3 +236,47 @@ func TestExtract_JavaScriptGlobalObjectNotResolved(t *testing.T) {
 	// This test belongs in resolver/typescript package — see TestJSGlobalObject there
 	t.Skip("moved to resolver/typescript")
 }
+
+func TestExtract_TSAccessor(t *testing.T) {
+	code := []byte(`export class User {
+    private _name: string;
+
+    get name(): string {
+        return this._name;
+    }
+
+    set name(value: string) {
+        this._name = value;
+    }
+
+    greet(): string {
+        return "hello " + this._name;
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "user.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	found := map[string]struct{ getter, setter bool }{}
+	for _, sym := range result.Symbols {
+		if sym.Kind != "Function" {
+			continue
+		}
+		found[sym.Name] = struct{ getter, setter bool }{sym.IsGetter, sym.IsSetter}
+	}
+
+	if !found["name"].getter && !found["name"].setter {
+		t.Fatal("TS 'name' accessor not detected at all")
+	}
+	if !found["greet"].getter == false && found["greet"].setter == false {
+		// greet is a normal method, should not be accessor
+	}
+	if found["greet"].getter || found["greet"].setter {
+		t.Error("greet is a normal method, should not be accessor")
+	}
+	t.Log("✅ TypeScript get/set accessor detection")
+}
