@@ -567,3 +567,57 @@ public class UserDTO {
 	}
 	t.Log("✅ Lombok @Data: getter/setter + synthetic marked")
 }
+
+func TestExtract_ChainedCallArgExprs(t *testing.T) {
+	code := `package com.example;
+public class Controller {
+    private Dao dao;
+    public void changeBasicInfo(Reqs reqs) {
+        dao.getInvitationCode(reqs.getInvitationCode().trim().toUpperCase(), InvitationCodeType.Guide.getCode());
+    }
+}
+`
+	result := parseJavaFile(t, code, "Controller.java")
+	for _, call := range result.Calls {
+		if call.CalledName == "getInvitationCode" && call.ReceiverExpr == "dao" {
+			t.Logf("ArgCount=%d ArgTypes=%v ArgExprs=%v", call.ArgCount, call.ArgTypes, call.ArgExprs)
+			if call.ArgCount != 2 {
+				t.Fatalf("expected 2 args, got %d", call.ArgCount)
+			}
+			if call.ArgExprs[0] != "reqs.getInvitationCode().trim().toUpperCase()" {
+				t.Errorf("arg0 expr = %q, want full chain", call.ArgExprs[0])
+			}
+			if call.ArgExprs[1] != "InvitationCodeType.Guide.getCode()" {
+				t.Errorf("arg1 expr = %q, want enum chain", call.ArgExprs[1])
+			}
+			return
+		}
+	}
+	t.Fatal("dao.getInvitationCode call not found")
+}
+
+func TestExtract_EnumMethods(t *testing.T) {
+	code := `package com.example;
+public enum CodeType {
+    Guide(1), Common(2);
+    private final int code;
+    CodeType(int code) { this.code = code; }
+    public Integer getCode() { return this.code; }
+    public static CodeType getEnumByCode(Integer code) { return null; }
+}
+`
+	result := parseJavaFile(t, code, "CodeType.java")
+
+	methods := map[string]bool{}
+	for _, sym := range result.Symbols {
+		if sym.Kind == "Function" {
+			methods[sym.Name] = true
+			t.Logf("  Function: %s (qn=%s)", sym.Name, sym.QualifiedName)
+		}
+	}
+	for _, expected := range []string{"CodeType", "getCode", "getEnumByCode"} {
+		if !methods[expected] {
+			t.Errorf("expected enum method %q to be extracted", expected)
+		}
+	}
+}

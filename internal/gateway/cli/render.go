@@ -207,16 +207,14 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 	}
 	fmt.Printf("%s%s%s%s %s\n", prefix, connector, name, via, filePath)
 
-	// Fold: group children by short name, keep first, fold duplicates
+	// Fold: group children by target ID, keep first, fold duplicates (same target at different lines)
 	var folded []foldedChild
-	seen := make(map[string]int) // "name:line" → index
+	seen := make(map[string]int) // targetID → index
 	for _, cc := range children[nodeID] {
-		key := fmt.Sprintf("%s:%d", cc.name, cc.line)
-		if idx, exists := seen[key]; exists {
+		if idx, exists := seen[cc.targetID]; exists {
 			folded[idx].implCount++
-			folded[idx].others = append(folded[idx].others, cc.targetID)
 		} else {
-			seen[key] = len(folded)
+			seen[cc.targetID] = len(folded)
 			folded = append(folded, foldedChild{cc, 0, nil})
 		}
 	}
@@ -241,11 +239,7 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 		}
 		for i, fc := range coreChildren {
 			last := i == len(coreChildren)-1 && foldedCount == 0
-			if fc.implCount > 0 {
-				printFoldedNode(fc, nodeMap, childPrefix, last)
-			} else {
-				printCallNode(fc.targetID, nodeMap, children, visited, childPrefix, last, fc.declaredType)
-			}
+			printCallNode(fc.targetID, nodeMap, children, visited, childPrefix, last, fc.declaredType)
 		}
 		if foldedCount > 0 {
 			connector := "└── "
@@ -254,11 +248,7 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 	} else {
 		for i, fc := range folded {
 			last := i == len(folded)-1
-			if fc.implCount > 0 {
-				printFoldedNode(fc, nodeMap, childPrefix, last)
-			} else {
-				printCallNode(fc.targetID, nodeMap, children, visited, childPrefix, last, fc.declaredType)
-			}
+			printCallNode(fc.targetID, nodeMap, children, visited, childPrefix, last, fc.declaredType)
 		}
 	}
 }

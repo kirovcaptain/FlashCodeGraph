@@ -7,6 +7,20 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
+// testJavaJDKHelper embeds testJavaHelper but provides JDK method return types for chain inference.
+type testJavaJDKHelper struct {
+	testJavaHelper
+}
+
+var testJDKReturns = map[string]string{
+	"String.trim": "String", "String.toUpperCase": "String", "String.toLowerCase": "String",
+}
+
+func (h *testJavaJDKHelper) LookupMethodReturn(typeName, methodName string) (string, bool) {
+	ret, ok := testJDKReturns[typeName+"."+methodName]
+	return ret, ok
+}
+
 func newTestResolver(table *SymbolTable) *Resolver {
 	javaHelper := &testJavaHelper{symbolTable: table}
 	goHelper := &testGenericHelper{}
@@ -1806,4 +1820,109 @@ func TestResolveCalls_ExternalSymbolPollutesNameUnique(t *testing.T) {
 
 		t.Logf("Order A→B: %d resolved, Order B→A: %d resolved (difference is expected with generic helper)", len(resolved1), len(resolved2))
 	})
+}
+
+func TestResolveCalls_EnrichArgTypes_JDKChainedExpr(t *testing.T) {
+	// reqs.getInvitationCode().trim().toUpperCase() should infer to String
+	// This disambiguates getInvitationCode(String, Integer) vs getInvitationCode(Long, Integer)
+	// Uses testJavaJDKHelper which delegates LookupMethodReturn to the real JDK table.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "get_str", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: `[{"name":"code","type":"String"},{"name":"codeType","type":"Integer"}]`, ReturnTypes: []string{"InvitationCode"}},
+		{ID: "get_long", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: `[{"name":"userId","type":"Long"},{"name":"codeType","type":"Integer"}]`, ReturnTypes: []string{"InvitationCode"}},
+		{ID: "reqs_getCode", Name: "getInvitationCode", QualifiedName: "com.example.Reqs.getInvitationCode", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"String"}},
+		{ID: "c_dao", Name: "Dao", QualifiedName: "com.example.Dao", Kind: "Class", FilePath: "Dao.java"},
+		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "Class", FilePath: "Reqs.java"},
+		{ID: "caller", Name: "changeBasicInfo", QualifiedName: "com.example.Controller.changeBasicInfo", Kind: "Function", FilePath: "Controller.java"},
+		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.example.Controller", Kind: "Class", FilePath: "Controller.java"},
+	})
+
+	jdkHelper := &testJavaJDKHelper{testJavaHelper: testJavaHelper{symbolTable: table}}
+	resolver := NewResolver(table, map[string]LanguageHelper{"java": jdkHelper})
+	envs := map[string]*model.TypeEnv{
+		"Controller.java": {
+			Bindings: map[string]*model.TypeInfo{
+				"Controller:dao":                      {TypeName: "Dao"},
+				"Controller.changeBasicInfo:reqs":     {TypeName: "Reqs"},
+			},
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:   "getInvitationCode",
+		CallerName:   "Controller.changeBasicInfo",
+		FilePath:     "Controller.java",
+		ReceiverExpr: "dao",
+		ArgCount:     2,
+		ArgTypes:     []string{"", ""},
+		ArgExprs:     []string{"reqs.getInvitationCode().trim().toUpperCase()", "InvitationCodeType.Guide.getCode()"},
+	}}
+
+	relations, hints := resolver.ResolveCalls(calls, envs)
+	t.Logf("relations=%d, hints=%d", len(relations), len(hints))
+	for _, r := range relations {
+		t.Logf("  → %s (confidence=%.2f, resolved_by=%s)", r.TargetID, r.Confidence, r.ResolvedBy)
+	}
+
+	// Check if the String overload was selected
+	found := false
+	for _, r := range relations {
+		if r.TargetID == "get_str" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected get_str (String overload) to be selected, but it wasn't")
+	}
+}
+
+func TestResolveCalls_EnrichArgTypes_JDKChainedExpr_PartialArgType(t *testing.T) {
+	// When only the first arg type is inferred (String via JDK chain) and the second is unknown
+	// (enum method not indexed), should still disambiguate if String vs Long is enough.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "get_str_int", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: `[{"name":"code","type":"String"},{"name":"codeType","type":"Integer"}]`, ReturnTypes: []string{"InvitationCode"}},
+		{ID: "get_long_int", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: `[{"name":"userId","type":"Long"},{"name":"codeType","type":"Integer"}]`, ReturnTypes: []string{"InvitationCode"}},
+		{ID: "get_str_only", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: `[{"name":"code","type":"String"}]`, ReturnTypes: []string{"InvitationCode"}},
+		{ID: "reqs_getCode", Name: "getInvitationCode", QualifiedName: "com.example.Reqs.getInvitationCode", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"String"}},
+		{ID: "c_dao", Name: "Dao", QualifiedName: "com.example.Dao", Kind: "Class", FilePath: "Dao.java"},
+		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "Class", FilePath: "Reqs.java"},
+		{ID: "caller", Name: "changeBasicInfo", QualifiedName: "com.example.Controller.changeBasicInfo", Kind: "Function", FilePath: "Controller.java"},
+		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.example.Controller", Kind: "Class", FilePath: "Controller.java"},
+	})
+
+	jdkHelper := &testJavaJDKHelper{testJavaHelper: testJavaHelper{symbolTable: table}}
+	resolver := NewResolver(table, map[string]LanguageHelper{"java": jdkHelper})
+	envs := map[string]*model.TypeEnv{
+		"Controller.java": {
+			Bindings: map[string]*model.TypeInfo{
+				"Controller:dao":                  {TypeName: "Dao"},
+				"Controller.changeBasicInfo:reqs": {TypeName: "Reqs"},
+			},
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:   "getInvitationCode",
+		CallerName:   "Controller.changeBasicInfo",
+		FilePath:     "Controller.java",
+		ReceiverExpr: "dao",
+		ArgCount:     2,
+		ArgTypes:     []string{"", ""},
+		ArgExprs:     []string{"reqs.getInvitationCode().trim().toUpperCase()", "InvitationCodeType.Guide.getCode()"},
+	}}
+
+	relations, hints := resolver.ResolveCalls(calls, envs)
+	t.Logf("relations=%d, hints=%d", len(relations), len(hints))
+	for _, r := range relations {
+		t.Logf("  → %s (confidence=%.2f, resolved_by=%s)", r.TargetID, r.Confidence, r.ResolvedBy)
+	}
+
+	// With 3 overloads (String+Integer, Long+Integer, String-only):
+	// ArgCount=2 eliminates get_str_only. First arg=String eliminates get_long_int.
+	// Should resolve to get_str_int only.
+	if len(relations) != 1 || relations[0].TargetID != "get_str_int" {
+		t.Errorf("expected exactly get_str_int, got %d relations", len(relations))
+	}
 }

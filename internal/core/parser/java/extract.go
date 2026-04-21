@@ -274,6 +274,26 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 				}
 				extractClassBody(child, content, filePath, packageName+"."+className, innerName, innerAnnotations, result)
 			}
+		case "enum_body_declarations":
+			// Enum methods/fields are inside enum_body_declarations (after the semicolon)
+			for j := uint(0); j < child.ChildCount(); j++ {
+				inner := child.Child(j)
+				if !inner.IsNamed() {
+					continue
+				}
+				switch inner.Kind() {
+				case "method_declaration", "constructor_declaration":
+					extractMethod(inner, content, filePath, packageName, className, classAnnotations, result)
+				case "field_declaration":
+					extractField(inner, content, filePath, packageName, className, result)
+				case "class_declaration", "interface_declaration", "enum_declaration":
+					innerName := astutil.NodeFieldText(inner, "name", content)
+					if innerName != "" {
+						extractClass(inner, content, filePath, packageName+"."+className, result)
+						extractClassBody(inner, content, filePath, packageName+"."+className, innerName, nil, result)
+					}
+				}
+			}
 		}
 	}
 
