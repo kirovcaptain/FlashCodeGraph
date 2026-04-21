@@ -61,6 +61,8 @@ func NewClient(address string) (*redis.Client, error) {
 		client.Close()
 		return nil, fmt.Errorf("falkor: connect %s: %w", address, err)
 	}
+	// Remove FalkorDB default result set size limit (default 10000) to avoid truncation on large graphs.
+	client.Do(context.Background(), "GRAPH.CONFIG", "SET", "RESULTSET_SIZE", -1)
 	return client, nil
 }
 

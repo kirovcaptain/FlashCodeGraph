@@ -411,8 +411,28 @@ func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	// Collect all node IDs for affected routes lookup
+	nodeIDs := make([]string, 0, len(subgraph.Nodes)+1)
+	for _, n := range subgraph.Nodes {
+		nodeIDs = append(nodeIDs, n.ID)
+	}
+
+	repoPath, _ := filepath.Abs(path)
+	affectedRoutes, routeHint := querier.QueryAffectedRoutes(ctx, nodeIDs, repoPath)
+
+	result := map[string]any{
+		"nodes": subgraph.Nodes,
+		"edges": subgraph.Edges,
+	}
+	if len(affectedRoutes) > 0 {
+		result["affected_routes"] = affectedRoutes
+	}
+	if routeHint != "" {
+		result["hint"] = routeHint
+	}
+
 	warning := checkStalenessWarning(ctx, path, branchName)
-	resultJSON, _ := json.Marshal(subgraph)
+	resultJSON, _ := json.Marshal(result)
 	return mcp.NewToolResultText(injectWarning(resultJSON, warning)), nil
 }
 

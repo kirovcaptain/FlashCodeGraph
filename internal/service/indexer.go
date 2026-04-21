@@ -880,17 +880,17 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 		for _, symbol := range parseResult.Symbols {
 			kind := constants.ParserKindToNodeKind(symbol.Kind)
 
-			nodes = append(nodes, model.Node{
-				ID:   symbol.ID,
-				Kind: kind,
-				Properties: map[string]any{
+			var props map[string]any
+			switch kind {
+			case constants.KindFunction:
+				props = map[string]any{
 					"name":           symbol.Name,
 					"qualified_name": symbol.QualifiedName,
 					"file_path":      symbol.FilePath,
 					"start_line":     symbol.StartLine,
 					"end_line":       symbol.EndLine,
-					"return_types":   symbol.ReturnTypes,
 					"params":         symbol.Params,
+					"return_types":   symbol.ReturnTypes,
 					"annotations":    symbol.Annotations,
 					"is_exported":    symbol.IsExported,
 					"is_abstract":    symbol.IsAbstract,
@@ -901,7 +901,46 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"is_setter":      symbol.IsSetter,
 					"complexity":     symbol.Complexity,
 					"class_type":     symbol.ClassType,
-				},
+				}
+			case constants.KindClass:
+				props = map[string]any{
+					"name":           symbol.Name,
+					"qualified_name": symbol.QualifiedName,
+					"file_path":      symbol.FilePath,
+					"start_line":     symbol.StartLine,
+					"end_line":       symbol.EndLine,
+					"class_type":     symbol.ClassType,
+					"is_abstract":    symbol.IsAbstract,
+					"is_exported":    symbol.IsExported,
+					"annotations":    symbol.Annotations,
+					"complexity":     symbol.Complexity,
+					"params":         symbol.Params,
+				}
+			case constants.KindInterface:
+				props = map[string]any{
+					"name":           symbol.Name,
+					"qualified_name": symbol.QualifiedName,
+					"file_path":      symbol.FilePath,
+					"start_line":     symbol.StartLine,
+					"end_line":       symbol.EndLine,
+					"is_exported":    symbol.IsExported,
+					"class_type":     symbol.ClassType,
+					"annotations":    symbol.Annotations,
+				}
+			default:
+				props = map[string]any{
+					"name":           symbol.Name,
+					"qualified_name": symbol.QualifiedName,
+					"file_path":      symbol.FilePath,
+					"start_line":     symbol.StartLine,
+					"end_line":       symbol.EndLine,
+				}
+			}
+
+			nodes = append(nodes, model.Node{
+				ID:         symbol.ID,
+				Kind:       kind,
+				Properties: props,
 			})
 			result.SymbolsByKind[symbol.Kind]++
 			// Supplement class_type breakdown (abstract_class, enum, struct)

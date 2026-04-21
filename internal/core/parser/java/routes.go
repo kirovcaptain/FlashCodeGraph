@@ -15,6 +15,9 @@ var javaRouteAnnotations = map[string]string{
 	"RequestMapping": "GET", // default, actual method from annotation params
 }
 
+// ExtractRoutes extracts HTTP route definitions from Spring MVC annotations (@GetMapping, @PostMapping, @RequestMapping, etc.).
+// Currently only supports Spring framework annotations. Framework field is hardcoded to "spring".
+// To support other frameworks (e.g. JAX-RS @Path/@GET), add new route annotation mappings and detect framework dynamically.
 func ExtractRoutes(annotations []string, classAnnotations []string, methodName, className, filePath string, startLine int, result *model.ParseResult) {
 	// FeignClient routes are handled by ExtractFeignClient with correct path prefix
 	if HasFeignClient(classAnnotations) {

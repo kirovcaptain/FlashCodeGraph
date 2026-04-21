@@ -9,6 +9,7 @@ import (
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/kuzu"
 )
 
 func TestQuerier_QuerySymbol(t *testing.T) {
@@ -513,13 +514,13 @@ func TestQuerier_QueryByAnnotationCategory(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 
-	// Behavior category (Transactional)
-	nodes, err := querier.QueryByAnnotationCategory(ctx, "behavior", 50)
+	// Transaction category (Transactional)
+	nodes, err := querier.QueryByAnnotationCategory(ctx, "transaction", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(nodes) == 0 {
-		t.Fatal("expected behavior category nodes (@Transactional)")
+		t.Fatal("expected transaction category nodes (@Transactional)")
 	}
 
 	// Security category (PreAuthorize)
@@ -663,8 +664,8 @@ func TestIndexer_AnnotationNodes_MultiFramework(t *testing.T) {
 	if !categories["layer"] {
 		t.Error("expected layer category")
 	}
-	if !categories["behavior"] {
-		t.Error("expected behavior category")
+	if !categories["transaction"] {
+		t.Error("expected transaction category")
 	}
 
 	t.Logf("✅ Multi-framework: frameworks=%v, categories=%v", frameworks, categories)
@@ -878,4 +879,78 @@ func TestFilterCoreSubgraph_Nil(t *testing.T) {
 		t.Fatal("expected nil for nil input")
 	}
 	t.Log("✅ FilterCoreSubgraph: nil input → nil output")
+}
+
+func TestQuerier_QueryAffectedRoutes(t *testing.T) {
+	store, err := kuzu.New("")
+	if err != nil {
+		t.Fatal("open store:", err)
+	}
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal("migrate:", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	// Create Process nodes with route info
+	store.CreateNodes(ctx, []model.Node{
+		{ID: "process:handler1", Kind: "Process", Properties: map[string]any{
+			"name": "sendMessage", "entry_point": "handler1", "entry_type": "http_endpoint",
+			"route_method": "POST", "route_path": "/message/sendMessage", "file_path": "MessageController.java",
+			"step_count": 1,
+		}},
+		{ID: "process:handler2", Kind: "Process", Properties: map[string]any{
+			"name": "execute", "entry_point": "handler2", "entry_type": "scheduled_task",
+			"file_path": "MyJob.java", "step_count": 1,
+		}},
+	})
+
+	// Create Function nodes
+	store.CreateNodes(ctx, []model.Node{
+		{ID: "func1", Kind: "Function", Properties: map[string]any{"name": "serviceMethod", "qualified_name": "svc.serviceMethod", "file_path": "svc.java"}},
+		{ID: "func2", Kind: "Function", Properties: map[string]any{"name": "unrelated", "qualified_name": "svc.unrelated", "file_path": "svc.java"}},
+	})
+
+	// Create STEP edges: both processes call func1
+	store.WriteEdges(ctx, []model.Edge{
+		{SourceID: "process:handler1", TargetID: "func1", Kind: model.RelStep},
+		{SourceID: "process:handler2", TargetID: "func1", Kind: model.RelStep},
+	})
+
+	querier := NewQuerier(store)
+
+	// func1 is in both processes
+	routes, hint := querier.QueryAffectedRoutes(ctx, []string{"func1"}, t.TempDir())
+	if len(routes) != 2 {
+		t.Fatalf("expected 2 affected routes, got %d", len(routes))
+	}
+	if hint != "" {
+		t.Logf("hint: %s", hint)
+	}
+
+	// func2 is in no process
+	routes, _ = querier.QueryAffectedRoutes(ctx, []string{"func2"}, t.TempDir())
+	if len(routes) != 0 {
+		t.Fatalf("expected 0 affected routes, got %d", len(routes))
+	}
+
+	// Verify route fields
+	routes, _ = querier.QueryAffectedRoutes(ctx, []string{"func1"}, t.TempDir())
+	foundHTTP := false
+	foundScheduled := false
+	for _, r := range routes {
+		if r.EntryType == "http_endpoint" && r.Method == "POST" && r.Route == "/message/sendMessage" {
+			foundHTTP = true
+		}
+		if r.EntryType == "scheduled_task" && r.EntryFunction == "execute" {
+			foundScheduled = true
+		}
+	}
+	if !foundHTTP {
+		t.Error("expected http_endpoint route")
+	}
+	if !foundScheduled {
+		t.Error("expected scheduled_task route")
+	}
+	t.Log("✅ QueryAffectedRoutes: found http_endpoint + scheduled_task")
 }

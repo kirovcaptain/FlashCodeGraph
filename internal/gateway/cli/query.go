@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/annotation"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/service"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
@@ -22,6 +23,7 @@ var (
 	queryParams     string
 	queryLayer      string
 	queryCategory   string
+	listCategories  bool
 	queryMethods    bool
 	callchainDepth   int
 	callchainMinConf float64
@@ -32,6 +34,7 @@ var (
 	impactMinConf    float64
 	traceMethod      string
 	traceDepth       int
+	traceMode        string
 )
 
 func init() {
@@ -48,7 +51,8 @@ func init() {
 	queryCmd.Flags().StringVar(&queryAnnotation, "annotation", "", "Filter by annotation name (e.g. Service)")
 	queryCmd.Flags().StringVar(&queryParams, "params", "", "Filter by annotation params (substring match)")
 	queryCmd.Flags().StringVar(&queryLayer, "layer", "", "Filter by layer (controller/service/repository/model)")
-	queryCmd.Flags().StringVar(&queryCategory, "category", "", "Filter by annotation category (security/behavior/etc)")
+	queryCmd.Flags().StringVar(&queryCategory, "category", "", "Filter by annotation category (use --list-categories to see values)")
+	queryCmd.Flags().BoolVar(&listCategories, "list-categories", false, "List all available annotation categories")
 	queryCmd.Flags().BoolVar(&queryMethods, "methods", false, "List methods of a class")
 	rootCmd.AddCommand(queryCmd)
 
@@ -71,6 +75,7 @@ func init() {
 	}
 	traceCmd.Flags().StringVar(&traceMethod, "method", "", "HTTP method filter (GET/POST/etc)")
 	traceCmd.Flags().IntVar(&traceDepth, "depth", 10, "Max traversal depth")
+	traceCmd.Flags().StringVar(&traceMode, "mode", "core", "Display mode: core (fold accessors/externals) or full (show all)")
 	rootCmd.AddCommand(traceCmd)
 
 	// fcg callchain <function>
@@ -140,6 +145,15 @@ func createQuerier() (*service.Querier, storage.GraphStore, error) {
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {
+	if listCategories {
+		categories := annotation.ListCategories()
+		fmt.Println("Available annotation categories:")
+		for _, c := range categories {
+			fmt.Printf("  %s\n", c)
+		}
+		return nil
+	}
+
 	warnIfIndexStale()
 	querier, store, err := createQuerier()
 	if err != nil {
@@ -343,6 +357,29 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	subgraph.Nodes = append([]model.Node{*node}, subgraph.Nodes...)
 	printCallTree(subgraph, args[0])
 	fmt.Printf("\nTotal: %d affected callers\n", len(subgraph.Nodes)-1)
+
+	// Affected entry points from analyze cache
+	nodeIDs := make([]string, 0, len(subgraph.Nodes))
+	for _, n := range subgraph.Nodes {
+		nodeIDs = append(nodeIDs, n.ID)
+	}
+	repoPath := projectDir()
+	affectedRoutes, hint := querier.QueryAffectedRoutes(ctx, nodeIDs, repoPath)
+	if len(affectedRoutes) > 0 {
+		fmt.Printf("\nAffected entry points (%d):\n", len(affectedRoutes))
+		for _, r := range affectedRoutes {
+			label := r.EntryFunction
+			if r.Route != "" {
+				fmt.Printf("  %-6s %-35s ← %-40s [%s]\n", r.Method, r.Route, label, r.EntryType)
+			} else {
+				fmt.Printf("  %-42s ← %-40s [%s]\n", r.EntryFunction, r.FilePath, r.EntryType)
+			}
+		}
+	}
+	if hint != "" {
+		fmt.Printf("\nℹ %s\n", hint)
+	}
+
 	return nil
 }
 // promptSelectFunction displays candidates and prompts user to select one.
@@ -422,6 +459,10 @@ func runTrace(cmd *cobra.Command, args []string) error {
 	chain, err := querier.QueryRouteChain(context.Background(), args[0], traceMethod, traceDepth)
 	if err != nil {
 		return err
+	}
+
+	if traceMode != "full" {
+		chain = service.FilterCoreRouteChain(chain)
 	}
 
 	fmt.Printf("Route: %s %s\n", chain.Method, chain.Route)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/status"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 )
 
@@ -738,4 +739,75 @@ func (querier *Querier) buildLayerMapBatch(ctx context.Context, funcs []model.No
 		}
 	}
 	return m
+}
+
+// AffectedRoute represents an entry point affected by a code change.
+type AffectedRoute struct {
+	Method        string `json:"method,omitempty"`
+	Route         string `json:"route,omitempty"`
+	EntryFunction string `json:"entry_function"`
+	FilePath      string `json:"file_path"`
+	EntryType     string `json:"entry_type"`
+}
+
+// QueryAffectedRoutes finds entry points (API routes, scheduled tasks, etc.) affected by changes to the given functions.
+// Returns affected routes and an optional hint message. Requires analyze data (Process/STEP).
+func (querier *Querier) QueryAffectedRoutes(ctx context.Context, nodeIDs []string, repoPath string) ([]AffectedRoute, string) {
+	// Load all Process nodes
+	processes, err := querier.graphStore.QueryAllByKind(ctx, "Process", 0)
+	if err != nil || len(processes) == 0 {
+		return nil, "Run analyze_repository to see affected entry points."
+	}
+
+	// Load all STEP edges
+	stepEdges, err := querier.graphStore.QueryAllEdges(ctx, model.RelStep, 0)
+	if err != nil {
+		return nil, "Run analyze_repository to see affected entry points."
+	}
+
+	// Build reverse map: functionID → set of processIDs
+	funcToProcesses := make(map[string]map[string]bool)
+	for _, edge := range stepEdges {
+		if funcToProcesses[edge.TargetID] == nil {
+			funcToProcesses[edge.TargetID] = make(map[string]bool)
+		}
+		funcToProcesses[edge.TargetID][edge.SourceID] = true
+	}
+
+	// Build process lookup
+	processMap := make(map[string]*model.Node, len(processes))
+	for i := range processes {
+		processMap[processes[i].ID] = &processes[i]
+	}
+
+	// Collect affected processes
+	seen := make(map[string]bool)
+	var routes []AffectedRoute
+	for _, nodeID := range nodeIDs {
+		for processID := range funcToProcesses[nodeID] {
+			if seen[processID] {
+				continue
+			}
+			seen[processID] = true
+			p := processMap[processID]
+			if p == nil {
+				continue
+			}
+			routes = append(routes, AffectedRoute{
+				Method:        propString(p.Properties, "route_method"),
+				Route:         propString(p.Properties, "route_path"),
+				EntryFunction: propString(p.Properties, "name"),
+				FilePath:      propString(p.Properties, "file_path"),
+				EntryType:     propString(p.Properties, "entry_type"),
+			})
+		}
+	}
+
+	// Check if analyze data is outdated
+	hint := ""
+	if status.NeedsAnalyze(repoPath) {
+		hint = "Analyze data may be outdated, consider re-analyzing."
+	}
+
+	return routes, hint
 }

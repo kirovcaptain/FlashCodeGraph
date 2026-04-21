@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/annotation"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 )
@@ -275,14 +276,8 @@ func (analyzer *Analyzer) ClassifyRoots(ctx context.Context, forest *CallForest)
 				entry.RouteMethod = ri.Method
 				entry.RoutePath = ri.Path
 			}
-		case hasAnnotation(nodeAnnotations[nodeID], "Scheduled", "Cron"):
-			entry.EntryType = "scheduled_task"
-			entry.Score = 0.85
-		case hasAnnotation(nodeAnnotations[nodeID], "DubboService", "GrpcService"):
-			entry.EntryType = "rpc_handler"
-			entry.Score = 0.90
-		case hasAnnotation(nodeAnnotations[nodeID], "EventListener", "KafkaListener", "RabbitListener"):
-			entry.EntryType = "event_handler"
+		case hasAnnotationEntryType(nodeAnnotations[nodeID]) != "":
+			entry.EntryType = hasAnnotationEntryType(nodeAnnotations[nodeID])
 			entry.Score = 0.85
 		case nodeProperty(&node, "name") == "main" || nodeProperty(&node, "name") == "Main":
 			entry.EntryType = "cli_command"
@@ -475,10 +470,13 @@ func (analyzer *Analyzer) WriteProcesses(ctx context.Context, entries []EntryPoi
 			ID:   processID,
 			Kind: "Process",
 			Properties: map[string]any{
-				"name":        entry.Name,
-				"entry_point": entry.NodeID,
-				"step_count":  len(steps),
-				"entry_type":  entry.EntryType,
+				"name":         entry.Name,
+				"entry_point":  entry.NodeID,
+				"step_count":   len(steps),
+				"entry_type":   entry.EntryType,
+				"file_path":    entry.FilePath,
+				"route_method": entry.RouteMethod,
+				"route_path":   entry.RoutePath,
 			},
 		})
 		processCount++
@@ -552,6 +550,21 @@ func hasAnnotation(annotations []string, names ...string) bool {
 		}
 	}
 	return false
+}
+
+// hasAnnotationEntryType returns the EntryType if any annotation has one defined in DefaultAnnotations.
+// annotations are Annotation node IDs in the format "hash::Name", so we extract the name part.
+func hasAnnotationEntryType(annotationIDs []string) string {
+	for _, id := range annotationIDs {
+		name := id
+		if idx := strings.LastIndex(id, "::"); idx >= 0 {
+			name = id[idx+2:]
+		}
+		if et := annotation.LookupEntryType(name); et != "" {
+			return et
+		}
+	}
+	return ""
 }
 
 func containsSuffix(s, suffix string) bool {
