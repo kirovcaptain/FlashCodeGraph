@@ -14,6 +14,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/service"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/falkor"
 	"github.com/spf13/cobra"
 )
 
@@ -141,6 +142,13 @@ func createQuerier() (*service.Querier, storage.GraphStore, error) {
 	store, err := openGraphStore(cfg, repoPath)
 	if err != nil {
 		return nil, nil, err
+	}
+	// Check if graph exists to prevent FalkorDB from auto-creating empty graphs
+	if falkorStore, ok := store.(*falkor.Store); ok {
+		if !falkorStore.GraphExists(context.Background()) {
+			store.Close()
+			return nil, nil, fmt.Errorf("no index found. Run 'fcg index' first")
+		}
 	}
 	return service.NewQuerier(store), store, nil
 }
@@ -286,9 +294,15 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 
 	// Handle ambiguous matches: interactive selection
 	if node == nil && len(candidates) > 0 {
-		node = promptSelectFunction(candidates, args[0])
-		if node == nil {
+		selected := promptSelectFunction(candidates, args[0])
+		if selected == nil {
 			return nil
+		}
+		selectedQN, _ := selected.Properties["qualified_name"].(string)
+		// Re-query with fully qualified name to resolve to a unique class
+		node, _, inheritedFrom, err = querier.ResolveFunctionWithInheritance(ctx, selectedQN)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -340,9 +354,15 @@ func runImpact(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if node == nil && len(candidates) > 0 {
-		node = promptSelectFunction(candidates, args[0])
-		if node == nil {
+		selected := promptSelectFunction(candidates, args[0])
+		if selected == nil {
 			return nil
+		}
+		selectedQN, _ := selected.Properties["qualified_name"].(string)
+		// Re-query with fully qualified name to resolve to a unique class
+		node, _, inheritedFrom, err = querier.ResolveFunctionWithInheritance(ctx, selectedQN)
+		if err != nil {
+			return err
 		}
 	}
 	if node == nil {

@@ -81,6 +81,25 @@ func ResolveGraphName(cfg *config.Config, repoPath string) string {
 	return graphName
 }
 
+// GraphExists checks if the graph exists in FalkorDB by listing all graphs.
+// Use this before queries to prevent FalkorDB from auto-creating empty graphs.
+func (store *Store) GraphExists(ctx context.Context) bool {
+	result, err := store.client.Do(ctx, "GRAPH.LIST").Result()
+	if err != nil {
+		return false
+	}
+	graphs, ok := result.([]interface{})
+	if !ok {
+		return false
+	}
+	for _, g := range graphs {
+		if name, ok := g.(string); ok && name == store.graphName {
+			return true
+		}
+	}
+	return false
+}
+
 // query executes a Cypher query and returns the raw result.
 func (store *Store) query(ctx context.Context, cypher string) ([]interface{}, error) {
 	result, err := store.client.Do(ctx, "GRAPH.QUERY", store.graphName, cypher).Result()

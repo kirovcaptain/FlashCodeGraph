@@ -17,6 +17,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/status"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/falkor"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/lock"
 )
 
@@ -98,6 +99,17 @@ func (srv *Server) createQuerier(path, branchName string) (*service.Querier, sto
 	store, err := srv.storeFactory(cfg, path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open store for %s: %w", path, err)
+	}
+	// Check if graph exists to prevent FalkorDB from auto-creating empty graphs
+	if falkorStore, ok := store.(*falkor.Store); ok {
+		if !falkorStore.GraphExists(context.Background()) {
+			store.Close()
+			detectedBranch := branchName
+			if detectedBranch == "" {
+				detectedBranch = branch.DetectBranch(path)
+			}
+			return nil, nil, fmt.Errorf("no index found for %s (branch: %s). Run index_repository first", path, detectedBranch)
+		}
 	}
 	return service.NewQuerier(store), store, nil
 }

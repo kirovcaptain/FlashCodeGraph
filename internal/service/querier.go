@@ -191,7 +191,7 @@ const maxInheritanceDepth = 5
 // ResolveFunctionWithInheritance resolves a function symbol, falling back to parent class
 // methods via EXTENDS chain when the symbol is not found directly.
 // Returns (node, candidates, inheritedFrom, error).
-// inheritedFrom is the original child class short name when fallback was used.
+// inheritedFrom is the child class qualified name (from graph data) when fallback was used.
 func (querier *Querier) ResolveFunctionWithInheritance(ctx context.Context, name string) (*model.Node, []model.Node, string, error) {
 	node, candidates, err := querier.ResolveFunction(ctx, name)
 	if err != nil || node != nil || len(candidates) > 0 {
@@ -232,8 +232,28 @@ func (querier *Querier) ResolveFunctionWithInheritance(ctx context.Context, name
 		classNode = &classNodes[0]
 	}
 	if classNode == nil {
+		// Multiple same-name classes and prefix doesn't disambiguate — return candidates
+		// with qualified_name set to "classQN.methodName" for display and re-query.
+		if len(classNodes) > 1 {
+			var methodCandidates []model.Node
+			for _, cn := range classNodes {
+				qn, _ := cn.Properties["qualified_name"].(string)
+				candidate := cn
+				props := make(map[string]any, len(cn.Properties))
+				for k, v := range cn.Properties {
+					props[k] = v
+				}
+				props["qualified_name"] = qn + "." + methodName
+				candidate.Properties = props
+				methodCandidates = append(methodCandidates, candidate)
+			}
+			return nil, methodCandidates, "", nil
+		}
 		return nil, nil, "", nil
 	}
+
+	// Get the child class qualified name from graph data for precise declared_type filtering
+	classQualifiedName, _ := classNode.Properties["qualified_name"].(string)
 
 	// Walk up EXTENDS chain
 	currentClassID := classNode.ID
@@ -265,7 +285,7 @@ func (querier *Querier) ResolveFunctionWithInheritance(ctx context.Context, name
 			break
 		}
 		if funcNode != nil {
-			return funcNode, nil, childClassShortName, nil
+			return funcNode, nil, classQualifiedName, nil
 		}
 
 		currentClassID = parentID
@@ -290,7 +310,7 @@ func FilterSubgraphByDeclaredType(sg *model.Subgraph, rootNodeID string, classNa
 	for _, e := range sg.Edges {
 		if e.TargetID == rootNodeID {
 			dt, _ := e.Properties["declared_type"].(string)
-			if dt != "" && strings.Contains(dt, className) {
+			if dt != "" && dt == className {
 				filteredEdges = append(filteredEdges, e)
 				keptFirstLevelCallers[e.SourceID] = true
 			}
@@ -353,7 +373,12 @@ func (querier *Querier) QueryCallChainEx(ctx context.Context, symbolName string,
 		return nil, fmt.Errorf("querier: find symbol %q: %w", symbolName, err)
 	}
 	if node == nil && len(candidates) > 0 {
-		return nil, fmt.Errorf("ambiguous: %d functions match %q, use qualified name", len(candidates), symbolName)
+		var names []string
+		for _, candidate := range candidates {
+			qualifiedName, _ := candidate.Properties["qualified_name"].(string)
+			names = append(names, qualifiedName)
+		}
+		return nil, fmt.Errorf("ambiguous: %d matches for %q. Candidates:\n%s\nPlease ask the user which one to use", len(candidates), symbolName, strings.Join(names, "\n"))
 	}
 	if node == nil {
 		return &model.Subgraph{}, nil
@@ -462,9 +487,17 @@ func FilterCoreRouteChain(chain *model.RouteChain) *model.RouteChain {
 
 // ImpactAnalysis finds all symbols affected by changes to a given symbol.
 func (querier *Querier) ImpactAnalysis(ctx context.Context, symbolName string, depth int) (*model.Subgraph, error) {
-	node, _, inheritedFrom, err := querier.ResolveFunctionWithInheritance(ctx, symbolName)
+	node, candidates, inheritedFrom, err := querier.ResolveFunctionWithInheritance(ctx, symbolName)
 	if err != nil {
 		return nil, fmt.Errorf("querier: find symbol %q: %w", symbolName, err)
+	}
+	if node == nil && len(candidates) > 0 {
+		var names []string
+		for _, candidate := range candidates {
+			qualifiedName, _ := candidate.Properties["qualified_name"].(string)
+			names = append(names, qualifiedName)
+		}
+		return nil, fmt.Errorf("ambiguous: %d matches for %q. Candidates:\n%s\nPlease ask the user which one to use", len(candidates), symbolName, strings.Join(names, "\n"))
 	}
 	if node == nil {
 		return &model.Subgraph{}, nil

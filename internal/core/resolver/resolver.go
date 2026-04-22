@@ -279,7 +279,7 @@ func (resolver *Resolver) resolveByReceiverType(
 	// Multiple methods with the same name in the receiver's class (overloaded methods).
 	// Case: receiverType="LoggerUtil", matched=[error(String,Object), error(String,Throwable)]
 	//   → disambiguate by arg count, arg types, scope, etc.
-	return resolver.disambiguateMultipleMatches(call, envs, matched, callerID, langHelper)
+	return resolver.disambiguateMultipleMatches(call, envs, matched, callerID, langHelper, receiverType)
 }
 
 // resolveByHierarchyWalk walks the inheritance chain to find a parent method matching the call.
@@ -313,33 +313,43 @@ func (resolver *Resolver) resolveExactMatch(call model.RawCall, callerID string,
 
 // disambiguateMultipleMatches narrows down multiple candidates using scope rules,
 // same-file proximity, argument count, and argument type matching.
+// receiverType is the fully qualified class name for setting declared_type on resolved relations.
 func (resolver *Resolver) disambiguateMultipleMatches(
 	call model.RawCall,
 	envs map[string]*model.TypeEnv,
 	matched []model.Symbol,
 	callerID string,
 	langHelper LanguageHelper,
+	receiverType string,
 ) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
 	// Narrow by language-specific scope rules.
 	matched = langHelper.NarrowByScope(matched, call, envs[call.FilePath], resolver.symbolTable)
 	if len(matched) == 1 {
-		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil, true
+		rel := makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)
+		rel.Metadata["declared_type"] = receiverType
+		return []model.ResolvedRelation{rel}, nil, true
 	}
 	// Same file proximity.
 	sameFile := filterByFile(matched, call.FilePath)
 	if len(sameFile) == 1 {
-		return []model.ResolvedRelation{makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "type_same_file", 1)}, nil, true
+		rel := makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "type_same_file", 1)
+		rel.Metadata["declared_type"] = receiverType
+		return []model.ResolvedRelation{rel}, nil, true
 	}
 	// Argument count.
 	argMatched := filterByArgCount(matched, call.ArgCount)
 	if len(argMatched) == 1 {
-		return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil, true
+		rel := makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)
+		rel.Metadata["declared_type"] = receiverType
+		return []model.ResolvedRelation{rel}, nil, true
 	}
 	// Argument type matching.
 	if len(argMatched) > 1 {
 		typeMatched := filterByArgTypes(argMatched, resolver.enrichArgTypes(call, envs, langHelper), langHelper)
 		if len(typeMatched) == 1 {
-			return []model.ResolvedRelation{makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1)}, nil, true
+			rel := makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1)
+			rel.Metadata["declared_type"] = receiverType
+			return []model.ResolvedRelation{rel}, nil, true
 		}
 	}
 	// Still ambiguous — return all with lower confidence.
@@ -347,7 +357,11 @@ func (resolver *Resolver) disambiguateMultipleMatches(
 	if len(argMatched) > 0 {
 		finalCandidates = argMatched
 	}
-	return makeMultiRelations(callerID, finalCandidates, call, ConfidenceTypeParent, "type_multi"), nil, true
+	relations := makeMultiRelations(callerID, finalCandidates, call, ConfidenceTypeParent, "type_multi")
+	for i := range relations {
+		relations[i].Metadata["declared_type"] = receiverType
+	}
+	return relations, nil, true
 }
 
 // resolveAsExternalDependency creates virtual external nodes when the receiver type

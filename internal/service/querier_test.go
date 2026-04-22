@@ -1028,13 +1028,13 @@ func TestFilterSubgraphByDeclaredType(t *testing.T) {
 			{ID: "target", Properties: map[string]any{"name": "save"}},
 		},
 		Edges: []model.Edge{
-			{SourceID: "caller1", TargetID: "target", Properties: map[string]any{"declared_type": "ChildService"}},
-			{SourceID: "caller2", TargetID: "target", Properties: map[string]any{"declared_type": "OtherService"}},
+			{SourceID: "caller1", TargetID: "target", Properties: map[string]any{"declared_type": "com.example.ChildService"}},
+			{SourceID: "caller2", TargetID: "target", Properties: map[string]any{"declared_type": "com.example.OtherService"}},
 			{SourceID: "caller3", TargetID: "target", Properties: map[string]any{}}, // empty declared_type
 		},
 	}
 
-	filtered := FilterSubgraphByDeclaredType(sg, "target", "ChildService")
+	filtered := FilterSubgraphByDeclaredType(sg, "target", "com.example.ChildService")
 
 	// Should keep only caller1 (match), drop caller2 (mismatch) and caller3 (empty)
 	if len(filtered.Edges) != 1 {
@@ -1057,11 +1057,11 @@ func TestFilterSubgraphByDeclaredType_FullQualifiedName(t *testing.T) {
 		},
 	}
 
-	filtered := FilterSubgraphByDeclaredType(sg, "target", "ChildService")
+	filtered := FilterSubgraphByDeclaredType(sg, "target", "com.example.ChildService")
 	if len(filtered.Edges) != 1 {
-		t.Fatalf("expected 1 edge (full qualified name contains short name), got %d", len(filtered.Edges))
+		t.Fatalf("expected 1 edge (exact match on full qualified name), got %d", len(filtered.Edges))
 	}
-	t.Log("✅ FilterSubgraphByDeclaredType: full qualified name match")
+	t.Log("✅ FilterSubgraphByDeclaredType: full qualified name exact match")
 }
 
 func TestFilterSubgraphByDeclaredType_Nil(t *testing.T) {
@@ -1091,8 +1091,8 @@ func TestFilterSubgraphByDeclaredType_MultiLevel(t *testing.T) {
 		},
 		Edges: []model.Edge{
 			// Level 1: direct callers of root target
-			{SourceID: "childDoSave", TargetID: "root", Properties: map[string]any{"declared_type": "ChildDao"}},
-			{SourceID: "otherDoSave", TargetID: "root", Properties: map[string]any{"declared_type": "OtherDao"}},
+			{SourceID: "childDoSave", TargetID: "root", Properties: map[string]any{"declared_type": "com.example.ChildDao"}},
+			{SourceID: "otherDoSave", TargetID: "root", Properties: map[string]any{"declared_type": "com.example.OtherDao"}},
 			// Level 2: callers of callers (should NOT be filtered)
 			{SourceID: "serviceA", TargetID: "childDoSave", Properties: map[string]any{"declared_type": "SomeService"}},
 			{SourceID: "serviceC", TargetID: "childDoSave", Properties: map[string]any{}},
@@ -1100,7 +1100,7 @@ func TestFilterSubgraphByDeclaredType_MultiLevel(t *testing.T) {
 		},
 	}
 
-	filtered := FilterSubgraphByDeclaredType(sg, "root", "ChildDao")
+	filtered := FilterSubgraphByDeclaredType(sg, "root", "com.example.ChildDao")
 
 	keptNodeIDs := map[string]bool{}
 	for _, n := range filtered.Nodes {
@@ -1185,8 +1185,8 @@ public class ChildRepo extends BaseRepo {
 	if qn != "com.example.BaseRepo.save" {
 		t.Fatalf("expected BaseRepo.save, got %s", qn)
 	}
-	if inheritedFrom != "ChildRepo" {
-		t.Fatalf("expected inheritedFrom=ChildRepo, got %q", inheritedFrom)
+	if inheritedFrom != "com.example.ChildRepo" {
+		t.Fatalf("expected inheritedFrom=com.example.ChildRepo, got %q", inheritedFrom)
 	}
 
 	// 3. Non-existent method — returns nil
