@@ -30,7 +30,10 @@ func TestTSHelper_ResolveSuperCall_Method(t *testing.T) {
 	if relations[0].TargetID != "parent_render" {
 		t.Fatalf("expected parent_render, got %s", relations[0].TargetID)
 	}
-	t.Log("✅ TS super.render() resolves to parent class method")
+	if dt := relations[0].Metadata["declared_type"]; dt != "App" {
+		t.Fatalf("expected declared_type 'App', got %q", dt)
+	}
+	t.Log("✅ TS super.render() resolves to parent class method with declared_type")
 }
 
 func TestTSHelper_ResolveSuperCall_Constructor(t *testing.T) {

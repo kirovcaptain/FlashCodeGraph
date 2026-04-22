@@ -79,17 +79,21 @@ func (h *testJavaHelper) ResolveSuperCall(call model.RawCall, funcCandidates []m
 	if call.ReceiverExpr != "super" || len(heritage) == 0 {
 		return nil, false
 	}
-	callerClass := call.CallerName
+	callerClassQN := ExtractCallerClassQN(call.CallerName)
+	callerClass := callerClassQN
 	if dotIdx := strings.LastIndex(callerClass, "."); dotIdx >= 0 {
-		callerClass = callerClass[:dotIdx]
-		if dotIdx2 := strings.LastIndex(callerClass, "."); dotIdx2 >= 0 {
-			callerClass = callerClass[dotIdx2+1:]
+		callerClass = callerClass[dotIdx+1:]
+	}
+	setDeclaredType := func(relations []model.ResolvedRelation) {
+		if callerClassQN != "" {
+			for i := range relations {
+				relations[i].Metadata["declared_type"] = callerClassQN
+			}
 		}
 	}
 	for _, her := range heritage {
 		if her.ChildName == callerClass && her.Kind == "extends" && her.FilePath == call.FilePath {
 			parentName := her.ParentName
-			// Resolve parent QN via import/same-package
 			var resolvedParentQN string
 			env := envs[call.FilePath]
 			callerPkg := ""
@@ -137,18 +141,26 @@ func (h *testJavaHelper) ResolveSuperCall(call model.RawCall, funcCandidates []m
 				matched = filterByOwnerClass(funcCandidates, parentName)
 			}
 			if len(matched) == 1 {
-				return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, true
+				relations := []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}
+				setDeclaredType(relations)
+				return relations, true
 			}
 			if len(matched) > 1 {
 				argMatched := filterByArgCount(matched, call.ArgCount)
 				if len(argMatched) == 1 {
-					return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, true
+					relations := []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}
+					setDeclaredType(relations)
+					return relations, true
 				}
-				return makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "type_multi"), true
+				relations := makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "type_multi")
+				setDeclaredType(relations)
+				return relations, true
 			}
 			r := &Resolver{symbolTable: h.symbolTable, heritage: heritage}
 			if sym := r.FindMethodInHierarchy(her.ParentName, call.CalledName, heritage); sym != nil {
-				return []model.ResolvedRelation{makeRelation(callerID, sym.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)}, true
+				relations := []model.ResolvedRelation{makeRelation(callerID, sym.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)}
+				setDeclaredType(relations)
+				return relations, true
 			}
 			break
 		}
@@ -1103,7 +1115,12 @@ func TestResolveCalls_SuperCall(t *testing.T) {
 	if relations[0].TargetID != "base_get" {
 		t.Fatalf("expected target base_get (same package BaseDao), got %s", relations[0].TargetID)
 	}
-	t.Logf("✅ super.get() resolved to BaseDao.get via heritage + same-package (resolved_by: %s)", relations[0].ResolvedBy)
+	// Verify declared_type is set to caller's class qualified name
+	dt := relations[0].Metadata["declared_type"]
+	if dt != "ChildDao" {
+		t.Fatalf("expected declared_type 'ChildDao', got %q", dt)
+	}
+	t.Logf("✅ super.get() resolved to BaseDao.get via heritage + same-package (resolved_by: %s, declared_type: %s)", relations[0].ResolvedBy, dt)
 }
 
 func TestResolveCalls_NoReceiverInheritedMethod(t *testing.T) {
@@ -1925,4 +1942,77 @@ func TestResolveCalls_EnrichArgTypes_JDKChainedExpr_PartialArgType(t *testing.T)
 	if len(relations) != 1 || relations[0].TargetID != "get_str_int" {
 		t.Errorf("expected exactly get_str_int, got %d relations", len(relations))
 	}
+}
+
+func TestResolveFullQualifiedType_ExplicitImport(t *testing.T) {
+	table := NewSymbolTable()
+	resolver := newTestResolver(table)
+	env := &model.TypeEnv{
+		Imports: []model.RawImport{
+			{ModulePath: "com.example.dao.CoinFlowDao", SymbolName: "CoinFlowDao"},
+		},
+	}
+	result := resolver.resolveFullQualifiedType("CoinFlowDao", env)
+	if result != "com.example.dao.CoinFlowDao" {
+		t.Fatalf("expected 'com.example.dao.CoinFlowDao', got %q", result)
+	}
+	t.Log("✅ resolveFullQualifiedType: explicit import")
+}
+
+func TestResolveFullQualifiedType_WildcardImport(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "c1", Name: "CoinFlowDao", QualifiedName: "com.example.dao.CoinFlowDao", Kind: "Class"},
+	})
+	resolver := newTestResolver(table)
+	// Wildcard import: SymbolName is package last segment (parser bug), not the class name
+	env := &model.TypeEnv{
+		Imports: []model.RawImport{
+			{ModulePath: "com.example.dao", SymbolName: "dao"},
+		},
+	}
+	result := resolver.resolveFullQualifiedType("CoinFlowDao", env)
+	if result != "com.example.dao.CoinFlowDao" {
+		t.Fatalf("expected 'com.example.dao.CoinFlowDao', got %q", result)
+	}
+	t.Log("✅ resolveFullQualifiedType: wildcard import resolved via symbolTable")
+}
+
+func TestResolveFullQualifiedType_AlreadyQualified(t *testing.T) {
+	table := NewSymbolTable()
+	resolver := newTestResolver(table)
+	result := resolver.resolveFullQualifiedType("com.example.dao.CoinFlowDao", nil)
+	if result != "com.example.dao.CoinFlowDao" {
+		t.Fatalf("expected unchanged, got %q", result)
+	}
+	t.Log("✅ resolveFullQualifiedType: already qualified name unchanged")
+}
+
+func TestResolveFullQualifiedType_NilEnv(t *testing.T) {
+	table := NewSymbolTable()
+	resolver := newTestResolver(table)
+	result := resolver.resolveFullQualifiedType("CoinFlowDao", nil)
+	if result != "CoinFlowDao" {
+		t.Fatalf("expected original name, got %q", result)
+	}
+	t.Log("✅ resolveFullQualifiedType: nil env returns original")
+}
+
+func TestResolveFullQualifiedType_MultipleWildcardImports(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "c1", Name: "CoinFlowDao", QualifiedName: "com.example.dao.CoinFlowDao", Kind: "Class"},
+	})
+	resolver := newTestResolver(table)
+	env := &model.TypeEnv{
+		Imports: []model.RawImport{
+			{ModulePath: "com.example.service", SymbolName: "service"},
+			{ModulePath: "com.example.dao", SymbolName: "dao"},
+		},
+	}
+	result := resolver.resolveFullQualifiedType("CoinFlowDao", env)
+	if result != "com.example.dao.CoinFlowDao" {
+		t.Fatalf("expected 'com.example.dao.CoinFlowDao', got %q", result)
+	}
+	t.Log("✅ resolveFullQualifiedType: multiple wildcards, only correct one matches")
 }

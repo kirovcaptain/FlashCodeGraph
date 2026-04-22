@@ -3,7 +3,11 @@ package resolver
 // Exported wrappers for use by language helper subpackages (resolver/java, etc).
 // Internal callers continue using the unexported versions.
 
-import "github.com/kirovcaptain/FlashCodeGraph/internal/model"
+import (
+	"strings"
+
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+)
 
 func FilterByOwnerClass(candidates []model.Symbol, className string) []model.Symbol {
 	return filterByOwnerClass(candidates, className)
@@ -23,6 +27,17 @@ func MakeRelation(sourceID, targetID string, call model.RawCall, confidence floa
 
 func MakeMultiRelations(sourceID string, candidates []model.Symbol, call model.RawCall, baseConfidence float64, resolvedBy string) []model.ResolvedRelation {
 	return makeMultiRelations(sourceID, candidates, call, baseConfidence, resolvedBy)
+}
+
+// ExtractCallerClassQN extracts the fully qualified class name from a caller's qualified name.
+// "com.example.dao.ChildDao.methodName" → "com.example.dao.ChildDao"
+// "ChildDao.methodName" → "ChildDao"
+// "methodName" → ""
+func ExtractCallerClassQN(callerName string) string {
+	if dotIdx := strings.LastIndex(callerName, "."); dotIdx >= 0 {
+		return callerName[:dotIdx]
+	}
+	return ""
 }
 
 func FindMethodInHierarchyPublic(symbolTable *SymbolTable, className, methodName string, heritage []model.RawHeritage) *model.Symbol {

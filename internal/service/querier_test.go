@@ -1018,3 +1018,185 @@ func TestQuerier_QueryRouteChain_ContainsFallback(t *testing.T) {
 		t.Logf("✅ multiple match error: %s matched %d routes", partial, matchCount)
 	}
 }
+
+func TestFilterSubgraphByDeclaredType(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "caller1", Properties: map[string]any{"name": "consumeSave"}},
+			{ID: "caller2", Properties: map[string]any{"name": "otherCaller"}},
+			{ID: "caller3", Properties: map[string]any{"name": "selfCall"}},
+			{ID: "target", Properties: map[string]any{"name": "save"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "caller1", TargetID: "target", Properties: map[string]any{"declared_type": "ChildService"}},
+			{SourceID: "caller2", TargetID: "target", Properties: map[string]any{"declared_type": "OtherService"}},
+			{SourceID: "caller3", TargetID: "target", Properties: map[string]any{}}, // empty declared_type
+		},
+	}
+
+	filtered := FilterSubgraphByDeclaredType(sg, "target", "ChildService")
+
+	// Should keep only caller1 (match), drop caller2 (mismatch) and caller3 (empty)
+	if len(filtered.Edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(filtered.Edges))
+	}
+	if len(filtered.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes (caller1 + target), got %d", len(filtered.Nodes))
+	}
+	t.Log("✅ FilterSubgraphByDeclaredType: correct filtering")
+}
+
+func TestFilterSubgraphByDeclaredType_FullQualifiedName(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "caller1", Properties: map[string]any{"name": "caller"}},
+			{ID: "target", Properties: map[string]any{"name": "save"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "caller1", TargetID: "target", Properties: map[string]any{"declared_type": "com.example.ChildService"}},
+		},
+	}
+
+	filtered := FilterSubgraphByDeclaredType(sg, "target", "ChildService")
+	if len(filtered.Edges) != 1 {
+		t.Fatalf("expected 1 edge (full qualified name contains short name), got %d", len(filtered.Edges))
+	}
+	t.Log("✅ FilterSubgraphByDeclaredType: full qualified name match")
+}
+
+func TestFilterSubgraphByDeclaredType_Nil(t *testing.T) {
+	if FilterSubgraphByDeclaredType(nil, "root", "X") != nil {
+		t.Fatal("expected nil for nil input")
+	}
+	t.Log("✅ FilterSubgraphByDeclaredType: nil input")
+}
+
+// TestFilterSubgraphByDeclaredType_MultiLevel verifies that only the first-level
+// edges (directly connecting to the root target) are filtered by declared_type.
+// Upper-level edges (caller's callers) should always be preserved regardless of
+// their declared_type value.
+func TestFilterSubgraphByDeclaredType_MultiLevel(t *testing.T) {
+	// Simulate a 2-level reverse call chain for BaseRepo.save:
+	//   serviceA → ChildDao.doSave → BaseRepo.save  (declared_type=ChildDao, should keep)
+	//   serviceB → OtherDao.doSave → BaseRepo.save   (declared_type=OtherDao, should drop)
+	//   serviceC → ChildDao.doSave                    (no declared_type on this edge, upper level)
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "root", Properties: map[string]any{"name": "save"}},
+			{ID: "childDoSave", Properties: map[string]any{"name": "doSave"}},
+			{ID: "otherDoSave", Properties: map[string]any{"name": "doSave"}},
+			{ID: "serviceA", Properties: map[string]any{"name": "serviceA"}},
+			{ID: "serviceB", Properties: map[string]any{"name": "serviceB"}},
+			{ID: "serviceC", Properties: map[string]any{"name": "serviceC"}},
+		},
+		Edges: []model.Edge{
+			// Level 1: direct callers of root target
+			{SourceID: "childDoSave", TargetID: "root", Properties: map[string]any{"declared_type": "ChildDao"}},
+			{SourceID: "otherDoSave", TargetID: "root", Properties: map[string]any{"declared_type": "OtherDao"}},
+			// Level 2: callers of callers (should NOT be filtered)
+			{SourceID: "serviceA", TargetID: "childDoSave", Properties: map[string]any{"declared_type": "SomeService"}},
+			{SourceID: "serviceC", TargetID: "childDoSave", Properties: map[string]any{}},
+			{SourceID: "serviceB", TargetID: "otherDoSave", Properties: map[string]any{"declared_type": "AnotherService"}},
+		},
+	}
+
+	filtered := FilterSubgraphByDeclaredType(sg, "root", "ChildDao")
+
+	keptNodeIDs := map[string]bool{}
+	for _, n := range filtered.Nodes {
+		keptNodeIDs[n.ID] = true
+	}
+
+	if keptNodeIDs["otherDoSave"] {
+		t.Error("otherDoSave should be filtered out (declared_type=OtherDao)")
+	}
+	if keptNodeIDs["serviceB"] {
+		t.Error("serviceB should be filtered out (its target otherDoSave was removed)")
+	}
+
+	// Verify: root, childDoSave, serviceA, serviceC should be kept
+	for _, expected := range []string{"root", "childDoSave", "serviceA", "serviceC"} {
+		if !keptNodeIDs[expected] {
+			t.Errorf("%s should be kept but was filtered out", expected)
+		}
+	}
+
+	// Verify edge count: 1 level-1 + 2 level-2 = 3
+	if len(filtered.Edges) != 3 {
+		t.Errorf("expected 3 edges, got %d", len(filtered.Edges))
+		for _, e := range filtered.Edges {
+			t.Logf("  edge: %s → %s (declared_type=%v)", e.SourceID, e.TargetID, e.Properties["declared_type"])
+		}
+	}
+
+	t.Log("✅ FilterSubgraphByDeclaredType_MultiLevel: multi-level filtering correct")
+}
+
+func TestResolveFunctionWithInheritance(t *testing.T) {
+	indexer, store := setupTestIndexer(t)
+	defer store.Close()
+
+	projectDir := t.TempDir()
+	srcDir := filepath.Join(projectDir, "src", "main", "java", "com", "example")
+	os.MkdirAll(srcDir, model.DirectoryPermission)
+
+	os.WriteFile(filepath.Join(srcDir, "BaseRepo.java"), []byte(`package com.example;
+public class BaseRepo {
+    public void save(String data) {}
+    public void delete(String id) {}
+}
+`), model.FilePermission)
+
+	os.WriteFile(filepath.Join(srcDir, "ChildRepo.java"), []byte(`package com.example;
+public class ChildRepo extends BaseRepo {
+    public void validate(String data) {}
+}
+`), model.FilePermission)
+
+	ctx := context.Background()
+	_, err := indexer.Index(ctx, projectDir, "main", true, nil)
+	if err != nil {
+		t.Fatal("index:", err)
+	}
+
+	querier := NewQuerier(store)
+
+	// 1. Own method — no fallback
+	node, _, inheritedFrom, err := querier.ResolveFunctionWithInheritance(ctx, "com.example.ChildRepo.validate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node == nil {
+		t.Fatal("expected to find ChildRepo.validate")
+	}
+	if inheritedFrom != "" {
+		t.Fatalf("expected no inheritance fallback, got %q", inheritedFrom)
+	}
+
+	// 2. Inherited method — fallback to parent
+	node, _, inheritedFrom, err = querier.ResolveFunctionWithInheritance(ctx, "com.example.ChildRepo.save")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node == nil {
+		t.Fatal("expected to find BaseRepo.save via fallback")
+	}
+	qn, _ := node.Properties["qualified_name"].(string)
+	if qn != "com.example.BaseRepo.save" {
+		t.Fatalf("expected BaseRepo.save, got %s", qn)
+	}
+	if inheritedFrom != "ChildRepo" {
+		t.Fatalf("expected inheritedFrom=ChildRepo, got %q", inheritedFrom)
+	}
+
+	// 3. Non-existent method — returns nil
+	node, _, _, err = querier.ResolveFunctionWithInheritance(ctx, "com.example.ChildRepo.nonExistent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node != nil {
+		t.Fatal("expected nil for non-existent method")
+	}
+
+	t.Log("✅ ResolveFunctionWithInheritance: own method + fallback + non-existent")
+}

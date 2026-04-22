@@ -252,9 +252,10 @@ func (resolver *Resolver) resolveByReceiverType(
 	receiverType string,
 ) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
 
+	// Resolve short type name to fully qualified name before matching and writing declared_type
+	receiverType = resolver.resolveFullQualifiedType(receiverType, envs[call.FilePath])
+
 	// Filter candidates to those belonging to the receiver's class.
-	// Example: receiverType="UserService", candidates=[UserService.findById, OrderService.findById]
-	//   → matched=[UserService.findById]
 	matched := filterByOwnerClass(funcCandidates, receiverType)
 
 	if len(matched) == 0 {
@@ -880,6 +881,30 @@ func (resolver *Resolver) lookupReceiverType(call model.RawCall, envs map[string
 func (resolver *Resolver) isProjectClass(typeName string) bool {
 	sym := resolver.findClassSymbol(typeName)
 	return sym != nil
+}
+
+// resolveFullQualifiedType resolves a short class name to its fully qualified name
+// using the file's import list and the symbol table for verification.
+// If the name already contains ".", it is returned as-is.
+// Returns the original name if resolution fails.
+func (resolver *Resolver) resolveFullQualifiedType(typeName string, env *model.TypeEnv) string {
+	if env == nil || strings.Contains(typeName, ".") {
+		return typeName
+	}
+	for _, imp := range env.Imports {
+		if imp.SymbolName == typeName {
+			return imp.ModulePath
+		}
+		// Wildcard import: try ModulePath + "." + typeName and verify in symbolTable
+		candidateQN := imp.ModulePath + "." + typeName
+		for _, sym := range resolver.symbolTable.FindByQualifiedName(candidateQN) {
+			if sym.Kind == constants.KindClass || sym.Kind == "abstract_class" ||
+				sym.Kind == constants.KindInterface || sym.ClassType == "struct" {
+				return candidateQN
+			}
+		}
+	}
+	return typeName
 }
 
 // findClassSymbol returns the class/interface Symbol for a type name, or nil if not found.

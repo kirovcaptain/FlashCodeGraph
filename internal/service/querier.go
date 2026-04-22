@@ -186,16 +186,169 @@ func (querier *Querier) ResolveFunction(ctx context.Context, name string) (*mode
 	return nil, nodes, nil
 }
 
+const maxInheritanceDepth = 5
+
+// ResolveFunctionWithInheritance resolves a function symbol, falling back to parent class
+// methods via EXTENDS chain when the symbol is not found directly.
+// Returns (node, candidates, inheritedFrom, error).
+// inheritedFrom is the original child class short name when fallback was used.
+func (querier *Querier) ResolveFunctionWithInheritance(ctx context.Context, name string) (*model.Node, []model.Node, string, error) {
+	node, candidates, err := querier.ResolveFunction(ctx, name)
+	if err != nil || node != nil || len(candidates) > 0 {
+		return node, candidates, "", err
+	}
+
+	// Fallback: requires "ClassName.methodName" format
+	if !strings.Contains(name, ".") {
+		return nil, nil, "", nil
+	}
+
+	// Extract class name and method name from qualified name
+	// "com.example.ChildService.save" → className="ChildService", methodName="save"
+	lastDot := strings.LastIndex(name, ".")
+	methodName := name[lastDot+1:]
+	prefix := name[:lastDot] // "com.example.ChildService"
+	childClassShortName := prefix
+	if idx := strings.LastIndex(prefix, "."); idx >= 0 {
+		childClassShortName = prefix[idx+1:]
+	}
+
+	// Find the child class node
+	classNodes, err := querier.graphStore.QueryNodesByName(ctx, childClassShortName, model.QueryOpts{Kinds: []string{constants.KindClass}, Limit: 10})
+	if err != nil || len(classNodes) == 0 {
+		return nil, nil, "", err
+	}
+
+	// Pick the class node matching the qualified prefix
+	var classNode *model.Node
+	for i, cn := range classNodes {
+		qn, _ := cn.Properties["qualified_name"].(string)
+		if qn == prefix || strings.HasSuffix(qn, prefix) {
+			classNode = &classNodes[i]
+			break
+		}
+	}
+	if classNode == nil && len(classNodes) == 1 {
+		classNode = &classNodes[0]
+	}
+	if classNode == nil {
+		return nil, nil, "", nil
+	}
+
+	// Walk up EXTENDS chain
+	currentClassID := classNode.ID
+	visited := map[string]bool{currentClassID: true}
+	for depth := 0; depth < maxInheritanceDepth; depth++ {
+		edges, err := querier.graphStore.QueryEdges(ctx, currentClassID, constants.KindClass, model.RelExtends, model.Outgoing)
+		if err != nil || len(edges) == 0 {
+			break
+		}
+		parentID := edges[0].TargetID
+		if visited[parentID] {
+			break
+		}
+		visited[parentID] = true
+
+		parentNode, err := querier.graphStore.QueryNodeByID(ctx, parentID)
+		if err != nil || parentNode == nil {
+			break
+		}
+		parentQN, _ := parentNode.Properties["qualified_name"].(string)
+		if parentQN == "" {
+			break
+		}
+
+		// Check if parent class has the method
+		candidateQN := parentQN + "." + methodName
+		funcNode, err := querier.graphStore.QueryNodeByQualifiedName(ctx, candidateQN)
+		if err != nil {
+			break
+		}
+		if funcNode != nil {
+			return funcNode, nil, childClassShortName, nil
+		}
+
+		currentClassID = parentID
+	}
+
+	return nil, nil, "", nil
+}
+
+// FilterSubgraphByDeclaredType filters a subgraph to only include first-level edges whose
+// declared_type contains the given class name. First-level edges are those with TargetID == rootNodeID.
+// After filtering first-level edges, only upper-level edges reachable from kept first-level callers
+// are preserved. This prevents orphaned caller chains from filtered-out first-level nodes.
+func FilterSubgraphByDeclaredType(sg *model.Subgraph, rootNodeID string, className string) *model.Subgraph {
+	if sg == nil {
+		return sg
+	}
+
+	// Step 1: Filter first-level edges, collect kept first-level caller IDs
+	keptFirstLevelCallers := map[string]bool{}
+	var upperEdges []model.Edge
+	var filteredEdges []model.Edge
+	for _, e := range sg.Edges {
+		if e.TargetID == rootNodeID {
+			dt, _ := e.Properties["declared_type"].(string)
+			if dt != "" && strings.Contains(dt, className) {
+				filteredEdges = append(filteredEdges, e)
+				keptFirstLevelCallers[e.SourceID] = true
+			}
+		} else {
+			upperEdges = append(upperEdges, e)
+		}
+	}
+
+	// Step 2: Walk upper edges to find all reachable nodes from kept first-level callers
+	reachable := map[string]bool{}
+	for id := range keptFirstLevelCallers {
+		reachable[id] = true
+	}
+	// Build reverse adjacency: targetID → edges
+	targetToEdges := map[string][]model.Edge{}
+	for _, e := range upperEdges {
+		targetToEdges[e.TargetID] = append(targetToEdges[e.TargetID], e)
+	}
+	// BFS from kept first-level callers upward
+	queue := make([]string, 0, len(keptFirstLevelCallers))
+	for id := range keptFirstLevelCallers {
+		queue = append(queue, id)
+	}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, e := range targetToEdges[current] {
+			filteredEdges = append(filteredEdges, e)
+			if !reachable[e.SourceID] {
+				reachable[e.SourceID] = true
+				queue = append(queue, e.SourceID)
+			}
+		}
+	}
+
+	// Step 3: Collect nodes
+	reachable[rootNodeID] = true
+	var filteredNodes []model.Node
+	for _, n := range sg.Nodes {
+		if reachable[n.ID] {
+			filteredNodes = append(filteredNodes, n)
+		}
+	}
+	return &model.Subgraph{Nodes: filteredNodes, Edges: filteredEdges}
+}
+
 func (querier *Querier) QueryCallChain(ctx context.Context, symbolName string, direction model.Direction, depth int, minConfidence float64) (*model.Subgraph, error) {
 	return querier.QueryCallChainEx(ctx, symbolName, direction, depth, minConfidence, false)
 }
 
 // QueryCallChainEx queries call chain with optional UNRESOLVED_CALL edges.
+// When the symbol is not found directly, it falls back to parent class methods
+// via EXTENDS chain and filters results by declared_type for reverse queries.
 func (querier *Querier) QueryCallChainEx(ctx context.Context, symbolName string, direction model.Direction, depth int, minConfidence float64, includeUnresolved bool) (*model.Subgraph, error) {
 	if minConfidence < 0 {
 		minConfidence = 0
 	}
-	node, candidates, err := querier.ResolveFunction(ctx, symbolName)
+	node, candidates, inheritedFrom, err := querier.ResolveFunctionWithInheritance(ctx, symbolName)
 	if err != nil {
 		return nil, fmt.Errorf("querier: find symbol %q: %w", symbolName, err)
 	}
@@ -209,6 +362,11 @@ func (querier *Querier) QueryCallChainEx(ctx context.Context, symbolName string,
 	subgraph, err := querier.graphStore.TraverseCallChain(ctx, node.ID, depth, direction, minConfidence)
 	if err != nil {
 		return nil, err
+	}
+
+	// Filter by declared_type when resolved via inheritance fallback (reverse only)
+	if inheritedFrom != "" && direction == model.Incoming {
+		subgraph = FilterSubgraphByDeclaredType(subgraph, node.ID, inheritedFrom)
 	}
 
 	if includeUnresolved {
@@ -304,7 +462,7 @@ func FilterCoreRouteChain(chain *model.RouteChain) *model.RouteChain {
 
 // ImpactAnalysis finds all symbols affected by changes to a given symbol.
 func (querier *Querier) ImpactAnalysis(ctx context.Context, symbolName string, depth int) (*model.Subgraph, error) {
-	node, _, err := querier.ResolveFunction(ctx, symbolName)
+	node, _, inheritedFrom, err := querier.ResolveFunctionWithInheritance(ctx, symbolName)
 	if err != nil {
 		return nil, fmt.Errorf("querier: find symbol %q: %w", symbolName, err)
 	}
@@ -312,7 +470,15 @@ func (querier *Querier) ImpactAnalysis(ctx context.Context, symbolName string, d
 		return &model.Subgraph{}, nil
 	}
 
-	return querier.graphStore.TraverseImpact(ctx, node.ID, depth)
+	subgraph, err := querier.graphStore.TraverseImpact(ctx, node.ID, depth)
+	if err != nil {
+		return nil, err
+	}
+
+	if inheritedFrom != "" {
+		subgraph = FilterSubgraphByDeclaredType(subgraph, node.ID, inheritedFrom)
+	}
+	return subgraph, nil
 }
 
 // QueryClassMethods returns all methods belonging to a class.

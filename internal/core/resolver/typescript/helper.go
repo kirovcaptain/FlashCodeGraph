@@ -17,11 +17,16 @@ func (tsHelper *Helper) ResolveSuperCall(call model.RawCall, funcCandidates []mo
 	if call.ReceiverExpr != "super" || len(heritage) == 0 {
 		return nil, false
 	}
-	callerClass := call.CallerName
+	callerClassQN := resolver.ExtractCallerClassQN(call.CallerName)
+	callerClass := callerClassQN
 	if dotIdx := strings.LastIndex(callerClass, "."); dotIdx >= 0 {
-		callerClass = callerClass[:dotIdx]
-		if dotIdx2 := strings.LastIndex(callerClass, "."); dotIdx2 >= 0 {
-			callerClass = callerClass[dotIdx2+1:]
+		callerClass = callerClass[dotIdx+1:]
+	}
+	setDeclaredType := func(relations []model.ResolvedRelation) {
+		if callerClassQN != "" {
+			for i := range relations {
+				relations[i].Metadata["declared_type"] = callerClassQN
+			}
 		}
 	}
 	for _, heritageItem := range heritage {
@@ -42,14 +47,20 @@ func (tsHelper *Helper) ResolveSuperCall(call model.RawCall, funcCandidates []mo
 				matched = resolver.FilterByOwnerClass(funcCandidates, heritageItem.ParentName)
 			}
 			if len(matched) == 1 {
-				return []model.ResolvedRelation{resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1)}, true
+				relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1)}
+				setDeclaredType(relations)
+				return relations, true
 			}
 			if len(matched) > 1 {
 				argMatched := resolver.FilterByArgCount(matched, call.ArgCount)
 				if len(argMatched) == 1 {
-					return []model.ResolvedRelation{resolver.MakeRelation(callerID, argMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_count", 1)}, true
+					relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, argMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_count", 1)}
+					setDeclaredType(relations)
+					return relations, true
 				}
-				return resolver.MakeMultiRelations(callerID, matched, call, resolver.ConfidenceTypeParent, "type_multi"), true
+				relations := resolver.MakeMultiRelations(callerID, matched, call, resolver.ConfidenceTypeParent, "type_multi")
+				setDeclaredType(relations)
+				return relations, true
 			}
 			break
 		}

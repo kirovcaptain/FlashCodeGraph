@@ -18,18 +18,20 @@ func (pythonHelper *Helper) ResolveSuperCall(call model.RawCall, funcCandidates 
 	if call.ReceiverExpr != "super" || len(heritage) == 0 {
 		return nil, false
 	}
-	callerClass := call.CallerName
+	callerClassQN := resolver.ExtractCallerClassQN(call.CallerName)
+	callerClass := callerClassQN
 	if dotIdx := strings.LastIndex(callerClass, "."); dotIdx >= 0 {
-		callerClass = callerClass[:dotIdx]
-		if dotIdx2 := strings.LastIndex(callerClass, "."); dotIdx2 >= 0 {
-			callerClass = callerClass[dotIdx2+1:]
-		}
+		callerClass = callerClass[dotIdx+1:]
 	}
 	for _, heritageItem := range heritage {
 		if heritageItem.ChildName == callerClass && heritageItem.Kind == "extends" && heritageItem.FilePath == call.FilePath {
 			matched := resolver.FilterByOwnerClass(funcCandidates, heritageItem.ParentName)
 			if len(matched) == 1 {
-				return []model.ResolvedRelation{resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1)}, true
+				rel := resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1)
+				if callerClassQN != "" {
+					rel.Metadata["declared_type"] = callerClassQN
+				}
+				return []model.ResolvedRelation{rel}, true
 			}
 			break
 		}

@@ -32,7 +32,10 @@ func TestPythonHelper_ResolveSuperCall(t *testing.T) {
 	if relations[0].TargetID != "parent_init" {
 		t.Fatalf("expected parent_init, got %s", relations[0].TargetID)
 	}
-	t.Log("✅ Python super().__init__() resolves to parent class")
+	if dt := relations[0].Metadata["declared_type"]; dt != "Dog" {
+		t.Fatalf("expected declared_type 'Dog', got %q", dt)
+	}
+	t.Log("✅ Python super().__init__() resolves to parent class with declared_type")
 }
 
 func TestPythonHelper_ResolveSuperCall_NoHeritage(t *testing.T) {

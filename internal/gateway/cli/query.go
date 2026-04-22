@@ -278,7 +278,8 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	node, candidates, err := querier.ResolveFunction(ctx, args[0])
+
+	node, candidates, inheritedFrom, err := querier.ResolveFunctionWithInheritance(ctx, args[0])
 	if err != nil {
 		return err
 	}
@@ -299,6 +300,11 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 	subgraph, err := querier.QueryCallChainByNodeID(ctx, node.ID, direction, callchainDepth, callchainMinConf)
 	if err != nil {
 		return err
+	}
+
+	// Filter by declared_type when resolved via inheritance fallback (reverse only)
+	if inheritedFrom != "" && direction == model.Incoming {
+		subgraph = service.FilterSubgraphByDeclaredType(subgraph, node.ID, inheritedFrom)
 	}
 
 	if len(subgraph.Nodes) == 0 {
@@ -329,7 +335,7 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	defer store.Close()
 
 	ctx := context.Background()
-	node, candidates, err := querier.ResolveFunction(ctx, args[0])
+	node, candidates, inheritedFrom, err := querier.ResolveFunctionWithInheritance(ctx, args[0])
 	if err != nil {
 		return err
 	}
@@ -347,6 +353,10 @@ func runImpact(cmd *cobra.Command, args []string) error {
 	subgraph, err := querier.QueryCallChainByNodeID(ctx, node.ID, model.Incoming, impactDepth, impactMinConf)
 	if err != nil {
 		return err
+	}
+
+	if inheritedFrom != "" {
+		subgraph = service.FilterSubgraphByDeclaredType(subgraph, node.ID, inheritedFrom)
 	}
 
 	if len(subgraph.Nodes) == 0 {
