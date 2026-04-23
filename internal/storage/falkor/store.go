@@ -585,10 +585,15 @@ func (store *Store) QueryAllEdges(ctx context.Context, relKind model.RelationKin
 	return edges, nil
 }
 
+// TraverseCallChain traverses the call graph from nodeID up to the given depth.
+// Note: the returned Nodes contain only reachable neighbors (callees/callers),
+// NOT the root node itself. The root nodeID is included in the edge query so
+// edges referencing it as source/target are present. CLI adds the root node
+// separately for rendering; MCP consumers already know the root from the request.
 func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth int, direction model.Direction, minConfidence float64) (*model.Subgraph, error) {
 	subgraph := &model.Subgraph{}
 
-	// Query nodes
+	// Query reachable nodes (excludes the root node itself)
 	var nodeCypher string
 	switch direction {
 	case model.Outgoing:
