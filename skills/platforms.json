@@ -1,0 +1,20 @@
+{
+  "version": "0.1.0",
+  "platforms": {
+    "kiro": {
+      "skill_file": "kiro.md",
+      "install_path": ".kiro/skills/fcg/SKILL.md",
+      "version_file": ".kiro/skills/fcg/.fcg_skill_version"
+    },
+    "claude": {
+      "skill_file": "claude.md",
+      "install_path": ".claude/skills/fcg/SKILL.md",
+      "version_file": ".claude/skills/fcg/.fcg_skill_version"
+    },
+    "copilot": {
+      "skill_file": "copilot.md",
+      "install_path": ".copilot/skills/fcg/SKILL.md",
+      "version_file": ".copilot/skills/fcg/.fcg_skill_version"
+    }
+  }
+}
