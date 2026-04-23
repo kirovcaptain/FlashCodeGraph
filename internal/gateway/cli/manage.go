@@ -169,7 +169,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	fmt.Println("✅ Parse cache and fingerprints removed")
 
 	// Remove registry entry
-	registry.Unregister(entry.Path)
+	registry.Unregister(entry.Path, entry.Branch)
 	fmt.Println("✅ Registry entry removed")
 
 	return nil
@@ -293,14 +293,30 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Indexed projects (%d):\n\n", len(entries))
-	fmt.Printf("  %-4s %-20s %-10s %-12s %s\n", "ID", "NAME", "BRANCH", "DATABASE", "PATH")
-	fmt.Printf("  %-4s %-20s %-10s %-12s %s\n", "--", "----", "------", "--------", "----")
+
+	// Calculate dynamic column widths
+	nameWidth, branchWidth := 4, 6 // min widths for headers
+	for _, e := range entries {
+		if len(e.Name) > nameWidth {
+			nameWidth = len(e.Name)
+		}
+		b := e.Branch
+		if b == "" {
+			b = "-"
+		}
+		if len(b) > branchWidth {
+			branchWidth = len(b)
+		}
+	}
+	fmtStr := fmt.Sprintf("  %%-4s %%-%ds %%-%ds %%-12s %%s\n", nameWidth, branchWidth)
+	fmt.Printf(fmtStr, "ID", "NAME", "BRANCH", "DATABASE", "PATH")
+	fmt.Printf(fmtStr, "--", "----", "------", "--------", "----")
 	for i, e := range entries {
 		branch := e.Branch
 		if branch == "" {
 			branch = "-"
 		}
-		fmt.Printf("  %-4d %-20s %-10s %-12s %s\n", i+1, e.Name, branch, e.Database, e.Path)
+		fmt.Printf(fmtStr, fmt.Sprintf("%d", i+1), e.Name, branch, e.Database, e.Path)
 	}
 	return nil
 }
@@ -316,16 +332,26 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load registry: %w", err)
 	}
 
-	entry := registry.FindByPath(absPath)
-	if entry == nil {
+	entries := registry.FindByPath(absPath)
+	if len(entries) == 0 {
 		fmt.Printf("Project %q is not indexed.\n", projectName)
 		fmt.Println("Run 'fcg index .' to index this project.")
 		return nil
 	}
 
-	fmt.Printf("Project: %s\n", entry.Name)
-	fmt.Printf("Path:    %s\n", entry.Path)
-	fmt.Printf("DB:      %s\n", entry.Database)
+	entry := entries[0]
+	fmt.Printf("Project:  %s\n", entry.Name)
+	fmt.Printf("Path:     %s\n", entry.Path)
+	fmt.Printf("DB:       %s\n", entry.Database)
+	if len(entries) > 1 {
+		branches := make([]string, len(entries))
+		for i, e := range entries {
+			branches[i] = e.Branch
+		}
+		fmt.Printf("Branches: %s\n", strings.Join(branches, ", "))
+	} else {
+		fmt.Printf("Branch:   %s\n", entry.Branch)
+	}
 
 	s := status.Read(absPath)
 	if s.IndexTimestamp > 0 {

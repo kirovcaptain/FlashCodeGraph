@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/service"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/falkor"
 	"github.com/spf13/cobra"
 )
@@ -135,10 +137,34 @@ func warnIfIndexStale() {
 
 func createQuerier() (*service.Querier, storage.GraphStore, error) {
 	repoPath := projectDir()
+	absPath, _ := filepath.Abs(repoPath)
 	cfg, err := config.Load(repoPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load config: %w", err)
 	}
+
+	// Check if multiple branches are indexed for this project
+	fcgDir := config.GlobalDir()
+	registry, _ := storage.NewRegistry(fcgDir)
+	if registry != nil {
+		entries := registry.FindByPath(absPath)
+		if len(entries) > 1 {
+			currentBranch := branch.DetectBranch(absPath)
+			// Check if current branch is indexed
+			found := false
+			for _, e := range entries {
+				if e.Branch == currentBranch {
+					found = true
+					break
+				}
+			}
+			if !found {
+				selectedBranch := promptBranchSelection(entries, currentBranch)
+				cfg.Storage.Branch = selectedBranch
+			}
+		}
+	}
+
 	store, err := openGraphStore(cfg, repoPath)
 	if err != nil {
 		return nil, nil, err
@@ -151,6 +177,34 @@ func createQuerier() (*service.Querier, storage.GraphStore, error) {
 		}
 	}
 	return service.NewQuerier(store), store, nil
+}
+
+// promptBranchSelection asks the user to pick a branch when the current branch is not indexed.
+// In non-TTY mode, returns the first available branch.
+func promptBranchSelection(entries []storage.RegistryEntry, currentBranch string) string {
+	// Non-TTY: use first entry
+	stat, _ := os.Stdin.Stat()
+	if stat == nil || (stat.Mode()&os.ModeCharDevice) == 0 {
+		return entries[0].Branch
+	}
+
+	fmt.Fprintf(os.Stderr, "⚠ Branch '%s' is not indexed. Available branches:\n", currentBranch)
+	for i, e := range entries {
+		fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, e.Branch)
+	}
+	fmt.Fprintf(os.Stderr, "Select branch [1]: ")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			return entries[0].Branch
+		}
+		if idx, err := strconv.Atoi(input); err == nil && idx >= 1 && idx <= len(entries) {
+			return entries[idx-1].Branch
+		}
+	}
+	return entries[0].Branch
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {

@@ -183,7 +183,8 @@ func runSkillInstall(cmd *cobra.Command, args []string) error {
 func promptPlatformSelection(cfg *platformConfig) string {
 	names := platformNames(cfg)
 
-	fmt.Println("\n🔧 FCG Skill Installer\n")
+	fmt.Println("\n🔧 FCG Skill Installer")
+	fmt.Println()
 	fmt.Println("Available platforms:")
 	for i, name := range names {
 		entry := cfg.Platforms[name]

@@ -40,10 +40,10 @@ func NewRegistry(fcgDir string) (*Registry, error) {
 	return registry, nil
 }
 
-// Register adds or updates a project entry, keyed by absolute path.
+// Register adds or updates a project entry, keyed by path + branch.
 func (registry *Registry) Register(name, projectPath, database, branch string) error {
 	for i, entry := range registry.entries {
-		if entry.Path == projectPath {
+		if entry.Path == projectPath && entry.Branch == branch {
 			registry.entries[i] = RegistryEntry{Name: name, Path: projectPath, Database: database, Branch: branch}
 			return registry.save()
 		}
@@ -57,15 +57,27 @@ func (registry *Registry) List() []RegistryEntry {
 	return registry.entries
 }
 
-// Unregister removes a project from the registry by path.
-func (registry *Registry) Unregister(projectPath string) error {
+// Unregister removes a project entry by path and branch.
+func (registry *Registry) Unregister(projectPath, branch string) error {
 	for i, entry := range registry.entries {
-		if entry.Path == projectPath {
+		if entry.Path == projectPath && entry.Branch == branch {
 			registry.entries = append(registry.entries[:i], registry.entries[i+1:]...)
 			return registry.save()
 		}
 	}
 	return nil
+}
+
+// UnregisterAll removes all entries for a project path (all branches).
+func (registry *Registry) UnregisterAll(projectPath string) error {
+	filtered := registry.entries[:0]
+	for _, entry := range registry.entries {
+		if entry.Path != projectPath {
+			filtered = append(filtered, entry)
+		}
+	}
+	registry.entries = filtered
+	return registry.save()
 }
 
 // FindByName returns the entry matching the given name.
@@ -78,14 +90,15 @@ func (registry *Registry) FindByName(name string) *RegistryEntry {
 	return nil
 }
 
-// FindByPath returns the entry matching the given path.
-func (registry *Registry) FindByPath(projectPath string) *RegistryEntry {
+// FindByPath returns all entries matching the given path.
+func (registry *Registry) FindByPath(projectPath string) []RegistryEntry {
+	var results []RegistryEntry
 	for _, entry := range registry.entries {
 		if entry.Path == projectPath {
-			return &entry
+			results = append(results, entry)
 		}
 	}
-	return nil
+	return results
 }
 
 

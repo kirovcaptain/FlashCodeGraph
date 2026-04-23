@@ -33,26 +33,19 @@ func TestRegistry_RegisterAndList(t *testing.T) {
 	}
 }
 
-func TestRegistry_FindByNameAndPath(t *testing.T) {
+func TestRegistry_MultiBranch(t *testing.T) {
 	dir := t.TempDir()
 	reg, _ := NewRegistry(dir)
-	reg.Register("myproj", "/home/user/myproj", "kuzu", "main")
+	reg.Register("myproj", "/path/to/proj", "falkordb", "main")
+	reg.Register("myproj", "/path/to/proj", "falkordb", "develop")
+	reg.Register("myproj", "/path/to/proj", "falkordb", "feature/login")
 
-	if e := reg.FindByName("myproj"); e == nil || e.Path != "/home/user/myproj" {
-		t.Error("FindByName failed")
-	}
-	if e := reg.FindByPath("/home/user/myproj"); e == nil || e.Name != "myproj" {
-		t.Error("FindByPath failed")
-	}
-	if e := reg.FindByName("nonexist"); e != nil {
-		t.Error("FindByName should return nil for unknown")
-	}
-	if e := reg.FindByPath("/no/such/path"); e != nil {
-		t.Error("FindByPath should return nil for unknown")
+	if len(reg.List()) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(reg.List()))
 	}
 }
 
-func TestRegistry_UpdateExisting(t *testing.T) {
+func TestRegistry_UpdateSameBranch(t *testing.T) {
 	dir := t.TempDir()
 	reg, _ := NewRegistry(dir)
 	reg.Register("old-name", "/path/a", "kuzu", "main")
@@ -61,15 +54,90 @@ func TestRegistry_UpdateExisting(t *testing.T) {
 	if len(reg.List()) != 1 {
 		t.Fatalf("expected 1 entry after update, got %d", len(reg.List()))
 	}
-	e := reg.FindByPath("/path/a")
-	if e.Name != "new-name" || e.Database != "falkordb" {
-		t.Errorf("entry not updated: %+v", e)
+	entries := reg.FindByPath("/path/a")
+	if len(entries) != 1 || entries[0].Name != "new-name" || entries[0].Database != "falkordb" {
+		t.Errorf("entry not updated: %+v", entries)
+	}
+}
+
+func TestRegistry_FindByPath_MultiBranch(t *testing.T) {
+	dir := t.TempDir()
+	reg, _ := NewRegistry(dir)
+	reg.Register("proj", "/path/to/proj", "falkordb", "main")
+	reg.Register("proj", "/path/to/proj", "falkordb", "develop")
+	reg.Register("other", "/path/to/other", "falkordb", "main")
+
+	entries := reg.FindByPath("/path/to/proj")
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries for proj, got %d", len(entries))
+	}
+
+	entries = reg.FindByPath("/path/to/other")
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry for other, got %d", len(entries))
+	}
+
+	entries = reg.FindByPath("/no/such/path")
+	if len(entries) != 0 {
+		t.Fatalf("expected 0 entries for unknown path, got %d", len(entries))
+	}
+}
+
+func TestRegistry_FindByNameAndPath(t *testing.T) {
+	dir := t.TempDir()
+	reg, _ := NewRegistry(dir)
+	reg.Register("myproj", "/home/user/myproj", "kuzu", "main")
+
+	if e := reg.FindByName("myproj"); e == nil || e.Path != "/home/user/myproj" {
+		t.Error("FindByName failed")
+	}
+	if entries := reg.FindByPath("/home/user/myproj"); len(entries) != 1 || entries[0].Name != "myproj" {
+		t.Error("FindByPath failed")
+	}
+	if e := reg.FindByName("nonexist"); e != nil {
+		t.Error("FindByName should return nil for unknown")
+	}
+	if entries := reg.FindByPath("/no/such/path"); len(entries) != 0 {
+		t.Error("FindByPath should return empty for unknown")
+	}
+}
+
+func TestRegistry_Unregister_SingleBranch(t *testing.T) {
+	dir := t.TempDir()
+	reg, _ := NewRegistry(dir)
+	reg.Register("proj", "/path/a", "falkordb", "main")
+	reg.Register("proj", "/path/a", "falkordb", "develop")
+
+	reg.Unregister("/path/a", "main")
+
+	entries := reg.FindByPath("/path/a")
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry after unregister, got %d", len(entries))
+	}
+	if entries[0].Branch != "develop" {
+		t.Errorf("wrong branch remaining: %s", entries[0].Branch)
+	}
+}
+
+func TestRegistry_UnregisterAll(t *testing.T) {
+	dir := t.TempDir()
+	reg, _ := NewRegistry(dir)
+	reg.Register("proj", "/path/a", "falkordb", "main")
+	reg.Register("proj", "/path/a", "falkordb", "develop")
+	reg.Register("other", "/path/b", "falkordb", "main")
+
+	reg.UnregisterAll("/path/a")
+
+	if len(reg.List()) != 1 {
+		t.Fatalf("expected 1 entry after unregister all, got %d", len(reg.List()))
+	}
+	if reg.List()[0].Path != "/path/b" {
+		t.Errorf("wrong entry remaining: %+v", reg.List()[0])
 	}
 }
 
 func TestRegistry_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
-	// Create empty registry file
 	os.WriteFile(filepath.Join(dir, "registry.json"), []byte("[]"), 0o644)
 	reg, err := NewRegistry(dir)
 	if err != nil {
