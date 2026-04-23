@@ -152,6 +152,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		cfg = config.DefaultConfig()
 	}
+	cfg.Storage.Branch = entry.Branch
 	store, err := openGraphStore(cfg, entry.Path)
 	if err != nil {
 		fmt.Printf("⚠ Graph removal skipped: %v\n", err)
