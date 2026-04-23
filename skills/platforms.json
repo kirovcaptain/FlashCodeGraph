@@ -24,8 +24,9 @@
     }
   },
   "mcp_server": {
-    "command": "fcg",
+    "command": "${FCG_BINARY}",
     "args": ["mcp", "serve"],
-    "env": {}
+    "env": {},
+    "_comment": "command is resolved at install time via 'which fcg' or the running binary's absolute path"
   }
 }
