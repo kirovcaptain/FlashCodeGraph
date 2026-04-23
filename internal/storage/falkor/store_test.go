@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"fmt"
+	"path/filepath"
 	"testing"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
@@ -353,5 +355,36 @@ func TestQueryNodesByProperty(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Errorf("limit: expected 1, got %d", len(results))
+	}
+}
+
+func TestResolveGraphName(t *testing.T) {
+	tests := []struct {
+		name     string
+		project  string
+		branch   string
+		expected string
+	}{
+		{"simple", "my-app", "master", "fcg_my-app_master"},
+		{"hyphen preserved", "order-service", "main", "fcg_order-service_main"},
+		{"slash in branch", "my-app", "feature/login", "fcg_my-app_feature_login"},
+		{"hyphen and slash", "user-api", "fix/bug-123", "fcg_user-api_fix_bug-123"},
+		{"underscore project", "data_pipeline", "develop", "fcg_data_pipeline_develop"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.DefaultConfig()
+			cfg.Storage.Branch = tt.branch
+
+			dir := t.TempDir()
+			projectDir := filepath.Join(dir, tt.project)
+			os.MkdirAll(projectDir, 0o755)
+
+			got := ResolveGraphName(cfg, projectDir)
+			if got != tt.expected {
+				t.Errorf("ResolveGraphName(%q, branch=%q) = %q, want %q", tt.project, tt.branch, got, tt.expected)
+			}
+		})
 	}
 }
