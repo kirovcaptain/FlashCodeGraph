@@ -76,7 +76,7 @@ func ResolveGraphName(cfg *config.Config, repoPath string) string {
 			branchName = branch.DetectBranch(absPath)
 		}
 		graphName = graphName + "_" + projectName + "_" + branchName
-		graphName = strings.NewReplacer("-", "_", "/", "_").Replace(graphName)
+		graphName = strings.ReplaceAll(graphName, "/", "_")
 	}
 	return graphName
 }
