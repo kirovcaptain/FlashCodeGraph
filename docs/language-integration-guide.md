@@ -135,21 +135,21 @@ func NewHelper() *Helper {
 
 #### Interface Methods
 
-| Method | Purpose | Guidance |
-|--------|---------|----------|
-| `ResolveSuperCall` | Handle `super.method()` calls | Return `false` if language has no super calls |
-| `NarrowByScope` | Filter candidates by visibility/import rules | Use package/module rules to narrow matches |
-| `ResolveReceiverFallback` | Last-resort receiver resolution | Language-specific heuristics |
-| `ResolveImplicitSelfCall` | Handle implicit `this`/`self` | Return `false` if language always requires explicit receiver |
-| `ShouldFallthrough` | Allow fallback to no-receiver matching | `true` for most languages |
-| `FilterGenerated` | Remove auto-generated symbols | Filter out synthetic methods (e.g. Lombok, data classes) |
-| `IsTypeAssignable` | Type compatibility check | Handle boxing, inheritance, generics |
-| `ResolveOverload` | Pick best overload | Return `nil` if language has no overloading |
-| `InferStringConcat` | Detect string concatenation | Prevents false call resolution on `+` expressions |
-| `LookupMethodReturn` | Return type of known methods | For standard library methods (e.g. `String.length → int`) |
-| `IsConstructor` | Identify constructor methods | Language-specific naming convention |
-| `IsOverrideMatch` | Check method override compatibility | Compare name + params |
-| `InferImplements` | Infer implicit interface implementations | Only needed for duck-typed languages (Go). Return `nil` otherwise |
+| Method | Purpose | Applicable Scenarios | Guidance |
+|--------|---------|---------------------|----------|
+| `ResolveSuperCall` | Handle `super.method()` calls | Java `super.save()`, Python `super().__init__()`, C# `base.Method()`. Not applicable for Go (no inheritance) | Return `false` if language has no super calls |
+| `NarrowByScope` | Filter candidates by visibility/import rules | Java: same package preference. Go: same directory = same package. Python: module-level imports. TS: ES module imports | Use package/module rules to narrow matches |
+| `ResolveReceiverFallback` | Last-resort receiver resolution | Java: chained builder calls `builder.setName().build()`. Python: dynamic attribute access. TS: prototype chain calls | Language-specific heuristics when standard strategies fail |
+| `ResolveImplicitSelfCall` | Handle implicit `this`/`self` | Java: `save()` inside a class (implicit `this.save()`). Python: methods called without `self` prefix in same class. Not applicable for Go (always explicit receiver) | Return `false` if language always requires explicit receiver |
+| `ShouldFallthrough` | Allow fallback to no-receiver matching | Most languages: `true`. Java: `true` (static imports, same-class calls). Go: `true` (package-level functions) | `true` for most languages |
+| `FilterGenerated` | Remove auto-generated symbols | Java: Lombok `@Data` generates getters/setters. Kotlin: data class `copy()`/`toString()`. Not applicable for Go/Python | Filter out synthetic methods to avoid false positives |
+| `IsTypeAssignable` | Type compatibility check | Java: `int` ↔ `Integer` boxing, `List` assignable from `ArrayList`. Go: interface satisfaction. Python: duck typing (always `true`) | Handle boxing, inheritance, generics |
+| `ResolveOverload` | Pick best overload | Java: `save(String)` vs `save(String, int)` — pick most specific. Not applicable for Go/Python (no overloading) | Return `nil` if language has no overloading |
+| `InferStringConcat` | Detect string concatenation | Java: `"url" + path` should not resolve `+` as a call. JS/TS: template literals. Go: not applicable (no operator overloading) | Prevents false call resolution on `+` expressions |
+| `LookupMethodReturn` | Return type of known methods | Java: `String.length()` → `int`, `List.get()` → element type. Go: `error.Error()` → `string`. Python: `dict.keys()` → `KeysView` | For standard library methods to enable chain resolution |
+| `IsConstructor` | Identify constructor methods | Java: method name == class name. Python: `__init__`. Go: `NewXxx` convention. Rust: `new` / `from` | Language-specific naming convention |
+| `IsOverrideMatch` | Check method override compatibility | Java: same name + compatible params + return type. Go: same method name on embedded struct. Python: same name in subclass | Compare name + params |
+| `InferImplements` | Infer implicit interface implementations | Go: struct has all methods of an interface → implicit `IMPLEMENTS` edge. Not applicable for Java/Python/TS (explicit `implements` keyword) | Only needed for duck-typed languages. Return `nil` otherwise |
 
 For a minimal starting point, most methods can return `nil`/`false` and be refined iteratively.
 
