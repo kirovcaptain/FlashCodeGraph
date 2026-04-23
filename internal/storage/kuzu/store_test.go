@@ -792,7 +792,7 @@ func TestQueryNodesByProperty(t *testing.T) {
 		{ID: "r1", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/api/users", "file_path": "a.java"}},
 		{ID: "r2", Kind: "Route", Properties: map[string]any{"method": "POST", "path_pattern": "/api/users", "file_path": "a.java"}},
 		{ID: "r3", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/api/orders/{id}", "file_path": "b.java"}},
-		{ID: "r4", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/coin/register/free", "file_path": "c.java"}},
+		{ID: "r4", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/api/register/free", "file_path": "c.java"}},
 	}
 	if err := store.WriteNodes(ctx, nodes); err != nil {
 		t.Fatal(err)

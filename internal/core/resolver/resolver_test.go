@@ -1330,32 +1330,32 @@ func TestResolveCalls_EnrichArgTypes_NoEffect(t *testing.T) {
 
 func TestResolveCalls_SuperCall_MultipleBaseDao(t *testing.T) {
 	// 5 BaseDao classes in different packages, each with get() method
-	// CoinRechargeDao in biz-core extends BaseDao — super.get() should resolve to biz-core's BaseDao.get only
+	// OrderDao in biz-core extends BaseDao — super.get() should resolve to biz-core's BaseDao.get only
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		// biz-core BaseDao
-		{ID: "biz_get1", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.BaseDao.get", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "biz_get2", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.BaseDao.get", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/BaseDao.java", Params: `[{"name":"id","type":"Object"},{"name":"clazz","type":"Class"}]`},
-		{ID: "biz_base", Name: "BaseDao", QualifiedName: "com.weijin.chatting.biz.core.dao.BaseDao", Kind: "Class", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/BaseDao.java"},
+		{ID: "biz_get1", Name: "get", QualifiedName: "com.example.app.core.dao.BaseDao.get", Kind: "Function", FilePath: "app-core/src/main/java/com/example/app/core/dao/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "biz_get2", Name: "get", QualifiedName: "com.example.app.core.dao.BaseDao.get", Kind: "Function", FilePath: "app-core/src/main/java/com/example/app/core/dao/BaseDao.java", Params: `[{"name":"id","type":"Object"},{"name":"clazz","type":"Class"}]`},
+		{ID: "biz_base", Name: "BaseDao", QualifiedName: "com.example.app.core.dao.BaseDao", Kind: "Class", FilePath: "app-core/src/main/java/com/example/app/core/dao/BaseDao.java"},
 		// admin BaseDao
-		{ID: "admin_get1", Name: "get", QualifiedName: "com.weijin.chatting.admin.dao.base.BaseDao.get", Kind: "Function", FilePath: "admin/src/main/java/com/weijin/chatting/admin/dao/base/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "admin_get2", Name: "get", QualifiedName: "com.weijin.chatting.admin.dao.base.BaseDao.get", Kind: "Function", FilePath: "admin/src/main/java/com/weijin/chatting/admin/dao/base/BaseDao.java", Params: `[{"name":"id","type":"Object"},{"name":"clazz","type":"Class"}]`},
-		{ID: "admin_base", Name: "BaseDao", QualifiedName: "com.weijin.chatting.admin.dao.base.BaseDao", Kind: "Class", FilePath: "admin/src/main/java/com/weijin/chatting/admin/dao/base/BaseDao.java"},
+		{ID: "admin_get1", Name: "get", QualifiedName: "com.example.app.admin.dao.base.BaseDao.get", Kind: "Function", FilePath: "admin/src/main/java/com/example/app/admin/dao/base/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "admin_get2", Name: "get", QualifiedName: "com.example.app.admin.dao.base.BaseDao.get", Kind: "Function", FilePath: "admin/src/main/java/com/example/app/admin/dao/base/BaseDao.java", Params: `[{"name":"id","type":"Object"},{"name":"clazz","type":"Class"}]`},
+		{ID: "admin_base", Name: "BaseDao", QualifiedName: "com.example.app.admin.dao.base.BaseDao", Kind: "Class", FilePath: "admin/src/main/java/com/example/app/admin/dao/base/BaseDao.java"},
 		// prm-core BaseDao
-		{ID: "prm_get1", Name: "get", QualifiedName: "com.weijin.chatting.prm.core.dao.BaseDao.get", Kind: "Function", FilePath: "chatting-prm-core/src/main/java/com/weijin/chatting/prm/core/dao/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
-		{ID: "prm_base", Name: "BaseDao", QualifiedName: "com.weijin.chatting.prm.core.dao.BaseDao", Kind: "Class", FilePath: "chatting-prm-core/src/main/java/com/weijin/chatting/prm/core/dao/BaseDao.java"},
-		// CoinRechargeDao in biz-core
-		{ID: "caller1", Name: "getByOrderNo", QualifiedName: "com.weijin.chatting.biz.core.dao.CoinRechargeDao.getByOrderNo", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/CoinRechargeDao.java"},
-		{ID: "c_coin", Name: "CoinRechargeDao", QualifiedName: "com.weijin.chatting.biz.core.dao.CoinRechargeDao", Kind: "Class", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/CoinRechargeDao.java"},
+		{ID: "prm_get1", Name: "get", QualifiedName: "com.example.app.prm.core.dao.BaseDao.get", Kind: "Function", FilePath: "app-prm-core/src/main/java/com/example/app/prm/core/dao/BaseDao.java", Params: `[{"name":"sql","type":"String"},{"name":"params","type":"Object[]"},{"name":"clazz","type":"Class"}]`},
+		{ID: "prm_base", Name: "BaseDao", QualifiedName: "com.example.app.prm.core.dao.BaseDao", Kind: "Class", FilePath: "app-prm-core/src/main/java/com/example/app/prm/core/dao/BaseDao.java"},
+		// OrderDao in biz-core
+		{ID: "caller1", Name: "getByOrderNo", QualifiedName: "com.example.app.core.dao.OrderDao.getByOrderNo", Kind: "Function", FilePath: "app-core/src/main/java/com/example/app/core/dao/OrderDao.java"},
+		{ID: "c_coin", Name: "OrderDao", QualifiedName: "com.example.app.core.dao.OrderDao", Kind: "Class", FilePath: "app-core/src/main/java/com/example/app/core/dao/OrderDao.java"},
 	})
 
 	resolver := newTestResolver(table)
 	resolver.SetHeritage([]model.RawHeritage{
-		{ChildName: "CoinRechargeDao", ParentName: "BaseDao", Kind: "extends", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/CoinRechargeDao.java"},
+		{ChildName: "OrderDao", ParentName: "BaseDao", Kind: "extends", FilePath: "app-core/src/main/java/com/example/app/core/dao/OrderDao.java"},
 	})
 
 	envs := map[string]*model.TypeEnv{
-		"chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/CoinRechargeDao.java": {
+		"app-core/src/main/java/com/example/app/core/dao/OrderDao.java": {
 			Bindings: map[string]*model.TypeInfo{},
 			Imports:  []model.RawImport{},
 		},
@@ -1363,8 +1363,8 @@ func TestResolveCalls_SuperCall_MultipleBaseDao(t *testing.T) {
 
 	calls := []model.RawCall{{
 		CalledName:   "get",
-		CallerName:   "CoinRechargeDao.getByOrderNo",
-		FilePath:     "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/CoinRechargeDao.java",
+		CallerName:   "OrderDao.getByOrderNo",
+		FilePath:     "app-core/src/main/java/com/example/app/core/dao/OrderDao.java",
 		ReceiverExpr: "super",
 		ArgCount:     3,
 	}}
@@ -1480,12 +1480,12 @@ func TestResolveCalls_EnrichArgTypes_ChainedExpr_NoSideEffect(t *testing.T) {
 }
 
 func TestResolveCalls_EnrichArgTypes_ChainedExpr_MethodParam(t *testing.T) {
-	// userInfoDao.get(reqs.getBroadcasterId()) — getBroadcasterId returns Long, disambiguates get(Integer) vs get(Long)
+	// userInfoDao.get(reqs.getUserId()) — getUserId returns Long, disambiguates get(Integer) vs get(Long)
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		{ID: "get_int", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
 		{ID: "get_long", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
-		{ID: "getBroadcasterId", Name: "getBroadcasterId", QualifiedName: "com.example.Reqs.getBroadcasterId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}},
+		{ID: "getUserId", Name: "getUserId", QualifiedName: "com.example.Reqs.getUserId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}},
 		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.example.UserInfoDao", Kind: "Class", FilePath: "UserInfoDao.java"},
 		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "Class", FilePath: "Reqs.java"},
 		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
@@ -1510,7 +1510,7 @@ func TestResolveCalls_EnrichArgTypes_ChainedExpr_MethodParam(t *testing.T) {
 		ReceiverExpr: "userInfoDao",
 		ArgCount:     1,
 		ArgTypes:     []string{""},
-		ArgExprs:     []string{"reqs.getBroadcasterId()"},
+		ArgExprs:     []string{"reqs.getUserId()"},
 	}}
 
 	relations, _ := resolver.ResolveCalls(calls, envs)
@@ -1525,38 +1525,38 @@ func TestResolveCalls_EnrichArgTypes_ChainedExpr_MethodParam(t *testing.T) {
 	if relations[0].TargetID != "get_long" {
 		t.Fatalf("expected get_long, got %s", relations[0].TargetID)
 	}
-	t.Log("✅ get(reqs.getBroadcasterId()) disambiguated to get(Long)")
+	t.Log("✅ get(reqs.getUserId()) disambiguated to get(Long)")
 }
 
-func TestResolveCalls_EnrichArgTypes_RealCase_BroadcasterController(t *testing.T) {
-	// Real case: this.userInfoDao.get(reqs.getBroadcasterId())
-	// CallerName = "BroadcasterController.getLastCycleIncome"
-	// reqs is method param with type GetLastCycleIncomeReqs
-	// getBroadcasterId is Lombok-generated getter returning Long
+func TestResolveCalls_EnrichArgTypes_RealCase_UserController(t *testing.T) {
+	// Real case: this.userInfoDao.get(reqs.getUserId())
+	// CallerName = "UserController.getLastCycleSummary"
+	// reqs is method param with type GetLastCycleSummaryReqs
+	// getUserId is Lombok-generated getter returning Long
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "get_int", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.UserInfoDao.get", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
-		{ID: "get_long", Name: "get", QualifiedName: "com.weijin.chatting.biz.core.dao.UserInfoDao.get", Kind: "Function", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
+		{ID: "get_int", Name: "get", QualifiedName: "com.example.app.core.dao.UserInfoDao.get", Kind: "Function", FilePath: "app-core/src/main/java/com/example/app/core/dao/UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
+		{ID: "get_long", Name: "get", QualifiedName: "com.example.app.core.dao.UserInfoDao.get", Kind: "Function", FilePath: "app-core/src/main/java/com/example/app/core/dao/UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
 		// Lombok-generated getter
-		{ID: "getBroadcasterId", Name: "getBroadcasterId", QualifiedName: "com.weijin.chatting.admin.model.request.broadcaster.GetLastCycleIncomeReqs.getBroadcasterId", Kind: "Function",
-			FilePath: "admin/src/main/java/com/weijin/chatting/admin/model/request/broadcaster/GetLastCycleIncomeReqs.java",
+		{ID: "getUserId", Name: "getUserId", QualifiedName: "com.example.app.admin.model.request.user.GetLastCycleSummaryReqs.getUserId", Kind: "Function",
+			FilePath: "admin/src/main/java/com/example/app/admin/model/request/user/GetLastCycleSummaryReqs.java",
 			ReturnTypes: []string{"Long"}, IsSynthetic: true},
-		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.weijin.chatting.biz.core.dao.UserInfoDao", Kind: "Class", FilePath: "chatting-biz-core/src/main/java/com/weijin/chatting/biz/core/dao/UserInfoDao.java"},
-		{ID: "c_reqs", Name: "GetLastCycleIncomeReqs", QualifiedName: "com.weijin.chatting.admin.model.request.broadcaster.GetLastCycleIncomeReqs", Kind: "Class",
-			FilePath: "admin/src/main/java/com/weijin/chatting/admin/model/request/broadcaster/GetLastCycleIncomeReqs.java"},
-		{ID: "caller1", Name: "getLastCycleIncome", QualifiedName: "com.weijin.chatting.admin.controller.BroadcasterController.getLastCycleIncome", Kind: "Function",
-			FilePath: "admin/src/main/java/com/weijin/chatting/admin/controller/BroadcasterController.java"},
-		{ID: "c_ctrl", Name: "BroadcasterController", QualifiedName: "com.weijin.chatting.admin.controller.BroadcasterController", Kind: "Class",
-			FilePath: "admin/src/main/java/com/weijin/chatting/admin/controller/BroadcasterController.java"},
+		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.example.app.core.dao.UserInfoDao", Kind: "Class", FilePath: "app-core/src/main/java/com/example/app/core/dao/UserInfoDao.java"},
+		{ID: "c_reqs", Name: "GetLastCycleSummaryReqs", QualifiedName: "com.example.app.admin.model.request.user.GetLastCycleSummaryReqs", Kind: "Class",
+			FilePath: "admin/src/main/java/com/example/app/admin/model/request/user/GetLastCycleSummaryReqs.java"},
+		{ID: "caller1", Name: "getLastCycleSummary", QualifiedName: "com.example.app.admin.controller.UserController.getLastCycleSummary", Kind: "Function",
+			FilePath: "admin/src/main/java/com/example/app/admin/controller/UserController.java"},
+		{ID: "c_ctrl", Name: "UserController", QualifiedName: "com.example.app.admin.controller.UserController", Kind: "Class",
+			FilePath: "admin/src/main/java/com/example/app/admin/controller/UserController.java"},
 	})
 
 	resolver := newTestResolver(table)
 	envs := map[string]*model.TypeEnv{
-		"admin/src/main/java/com/weijin/chatting/admin/controller/BroadcasterController.java": {
+		"admin/src/main/java/com/example/app/admin/controller/UserController.java": {
 			Bindings: map[string]*model.TypeInfo{
-				"BroadcasterController:userInfoDao": {TypeName: "com.weijin.chatting.biz.core.dao.UserInfoDao"},
+				"UserController:userInfoDao": {TypeName: "com.example.app.core.dao.UserInfoDao"},
 				// Method param — parser generates this key format
-				"BroadcasterController.getLastCycleIncome:reqs": {TypeName: "GetLastCycleIncomeReqs"},
+				"UserController.getLastCycleSummary:reqs": {TypeName: "GetLastCycleSummaryReqs"},
 			},
 			Imports: []model.RawImport{},
 		},
@@ -1564,12 +1564,12 @@ func TestResolveCalls_EnrichArgTypes_RealCase_BroadcasterController(t *testing.T
 
 	calls := []model.RawCall{{
 		CalledName:   "get",
-		CallerName:   "BroadcasterController.getLastCycleIncome",
-		FilePath:     "admin/src/main/java/com/weijin/chatting/admin/controller/BroadcasterController.java",
+		CallerName:   "UserController.getLastCycleSummary",
+		FilePath:     "admin/src/main/java/com/example/app/admin/controller/UserController.java",
 		ReceiverExpr: "userInfoDao",
 		ArgCount:     1,
 		ArgTypes:     []string{""},
-		ArgExprs:     []string{"reqs.getBroadcasterId()"},
+		ArgExprs:     []string{"reqs.getUserId()"},
 	}}
 
 	relations, _ := resolver.ResolveCalls(calls, envs)
@@ -1579,33 +1579,33 @@ func TestResolveCalls_EnrichArgTypes_RealCase_BroadcasterController(t *testing.T
 	}
 
 	if len(relations) != 1 {
-		t.Fatalf("expected 1 relation, got %d (enrichArgTypes may have failed to resolve reqs.getBroadcasterId())", len(relations))
+		t.Fatalf("expected 1 relation, got %d (enrichArgTypes may have failed to resolve reqs.getUserId())", len(relations))
 	}
 	if relations[0].TargetID != "get_long" {
 		t.Fatalf("expected get_long, got %s", relations[0].TargetID)
 	}
-	t.Log("✅ Real case: userInfoDao.get(reqs.getBroadcasterId()) → get(Long)")
+	t.Log("✅ Real case: userInfoDao.get(reqs.getUserId()) → get(Long)")
 }
 
 func TestResolveCalls_EnrichArgTypes_RealCase_ShortScope(t *testing.T) {
 	// TypeEnv uses fully qualified scope (after 1.4 unification)
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "get_int", Name: "get", QualifiedName: "com.weijin.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
-		{ID: "get_long", Name: "get", QualifiedName: "com.weijin.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
-		{ID: "getBId", Name: "getBroadcasterId", QualifiedName: "com.weijin.Reqs.getBroadcasterId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}, IsSynthetic: true},
-		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.weijin.UserInfoDao", Kind: "Class", FilePath: "UserInfoDao.java"},
-		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.weijin.Reqs", Kind: "Class", FilePath: "Reqs.java"},
-		{ID: "caller1", Name: "getLastCycleIncome", QualifiedName: "com.weijin.Controller.getLastCycleIncome", Kind: "Function", FilePath: "Controller.java"},
-		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.weijin.Controller", Kind: "Class", FilePath: "Controller.java"},
+		{ID: "get_int", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"id","type":"Integer"}]`},
+		{ID: "get_long", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: `[{"name":"userId","type":"Long"}]`},
+		{ID: "getBId", Name: "getUserId", QualifiedName: "com.example.Reqs.getUserId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}, IsSynthetic: true},
+		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.example.UserInfoDao", Kind: "Class", FilePath: "UserInfoDao.java"},
+		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "Class", FilePath: "Reqs.java"},
+		{ID: "caller1", Name: "getLastCycleSummary", QualifiedName: "com.example.Controller.getLastCycleSummary", Kind: "Function", FilePath: "Controller.java"},
+		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.example.Controller", Kind: "Class", FilePath: "Controller.java"},
 	})
 
 	resolver := newTestResolver(table)
 	envs := map[string]*model.TypeEnv{
 		"Controller.java": {
 			Bindings: map[string]*model.TypeInfo{
-				"com.weijin.Controller:userInfoDao":                      {TypeName: "com.weijin.UserInfoDao"},
-				"com.weijin.Controller.getLastCycleIncome:reqs": {TypeName: "Reqs"},
+				"com.example.Controller:userInfoDao":                      {TypeName: "com.example.UserInfoDao"},
+				"com.example.Controller.getLastCycleSummary:reqs": {TypeName: "Reqs"},
 			},
 			Imports: []model.RawImport{},
 		},
@@ -1613,12 +1613,12 @@ func TestResolveCalls_EnrichArgTypes_RealCase_ShortScope(t *testing.T) {
 
 	calls := []model.RawCall{{
 		CalledName:   "get",
-		CallerName:   "com.weijin.Controller.getLastCycleIncome",
+		CallerName:   "com.example.Controller.getLastCycleSummary",
 		FilePath:     "Controller.java",
 		ReceiverExpr: "userInfoDao",
 		ArgCount:     1,
 		ArgTypes:     []string{""},
-		ArgExprs:     []string{"reqs.getBroadcasterId()"},
+		ArgExprs:     []string{"reqs.getUserId()"},
 	}}
 
 	relations, _ := resolver.ResolveCalls(calls, envs)
@@ -1633,7 +1633,7 @@ func TestResolveCalls_EnrichArgTypes_RealCase_ShortScope(t *testing.T) {
 	if relations[0].TargetID != "get_long" {
 		t.Fatalf("expected get_long, got %s", relations[0].TargetID)
 	}
-	t.Log("✅ Short scope key: getLastCycleIncome:reqs matched correctly")
+	t.Log("✅ Short scope key: getLastCycleSummary:reqs matched correctly")
 }
 
 func TestResolveCalls_TypeMulti_CrossModuleSameClass(t *testing.T) {
@@ -1641,41 +1641,41 @@ func TestResolveCalls_TypeMulti_CrossModuleSameClass(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
 		// biz-core UserInfo
-		{ID: "biz_getUserId", Name: "getUserId", QualifiedName: "com.weijin.biz.core.domain.UserInfo.getUserId", Kind: "Function",
-			FilePath: "chatting-biz-core/src/main/java/com/weijin/biz/core/domain/UserInfo.java", ReturnTypes: []string{"Long"}},
-		{ID: "biz_userinfo", Name: "UserInfo", QualifiedName: "com.weijin.biz.core.domain.UserInfo", Kind: "Class",
-			FilePath: "chatting-biz-core/src/main/java/com/weijin/biz/core/domain/UserInfo.java"},
+		{ID: "biz_getUserId", Name: "getUserId", QualifiedName: "com.example.biz.core.domain.UserInfo.getUserId", Kind: "Function",
+			FilePath: "app-core/src/main/java/com/example/app/core/domain/UserInfo.java", ReturnTypes: []string{"Long"}},
+		{ID: "biz_userinfo", Name: "UserInfo", QualifiedName: "com.example.biz.core.domain.UserInfo", Kind: "Class",
+			FilePath: "app-core/src/main/java/com/example/app/core/domain/UserInfo.java"},
 		// admin UserInfo
-		{ID: "admin_getUserId", Name: "getUserId", QualifiedName: "com.weijin.admin.entity.UserInfo.getUserId", Kind: "Function",
-			FilePath: "admin/src/main/java/com/weijin/admin/entity/UserInfo.java", ReturnTypes: []string{"Long"}},
-		{ID: "admin_userinfo", Name: "UserInfo", QualifiedName: "com.weijin.admin.entity.UserInfo", Kind: "Class",
-			FilePath: "admin/src/main/java/com/weijin/admin/entity/UserInfo.java"},
+		{ID: "admin_getUserId", Name: "getUserId", QualifiedName: "com.example.admin.entity.UserInfo.getUserId", Kind: "Function",
+			FilePath: "admin/src/main/java/com/example/app/admin/entity/UserInfo.java", ReturnTypes: []string{"Long"}},
+		{ID: "admin_userinfo", Name: "UserInfo", QualifiedName: "com.example.admin.entity.UserInfo", Kind: "Class",
+			FilePath: "admin/src/main/java/com/example/app/admin/entity/UserInfo.java"},
 		// analysis UserInfo
-		{ID: "analysis_getUserId", Name: "getUserId", QualifiedName: "com.weijin.analysis.domain.UserInfo.getUserId", Kind: "Function",
-			FilePath: "chatting-analysis-core/src/main/java/com/weijin/analysis/domain/UserInfo.java", ReturnTypes: []string{"Long"}},
+		{ID: "analysis_getUserId", Name: "getUserId", QualifiedName: "com.example.analysis.domain.UserInfo.getUserId", Kind: "Function",
+			FilePath: "app-analysis-core/src/main/java/com/example/app/analysis/domain/UserInfo.java", ReturnTypes: []string{"Long"}},
 		// Caller in biz-core service
-		{ID: "caller1", Name: "process", QualifiedName: "com.weijin.biz.core.service.RechargeService.process", Kind: "Function",
-			FilePath: "chatting-biz-core/src/main/java/com/weijin/biz/core/service/RechargeService.java"},
-		{ID: "c_svc", Name: "RechargeService", QualifiedName: "com.weijin.biz.core.service.RechargeService", Kind: "Class",
-			FilePath: "chatting-biz-core/src/main/java/com/weijin/biz/core/service/RechargeService.java"},
+		{ID: "caller1", Name: "process", QualifiedName: "com.example.biz.core.service.PaymentService.process", Kind: "Function",
+			FilePath: "app-core/src/main/java/com/example/app/core/service/PaymentService.java"},
+		{ID: "c_svc", Name: "PaymentService", QualifiedName: "com.example.biz.core.service.PaymentService", Kind: "Class",
+			FilePath: "app-core/src/main/java/com/example/app/core/service/PaymentService.java"},
 	})
 
 	resolver := newTestResolver(table)
 	envs := map[string]*model.TypeEnv{
-		"chatting-biz-core/src/main/java/com/weijin/biz/core/service/RechargeService.java": {
+		"app-core/src/main/java/com/example/app/core/service/PaymentService.java": {
 			Bindings: map[string]*model.TypeInfo{
-				"RechargeService.process:userInfo": {TypeName: "UserInfo"},
+				"PaymentService.process:userInfo": {TypeName: "UserInfo"},
 			},
 			Imports: []model.RawImport{
-				{ModulePath: "com.weijin.biz.core.domain.UserInfo", SymbolName: "UserInfo"},
+				{ModulePath: "com.example.biz.core.domain.UserInfo", SymbolName: "UserInfo"},
 			},
 		},
 	}
 
 	calls := []model.RawCall{{
 		CalledName:   "getUserId",
-		CallerName:   "RechargeService.process",
-		FilePath:     "chatting-biz-core/src/main/java/com/weijin/biz/core/service/RechargeService.java",
+		CallerName:   "PaymentService.process",
+		FilePath:     "app-core/src/main/java/com/example/app/core/service/PaymentService.java",
 		ReceiverExpr: "userInfo",
 		ArgCount:     0,
 	}}

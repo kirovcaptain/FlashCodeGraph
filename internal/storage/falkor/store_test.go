@@ -301,7 +301,7 @@ func TestQueryNodesByProperty(t *testing.T) {
 		{ID: "r1", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/api/users", "file_path": "a.java"}},
 		{ID: "r2", Kind: "Route", Properties: map[string]any{"method": "POST", "path_pattern": "/api/users", "file_path": "a.java"}},
 		{ID: "r3", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/api/orders/{id}", "file_path": "b.java"}},
-		{ID: "r4", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/coin/register/free", "file_path": "c.java"}},
+		{ID: "r4", Kind: "Route", Properties: map[string]any{"method": "GET", "path_pattern": "/api/register/free", "file_path": "c.java"}},
 	}
 	if err := store.WriteNodes(ctx, nodes); err != nil {
 		t.Fatal(err)
@@ -324,8 +324,8 @@ func TestQueryNodesByProperty(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("contains match: expected 1, got %d", len(results))
 	}
-	if len(results) > 0 && fmt.Sprint(results[0].Properties["path_pattern"]) != "/coin/register/free" {
-		t.Errorf("contains match: expected /coin/register/free, got %v", results[0].Properties["path_pattern"])
+	if len(results) > 0 && fmt.Sprint(results[0].Properties["path_pattern"]) != "/api/register/free" {
+		t.Errorf("contains match: expected /api/register/free, got %v", results[0].Properties["path_pattern"])
 	}
 
 	// No match

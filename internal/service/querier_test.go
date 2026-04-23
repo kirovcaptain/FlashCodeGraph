@@ -885,14 +885,14 @@ func TestFilterCoreSubgraph_Nil(t *testing.T) {
 func TestPruneDeclaredTypeDispatches(t *testing.T) {
 	sg := &model.Subgraph{
 		Nodes: []model.Node{
-			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "createV2", "qualified_name": "SettlementService.createV2"}},
+			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "createV2", "qualified_name": "OrderService.createV2"}},
 			{ID: "base_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.BaseDao.insert"}},
-			{ID: "settlement_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.SettlementDao.insert"}},
-			{ID: "unrelated_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.AbTestDao.insert"}},
+			{ID: "order_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.OrderDao.insert"}},
+			{ID: "unrelated_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.ReportDao.insert"}},
 		},
 		Edges: []model.Edge{
-			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.SettlementDao"}},
-			{SourceID: "base_insert", TargetID: "settlement_insert", Kind: model.RelDispatches, Properties: map[string]any{"confidence": 1.0}},
+			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.OrderDao"}},
+			{SourceID: "base_insert", TargetID: "order_insert", Kind: model.RelDispatches, Properties: map[string]any{"confidence": 1.0}},
 			{SourceID: "base_insert", TargetID: "unrelated_insert", Kind: model.RelDispatches, Properties: map[string]any{"confidence": 1.0}},
 		},
 	}
@@ -903,15 +903,15 @@ func TestPruneDeclaredTypeDispatches(t *testing.T) {
 			t.Fatal("expected unrelated_insert to be pruned")
 		}
 	}
-	// settlement_insert should remain
+	// order_insert should remain
 	found := false
 	for _, n := range result.Nodes {
-		if n.ID == "settlement_insert" {
+		if n.ID == "order_insert" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("expected settlement_insert to remain")
+		t.Fatal("expected order_insert to remain")
 	}
 	if len(result.Edges) != 2 {
 		t.Fatalf("expected 2 edges (CALLS + matching DISPATCHES), got %d", len(result.Edges))
@@ -923,7 +923,7 @@ func TestPruneDeclaredTypeDispatches(t *testing.T) {
 func TestPruneDeclaredTypeDispatches_CallbackToSource(t *testing.T) {
 	// Real scenario: BaseDao.insert --DISPATCHES--> TaskDao.insert --CALLS(declared_type=TaskDao)--> BaseDao.insert
 	// The CALLS callback creates a declared_type prefix that matches the DISPATCHES target itself.
-	// TaskDao.insert should still be pruned because the only "real" declared_type is SettlementDao.
+	// TaskDao.insert should still be pruned because the only "real" declared_type is OrderDao.
 	sg := &model.Subgraph{
 		Nodes: []model.Node{
 			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "createV2", "qualified_name": "Service.createV2"}},
@@ -933,8 +933,8 @@ func TestPruneDeclaredTypeDispatches_CallbackToSource(t *testing.T) {
 			{ID: "sql_util", Kind: "Function", Properties: map[string]any{"name": "getFields", "qualified_name": "com.example.SqlUtil.getFields"}},
 		},
 		Edges: []model.Edge{
-			// Real caller with declared_type=SettlementDao
-			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.SettlementDao"}},
+			// Real caller with declared_type=OrderDao
+			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.OrderDao"}},
 			// DISPATCHES from base to children
 			{SourceID: "base_insert", TargetID: "task_insert", Kind: model.RelDispatches},
 			{SourceID: "base_insert", TargetID: "fb_insert", Kind: model.RelDispatches},
@@ -979,7 +979,7 @@ func TestPruneDeclaredTypeDispatches_ChildHasOtherCaller(t *testing.T) {
 			{ID: "other_service", Kind: "Function", Properties: map[string]any{"name": "doWork", "qualified_name": "OtherService.doWork"}},
 		},
 		Edges: []model.Edge{
-			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.SettlementDao"}},
+			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.OrderDao"}},
 			{SourceID: "root", TargetID: "other_service", Kind: model.RelCalls},
 			{SourceID: "base_insert", TargetID: "task_insert", Kind: model.RelDispatches},
 			{SourceID: "other_service", TargetID: "task_insert", Kind: model.RelCalls}, // another caller
@@ -1023,19 +1023,19 @@ func TestPruneDeclaredTypeDispatches_NoDeclaredType(t *testing.T) {
 
 func TestFilterDrySubgraph_InheritedBaseMethod(t *testing.T) {
 	// dry mode should prune base class methods reached via inheritance.
-	// SettlementCycleDao.get → BaseDao.get (via SettlementCycleDao) → SqlPageHandler/BaseDao.list
-	// Only SettlementCycleDao.get should remain.
+	// OrderCycleDao.get → BaseDao.get (via OrderCycleDao) → SqlPageHandler/BaseDao.list
+	// Only OrderCycleDao.get should remain.
 	sg := &model.Subgraph{
 		Nodes: []model.Node{
 			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "execute", "file_path": "Job.java"}},
-			{ID: "dao_get", Kind: "Function", Properties: map[string]any{"name": "get", "qualified_name": "com.example.SettlementCycleDao.get", "file_path": "SettlementCycleDao.java"}},
+			{ID: "dao_get", Kind: "Function", Properties: map[string]any{"name": "get", "qualified_name": "com.example.OrderCycleDao.get", "file_path": "OrderCycleDao.java"}},
 			{ID: "base_get", Kind: "Function", Properties: map[string]any{"name": "get", "qualified_name": "com.example.BaseDao.get", "file_path": "BaseDao.java"}},
 			{ID: "sql_handler", Kind: "Function", Properties: map[string]any{"name": "handlerPagingSql", "qualified_name": "com.example.SqlPageHandler.handlerPagingSql", "file_path": "SqlPageHandler.java"}},
 			{ID: "base_list", Kind: "Function", Properties: map[string]any{"name": "list", "qualified_name": "com.example.BaseDao.list", "file_path": "BaseDao.java"}},
 		},
 		Edges: []model.Edge{
 			{SourceID: "root", TargetID: "dao_get", Kind: model.RelCalls},
-			{SourceID: "dao_get", TargetID: "base_get", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.SettlementCycleDao"}},
+			{SourceID: "dao_get", TargetID: "base_get", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.OrderCycleDao"}},
 			{SourceID: "base_get", TargetID: "sql_handler", Kind: model.RelCalls},
 			{SourceID: "base_get", TargetID: "base_list", Kind: model.RelCalls},
 		},
