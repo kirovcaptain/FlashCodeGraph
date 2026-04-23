@@ -91,6 +91,8 @@ Rust, C, C++, C#, Ruby, PHP
 | Management | `fcg list` | List all indexed projects |
 | Management | `fcg report` | Data quality report |
 | Management | `fcg remove` | Remove project index data |
+| AI Agent | `fcg skill install [platform]` | Install FCG skill and MCP config for a platform |
+| AI Agent | `fcg skill list` | List available platforms |
 | AI Agent | `fcg mcp serve` | Start MCP Server (stdio transport) |
 
 ---
@@ -281,7 +283,14 @@ fcg remove --cache --force         # only delete cache and fingerprints
 ### MCP Server
 
 ```bash
-fcg mcp serve                      # start MCP Server (stdio transport)
+# Install skill + MCP config for your AI coding assistant
+fcg skill install              # interactive platform selection
+fcg skill install kiro         # direct install for Kiro
+fcg skill install claude       # direct install for Claude Code
+fcg skill list                 # list available platforms
+
+# Start MCP Server (stdio transport)
+fcg mcp serve
 ```
 
 The MCP Server exposes the following tools for AI agent integration:

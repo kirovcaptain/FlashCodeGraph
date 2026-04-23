@@ -34,9 +34,17 @@ Rust, C, C++, C#, Ruby, PHP
 
 ```
 cmd/fcg/                  → Entry point (main.go)
+skills/                   → Skill files for AI coding assistants
+├── embed.go              →   Go embed package
+├── platforms.json        →   Platform registry (install paths + version)
+├── kiro.md               →   Kiro platform skill
+└── shared/               →   Reusable skill fragments
+    ├── tool-reference.md →     Tool selection guide
+    └── annotation-aliases.md → Annotation alias table
 internal/
 ├── gateway/              → Gateway layer
 │   ├── cli/              →   CLI commands (cobra), grouped: index/query/manage/agent
+│   │                          includes skill install command (skill.go)
 │   └── mcp/              →   MCP Server (AI Agent stdio protocol)
 ├── service/              → Service orchestration layer
 │   ├── indexer.go        →   Indexing pipeline orchestration (Phase 0-8)
