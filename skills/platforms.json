@@ -4,17 +4,28 @@
     "kiro": {
       "skill_file": "kiro.md",
       "install_path": ".kiro/skills/fcg/SKILL.md",
-      "version_file": ".kiro/skills/fcg/.fcg_skill_version"
+      "version_file": ".kiro/skills/fcg/.fcg_skill_version",
+      "mcp_config_path": ".kiro/settings/mcp.json",
+      "mcp_config_key": "mcpServers"
     },
     "claude": {
       "skill_file": "claude.md",
       "install_path": ".claude/skills/fcg/SKILL.md",
-      "version_file": ".claude/skills/fcg/.fcg_skill_version"
+      "version_file": ".claude/skills/fcg/.fcg_skill_version",
+      "mcp_config_path": ".claude/mcp_servers.json",
+      "mcp_config_key": "mcpServers"
     },
     "copilot": {
       "skill_file": "copilot.md",
       "install_path": ".copilot/skills/fcg/SKILL.md",
-      "version_file": ".copilot/skills/fcg/.fcg_skill_version"
+      "version_file": ".copilot/skills/fcg/.fcg_skill_version",
+      "mcp_config_path": null,
+      "mcp_config_key": null
     }
+  },
+  "mcp_server": {
+    "command": "fcg",
+    "args": ["mcp", "serve"],
+    "env": {}
   }
 }
