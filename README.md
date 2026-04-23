@@ -466,3 +466,10 @@ Override anytime via `storage.database` in config.
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE)
+
+## Links
+
+- [Changelog](CHANGELOG.md)
+- [Roadmap](docs/roadmap.md)
+- [Architecture](docs/architecture.md)
+- [Language Integration Guide](docs/language-integration-guide.md)
