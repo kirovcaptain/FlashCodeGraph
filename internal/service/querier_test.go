@@ -882,6 +882,314 @@ func TestFilterCoreSubgraph_Nil(t *testing.T) {
 	t.Log("✅ FilterCoreSubgraph: nil input → nil output")
 }
 
+func TestPruneDeclaredTypeDispatches(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "createV2", "qualified_name": "SettlementService.createV2"}},
+			{ID: "base_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.BaseDao.insert"}},
+			{ID: "settlement_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.SettlementDao.insert"}},
+			{ID: "unrelated_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.AbTestDao.insert"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.SettlementDao"}},
+			{SourceID: "base_insert", TargetID: "settlement_insert", Kind: model.RelDispatches, Properties: map[string]any{"confidence": 1.0}},
+			{SourceID: "base_insert", TargetID: "unrelated_insert", Kind: model.RelDispatches, Properties: map[string]any{"confidence": 1.0}},
+		},
+	}
+	result := PruneDeclaredTypeDispatches(sg)
+	// unrelated_insert should be pruned
+	for _, n := range result.Nodes {
+		if n.ID == "unrelated_insert" {
+			t.Fatal("expected unrelated_insert to be pruned")
+		}
+	}
+	// settlement_insert should remain
+	found := false
+	for _, n := range result.Nodes {
+		if n.ID == "settlement_insert" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected settlement_insert to remain")
+	}
+	if len(result.Edges) != 2 {
+		t.Fatalf("expected 2 edges (CALLS + matching DISPATCHES), got %d", len(result.Edges))
+	}
+	t.Log("✅ PruneDeclaredTypeDispatches: unrelated DISPATCHES pruned")
+}
+
+
+func TestPruneDeclaredTypeDispatches_CallbackToSource(t *testing.T) {
+	// Real scenario: BaseDao.insert --DISPATCHES--> TaskDao.insert --CALLS(declared_type=TaskDao)--> BaseDao.insert
+	// The CALLS callback creates a declared_type prefix that matches the DISPATCHES target itself.
+	// TaskDao.insert should still be pruned because the only "real" declared_type is SettlementDao.
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "createV2", "qualified_name": "Service.createV2"}},
+			{ID: "base_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.BaseDao.insert"}},
+			{ID: "task_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.TaskDao.insert"}},
+			{ID: "fb_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.FbDao.insert"}},
+			{ID: "sql_util", Kind: "Function", Properties: map[string]any{"name": "getFields", "qualified_name": "com.example.SqlUtil.getFields"}},
+		},
+		Edges: []model.Edge{
+			// Real caller with declared_type=SettlementDao
+			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.SettlementDao"}},
+			// DISPATCHES from base to children
+			{SourceID: "base_insert", TargetID: "task_insert", Kind: model.RelDispatches},
+			{SourceID: "base_insert", TargetID: "fb_insert", Kind: model.RelDispatches},
+			// Children call back to parent (super.insert()) — these should NOT pollute declaredTypePrefixes
+			{SourceID: "task_insert", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.TaskDao"}},
+			{SourceID: "fb_insert", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.FbDao"}},
+			// BaseDao.insert's real callee
+			{SourceID: "base_insert", TargetID: "sql_util", Kind: model.RelCalls},
+		},
+	}
+	result := PruneDeclaredTypeDispatches(sg)
+
+	nodeIDs := map[string]bool{}
+	for _, n := range result.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	if nodeIDs["task_insert"] {
+		t.Fatal("expected task_insert to be pruned")
+	}
+	if nodeIDs["fb_insert"] {
+		t.Fatal("expected fb_insert to be pruned")
+	}
+	if !nodeIDs["root"] || !nodeIDs["base_insert"] || !nodeIDs["sql_util"] {
+		t.Fatalf("expected root, base_insert, sql_util to remain, got %v", nodeIDs)
+	}
+	if len(result.Edges) != 2 {
+		for _, e := range result.Edges {
+			t.Logf("  edge: %s → %s (%s)", e.SourceID, e.TargetID, e.Kind)
+		}
+		t.Fatalf("expected 2 edges (root→base, base→sql), got %d", len(result.Edges))
+	}
+	t.Log("✅ PruneDeclaredTypeDispatches: DISPATCHES targets with super callback also pruned")
+}
+
+func TestPruneDeclaredTypeDispatches_ChildHasOtherCaller(t *testing.T) {
+	// If a DISPATCHES target is also called by another non-excluded node, it should NOT be pruned
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "createV2", "qualified_name": "Service.createV2"}},
+			{ID: "base_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.BaseDao.insert"}},
+			{ID: "task_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.TaskDao.insert"}},
+			{ID: "other_service", Kind: "Function", Properties: map[string]any{"name": "doWork", "qualified_name": "OtherService.doWork"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.SettlementDao"}},
+			{SourceID: "root", TargetID: "other_service", Kind: model.RelCalls},
+			{SourceID: "base_insert", TargetID: "task_insert", Kind: model.RelDispatches},
+			{SourceID: "other_service", TargetID: "task_insert", Kind: model.RelCalls}, // another caller
+		},
+	}
+	result := PruneDeclaredTypeDispatches(sg)
+	nodeIDs := map[string]bool{}
+	for _, n := range result.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	// task_insert has another caller (other_service), so it should remain
+	if !nodeIDs["task_insert"] {
+		t.Fatal("expected task_insert to remain (has other caller)")
+	}
+	t.Log("✅ PruneDeclaredTypeDispatches: DISPATCHES target with other caller preserved")
+}
+
+func TestPruneDeclaredTypeDispatches_NoDeclaredType(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "process"}},
+			{ID: "iface", Kind: "Function", Properties: map[string]any{"name": "pay", "qualified_name": "PayService.pay"}},
+			{ID: "impl1", Kind: "Function", Properties: map[string]any{"name": "pay", "qualified_name": "AlipayService.pay"}},
+			{ID: "impl2", Kind: "Function", Properties: map[string]any{"name": "pay", "qualified_name": "WechatService.pay"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "root", TargetID: "iface", Kind: model.RelCalls, Properties: map[string]any{}},
+			{SourceID: "iface", TargetID: "impl1", Kind: model.RelDispatches},
+			{SourceID: "iface", TargetID: "impl2", Kind: model.RelDispatches},
+		},
+	}
+	result := PruneDeclaredTypeDispatches(sg)
+	if len(result.Nodes) != 4 {
+		t.Fatalf("expected all 4 nodes preserved, got %d", len(result.Nodes))
+	}
+	if len(result.Edges) != 3 {
+		t.Fatalf("expected all 3 edges preserved, got %d", len(result.Edges))
+	}
+	t.Log("✅ PruneDeclaredTypeDispatches: no declared_type → all DISPATCHES preserved")
+}
+
+func TestFilterDrySubgraph_InheritedBaseMethod(t *testing.T) {
+	// dry mode should prune base class methods reached via inheritance.
+	// SettlementCycleDao.get → BaseDao.get (via SettlementCycleDao) → SqlPageHandler/BaseDao.list
+	// Only SettlementCycleDao.get should remain.
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "execute", "file_path": "Job.java"}},
+			{ID: "dao_get", Kind: "Function", Properties: map[string]any{"name": "get", "qualified_name": "com.example.SettlementCycleDao.get", "file_path": "SettlementCycleDao.java"}},
+			{ID: "base_get", Kind: "Function", Properties: map[string]any{"name": "get", "qualified_name": "com.example.BaseDao.get", "file_path": "BaseDao.java"}},
+			{ID: "sql_handler", Kind: "Function", Properties: map[string]any{"name": "handlerPagingSql", "qualified_name": "com.example.SqlPageHandler.handlerPagingSql", "file_path": "SqlPageHandler.java"}},
+			{ID: "base_list", Kind: "Function", Properties: map[string]any{"name": "list", "qualified_name": "com.example.BaseDao.list", "file_path": "BaseDao.java"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "root", TargetID: "dao_get", Kind: model.RelCalls},
+			{SourceID: "dao_get", TargetID: "base_get", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.SettlementCycleDao"}},
+			{SourceID: "base_get", TargetID: "sql_handler", Kind: model.RelCalls},
+			{SourceID: "base_get", TargetID: "base_list", Kind: model.RelCalls},
+		},
+	}
+	result := FilterDrySubgraph(sg)
+	nodeIDs := map[string]bool{}
+	for _, n := range result.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	if !nodeIDs["root"] || !nodeIDs["dao_get"] {
+		t.Fatal("expected root and dao_get to remain")
+	}
+	if nodeIDs["base_get"] || nodeIDs["sql_handler"] || nodeIDs["base_list"] {
+		t.Fatalf("expected base_get, sql_handler, base_list to be pruned, got %v", nodeIDs)
+	}
+	t.Log("✅ FilterDrySubgraph: inherited base method chain pruned")
+}
+func TestFilterDrySubgraph_Log(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "process", "file_path": "A.java"}},
+			{ID: "log_info", Kind: "Function", Properties: map[string]any{"name": "info", "file_path": "Logger.java"}},
+			{ID: "is_output", Kind: "Function", Properties: map[string]any{"name": "isOutput", "file_path": "Logger.java"}},
+			{ID: "save", Kind: "Function", Properties: map[string]any{"name": "save", "file_path": "Repo.java"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "root", TargetID: "log_info", Kind: model.RelCalls},
+			{SourceID: "log_info", TargetID: "is_output", Kind: model.RelCalls},
+			{SourceID: "root", TargetID: "save", Kind: model.RelCalls},
+		},
+	}
+	result := FilterDrySubgraph(sg)
+	nodeIDs := map[string]bool{}
+	for _, n := range result.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	if nodeIDs["log_info"] || nodeIDs["is_output"] {
+		t.Fatal("expected log_info and orphan is_output to be removed")
+	}
+	if !nodeIDs["root"] || !nodeIDs["save"] {
+		t.Fatal("expected root and save to remain")
+	}
+	t.Log("✅ FilterDrySubgraph: log method and orphan callee removed")
+}
+
+func TestFilterDrySubgraph_Exception(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "process", "file_path": "A.java"}},
+			{ID: "ex", Kind: "Function", Properties: map[string]any{"name": "BizException", "is_constructor": true, "file_path": "BizException.java"}},
+			{ID: "save", Kind: "Function", Properties: map[string]any{"name": "save", "file_path": "Repo.java"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "root", TargetID: "ex", Kind: model.RelCalls},
+			{SourceID: "root", TargetID: "save", Kind: model.RelCalls},
+		},
+	}
+	result := FilterDrySubgraph(sg)
+	for _, n := range result.Nodes {
+		if n.ID == "ex" {
+			t.Fatal("expected exception constructor to be removed")
+		}
+	}
+	if len(result.Edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(result.Edges))
+	}
+	t.Log("✅ FilterDrySubgraph: exception constructor removed")
+}
+
+func TestFilterDrySubgraph_PropertyTrim(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "a", Kind: "Function", Properties: map[string]any{"name": "process", "file_path": "A.java", "is_getter": false, "is_setter": false}},
+			{ID: "b", Kind: "Function", Properties: map[string]any{"name": "save", "file_path": "B.java", "is_getter": false, "is_setter": false}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "a", TargetID: "b", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.9, "line": 10, "flow_context": "if > try", "flow_line": 5.0}},
+		},
+	}
+	result := FilterDrySubgraph(sg)
+	// Check node properties trimmed
+	for _, n := range result.Nodes {
+		if _, ok := n.Properties["is_getter"]; ok {
+			t.Fatalf("expected is_getter removed from node %s", n.ID)
+		}
+		if _, ok := n.Properties["is_setter"]; ok {
+			t.Fatalf("expected is_setter removed from node %s", n.ID)
+		}
+	}
+	// Check edge properties trimmed
+	e := result.Edges[0]
+	if _, ok := e.Properties["flow_context"]; ok {
+		t.Fatal("expected flow_context removed from edge")
+	}
+	if _, ok := e.Properties["flow_line"]; ok {
+		t.Fatal("expected flow_line removed from edge")
+	}
+	if _, ok := e.Properties["confidence"]; !ok {
+		t.Fatal("expected confidence preserved")
+	}
+	t.Log("✅ FilterDrySubgraph: properties trimmed correctly")
+}
+
+func TestCompactSubgraphEdges(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "a", Kind: "Function", Properties: map[string]any{"name": "createV2"}},
+			{ID: "b", Kind: "Function", Properties: map[string]any{"name": "getUserIncome"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "a", TargetID: "b", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.85, "line": 374}},
+			{SourceID: "a", TargetID: "b", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.90, "line": 375}},
+			{SourceID: "a", TargetID: "b", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.85, "line": 380}},
+		},
+	}
+	result := CompactSubgraphEdges(sg)
+	if len(result.Edges) != 1 {
+		t.Fatalf("expected 1 merged edge, got %d", len(result.Edges))
+	}
+	e := result.Edges[0]
+	lines, ok := e.Properties["lines"].([]int)
+	if !ok {
+		t.Fatal("expected lines array")
+	}
+	if len(lines) != 3 || lines[0] != 374 || lines[1] != 375 || lines[2] != 380 {
+		t.Fatalf("expected lines [374,375,380], got %v", lines)
+	}
+	if e.Properties["confidence"] != 0.90 {
+		t.Fatalf("expected max confidence 0.90, got %v", e.Properties["confidence"])
+	}
+	if _, ok := e.Properties["line"]; ok {
+		t.Fatal("expected 'line' property removed after merge")
+	}
+	t.Log("✅ CompactSubgraphEdges: duplicate edges merged with lines array")
+}
+
+func TestCompactSubgraphEdges_DifferentKind(t *testing.T) {
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "a", Kind: "Function", Properties: map[string]any{"name": "process"}},
+			{ID: "b", Kind: "Function", Properties: map[string]any{"name": "handle"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "a", TargetID: "b", Kind: model.RelCalls, Properties: map[string]any{"line": 10}},
+			{SourceID: "a", TargetID: "b", Kind: model.RelDispatches, Properties: map[string]any{"line": 20}},
+		},
+	}
+	result := CompactSubgraphEdges(sg)
+	if len(result.Edges) != 2 {
+		t.Fatalf("expected 2 edges (different kind), got %d", len(result.Edges))
+	}
+	t.Log("✅ CompactSubgraphEdges: different kind edges not merged")
+}
+
 func TestQuerier_QueryAffectedRoutes(t *testing.T) {
 	store, err := kuzu.New("")
 	if err != nil {

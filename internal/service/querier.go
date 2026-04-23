@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
@@ -152,7 +153,7 @@ func (querier *Querier) ResolveFunction(ctx context.Context, name string) (*mode
 		}
 		// Fallback: extract short name, query, then filter by qualified_name
 		shortName := name[strings.LastIndex(name, ".")+1:]
-		nodes, err := querier.graphStore.QueryNodesByName(ctx, shortName, model.QueryOpts{Kinds: []string{constants.KindFunction}, Limit: 20})
+		nodes, err := querier.graphStore.QueryNodesByName(ctx, shortName, model.QueryOpts{Kinds: []string{constants.KindFunction}})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -309,8 +310,8 @@ func FilterSubgraphByDeclaredType(sg *model.Subgraph, rootNodeID string, classNa
 	var filteredEdges []model.Edge
 	for _, e := range sg.Edges {
 		if e.TargetID == rootNodeID {
-			dt, _ := e.Properties["declared_type"].(string)
-			if dt != "" && dt == className {
+			declaredType, _ := e.Properties["declared_type"].(string)
+			if declaredType != "" && declaredType == className {
 				filteredEdges = append(filteredEdges, e)
 				keptFirstLevelCallers[e.SourceID] = true
 			}
@@ -483,6 +484,342 @@ func FilterCoreRouteChain(chain *model.RouteChain) *model.RouteChain {
 		Chain:   filtered,
 		Queries: chain.Queries,
 	}
+}
+
+// PruneDeclaredTypeDispatches removes DISPATCHES edges whose target does not match
+// the declared_type of the corresponding CALLS edge. When a CALLS edge has a declared_type
+// (e.g. "com.example.SettlementDao"), only DISPATCHES branches from the same base target
+// whose qualified_name starts with that declared_type are kept. This prevents unrelated
+// subclass implementations (e.g. AbTestReportDao.insert) from polluting the call chain.
+// Orphan nodes (no remaining edges) are removed afterward.
+func PruneDeclaredTypeDispatches(sg *model.Subgraph) *model.Subgraph {
+	if sg == nil {
+		return sg
+	}
+
+	// Step 1: Collect DISPATCHES targets so we can exclude their CALLS edges from prefix collection.
+	dispatchTargets := map[string]bool{}
+	for _, e := range sg.Edges {
+		if e.Kind == model.RelDispatches {
+			dispatchTargets[e.TargetID] = true
+		}
+	}
+
+	// Step 1b: For each CALLS edge with declared_type, record targetID → set of declared_type prefixes.
+	// Skip CALLS edges whose source is a DISPATCHES target (these are super() callbacks, not real callers).
+	declaredTypePrefixes := map[string]map[string]bool{} // targetID → set of "declared_type." prefixes
+	for _, e := range sg.Edges {
+		if e.Kind != model.RelCalls {
+			continue
+		}
+		if dispatchTargets[e.SourceID] {
+			continue
+		}
+		declaredType, _ := e.Properties["declared_type"].(string)
+		if declaredType == "" {
+			continue
+		}
+		if declaredTypePrefixes[e.TargetID] == nil {
+			declaredTypePrefixes[e.TargetID] = map[string]bool{}
+		}
+		declaredTypePrefixes[e.TargetID][declaredType+"."] = true
+	}
+
+	prunedDispatchEdges := map[string]bool{} // "sourceID→targetID" of pruned DISPATCHES edges
+	for _, e := range sg.Edges {
+		if e.Kind != model.RelDispatches {
+			continue
+		}
+		prefixes, hasPrefixes := declaredTypePrefixes[e.SourceID]
+		if !hasPrefixes {
+			continue
+		}
+		targetQN := ""
+		for _, n := range sg.Nodes {
+			if n.ID == e.TargetID {
+				targetQN, _ = n.Properties["qualified_name"].(string)
+				break
+			}
+		}
+		matched := false
+		for prefix := range prefixes {
+			if strings.HasPrefix(targetQN, prefix) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			prunedDispatchEdges[e.SourceID+"→"+e.TargetID] = true
+		}
+	}
+
+	// Step 3: Build non-pruned incoming edges count per node.
+	// A node is excludable only if ALL its incoming edges are pruned DISPATCHES edges.
+	incomingNonPruned := map[string]int{}
+	for _, e := range sg.Edges {
+		key := e.SourceID + "→" + e.TargetID
+		if !prunedDispatchEdges[key] {
+			incomingNonPruned[e.TargetID]++
+		}
+	}
+
+	// Mark nodes with zero non-pruned incoming edges as excluded (they are only reachable via pruned DISPATCHES).
+	excludedNodes := map[string]bool{}
+	for _, e := range sg.Edges {
+		key := e.SourceID + "→" + e.TargetID
+		if prunedDispatchEdges[key] && incomingNonPruned[e.TargetID] == 0 {
+			excludedNodes[e.TargetID] = true
+		}
+	}
+
+	// Step 4: Cascade — excluded nodes' outgoing edges may create new orphans.
+	changed := true
+	for changed {
+		changed = false
+		// Recount incoming edges excluding edges from excluded sources
+		cascadeIncoming := map[string]int{}
+		for _, e := range sg.Edges {
+			if excludedNodes[e.SourceID] || excludedNodes[e.TargetID] {
+				continue
+			}
+			cascadeIncoming[e.TargetID]++
+		}
+		for _, e := range sg.Edges {
+			if excludedNodes[e.SourceID] && !excludedNodes[e.TargetID] {
+				if cascadeIncoming[e.TargetID] == 0 {
+					excludedNodes[e.TargetID] = true
+					changed = true
+				}
+			}
+		}
+	}
+
+	// Step 5: Filter edges and nodes
+	var edges []model.Edge
+	for _, e := range sg.Edges {
+		if !excludedNodes[e.SourceID] && !excludedNodes[e.TargetID] {
+			edges = append(edges, e)
+		}
+	}
+	var nodes []model.Node
+	for _, n := range sg.Nodes {
+		if !excludedNodes[n.ID] {
+			nodes = append(nodes, n)
+		}
+	}
+	return &model.Subgraph{Nodes: nodes, Edges: edges}
+}
+// logMethodNames is the set of method names considered as logging calls for dry mode filtering.
+var logMethodNames = map[string]bool{
+	"info": true, "warn": true, "error": true,
+	"log": true, "debug": true, "trace": true,
+}
+
+// FilterDrySubgraph applies dry mode filtering on top of core: removes log methods,
+// exception constructors, and trims verbose properties from nodes and edges.
+// Orphan nodes (unreferenced after removal) are cleaned up.
+func FilterDrySubgraph(sg *model.Subgraph) *model.Subgraph {
+	if sg == nil {
+		return sg
+	}
+
+	excluded := map[string]bool{}
+	for _, n := range sg.Nodes {
+		name, _ := n.Properties["name"].(string)
+		// Log methods
+		if logMethodNames[name] {
+			excluded[n.ID] = true
+			continue
+		}
+		// Exception/Error constructors
+		isCtor, _ := n.Properties["is_constructor"].(bool)
+		if isCtor {
+			nameLower := strings.ToLower(name)
+			if strings.Contains(nameLower, "exception") || strings.Contains(nameLower, "error") {
+				excluded[n.ID] = true
+				continue
+			}
+		}
+	}
+
+	// Inherited base class methods: if a CALLS edge has declared_type and the target's
+	// qualified_name class differs from declared_type, the target is a base class method
+	// reached via inheritance. Exclude it in dry mode.
+	nodeByID := map[string]*model.Node{}
+	for i := range sg.Nodes {
+		nodeByID[sg.Nodes[i].ID] = &sg.Nodes[i]
+	}
+	for _, e := range sg.Edges {
+		if e.Kind != model.RelCalls {
+			continue
+		}
+		declaredType, _ := e.Properties["declared_type"].(string)
+		if declaredType == "" {
+			continue
+		}
+		targetNode := nodeByID[e.TargetID]
+		if targetNode == nil {
+			continue
+		}
+		targetQN, _ := targetNode.Properties["qualified_name"].(string)
+		lastDot := strings.LastIndex(targetQN, ".")
+		if lastDot < 0 {
+			continue
+		}
+		targetClass := targetQN[:lastDot]
+		if targetClass != declaredType {
+			excluded[e.TargetID] = true
+		}
+	}
+
+	// Cascade: excluded nodes' callees may become orphans.
+	// Repeatedly check until stable.
+	changed := true
+	for changed {
+		changed = false
+		incomingCount := map[string]int{}
+		for _, e := range sg.Edges {
+			if excluded[e.SourceID] || excluded[e.TargetID] {
+				continue
+			}
+			incomingCount[e.TargetID]++
+		}
+		for _, e := range sg.Edges {
+			if excluded[e.SourceID] && !excluded[e.TargetID] {
+				if incomingCount[e.TargetID] == 0 {
+					excluded[e.TargetID] = true
+					changed = true
+				}
+			}
+		}
+	}
+
+	// Filter edges
+	var edges []model.Edge
+	for _, e := range sg.Edges {
+		if excluded[e.SourceID] || excluded[e.TargetID] {
+			continue
+		}
+		// Trim edge properties
+		if e.Properties != nil {
+			delete(e.Properties, "flow_context")
+			delete(e.Properties, "flow_line")
+		}
+		edges = append(edges, e)
+	}
+
+	// Collect referenced nodes
+	referenced := map[string]bool{}
+	for _, e := range edges {
+		referenced[e.SourceID] = true
+		referenced[e.TargetID] = true
+	}
+
+	// Filter nodes: keep non-excluded + still-referenced, trim properties
+	var nodes []model.Node
+	for _, n := range sg.Nodes {
+		if excluded[n.ID] {
+			continue
+		}
+		// Orphan check: node must be referenced by an edge OR be the only node (root)
+		if len(edges) > 0 && !referenced[n.ID] {
+			continue
+		}
+		// Trim node properties
+		if n.Properties != nil {
+			delete(n.Properties, "is_getter")
+			delete(n.Properties, "is_setter")
+		}
+		nodes = append(nodes, n)
+	}
+	return &model.Subgraph{Nodes: nodes, Edges: edges}
+}
+
+// CompactSubgraphEdges merges duplicate edges (same source_id + target_id + kind) into
+// a single edge with a "lines" array. The "line" property is replaced by "lines" (sorted, deduplicated).
+// Confidence is set to the maximum value among merged edges. Other properties are taken from the first edge.
+func CompactSubgraphEdges(sg *model.Subgraph) *model.Subgraph {
+	if sg == nil {
+		return sg
+	}
+
+	type edgeKey struct {
+		sourceID string
+		targetID string
+		kind     model.RelationKind
+	}
+
+	groups := map[edgeKey][]model.Edge{}
+	order := []edgeKey{} // preserve insertion order
+	for _, e := range sg.Edges {
+		key := edgeKey{e.SourceID, e.TargetID, e.Kind}
+		if _, exists := groups[key]; !exists {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], e)
+	}
+
+	var edges []model.Edge
+	for _, key := range order {
+		group := groups[key]
+		if len(group) == 1 {
+			// Single edge: convert line to lines array for consistency
+			e := group[0]
+			if line, ok := e.Properties["line"]; ok {
+				if lineNum, ok := toInt(line); ok {
+					e.Properties["lines"] = []int{lineNum}
+				}
+				delete(e.Properties, "line")
+			}
+			edges = append(edges, e)
+			continue
+		}
+
+		// Merge multiple edges
+		merged := group[0]
+		linesSet := map[int]bool{}
+		maxConfidence := 0.0
+		for _, e := range group {
+			if line, ok := e.Properties["line"]; ok {
+				if lineNum, ok := toInt(line); ok {
+					linesSet[lineNum] = true
+				}
+			}
+			if conf, ok := e.Properties["confidence"].(float64); ok && conf > maxConfidence {
+				maxConfidence = conf
+			}
+		}
+
+		// Build sorted lines array
+		lines := make([]int, 0, len(linesSet))
+		for lineNum := range linesSet {
+			lines = append(lines, lineNum)
+		}
+		sort.Ints(lines)
+
+		if merged.Properties == nil {
+			merged.Properties = map[string]any{}
+		}
+		delete(merged.Properties, "line")
+		merged.Properties["lines"] = lines
+		merged.Properties["confidence"] = maxConfidence
+		edges = append(edges, merged)
+	}
+
+	return &model.Subgraph{Nodes: sg.Nodes, Edges: edges}
+}
+
+// toInt converts a numeric value to int, handling float64 (from JSON) and int.
+func toInt(value any) (int, bool) {
+	switch num := value.(type) {
+	case int:
+		return num, true
+	case float64:
+		return int(num), true
+	case int64:
+		return int(num), true
+	}
+	return 0, false
 }
 
 // ImpactAnalysis finds all symbols affected by changes to a given symbol.

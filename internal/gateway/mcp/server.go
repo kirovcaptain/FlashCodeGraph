@@ -148,7 +148,7 @@ func (srv *Server) registerTools() {
 		mcp.WithNumber("min_confidence", mcp.Description("Min confidence filter (default 0)")),
 		mcp.WithBoolean("reverse", mcp.Description("Show callers instead of callees")),
 		mcp.WithBoolean("include_unresolved", mcp.Description("Include UNRESOLVED_CALL hint edges (default false)")),
-		mcp.WithString("mode", mcp.Description("Display mode: 'core' (default, hides getters/setters/externals) or 'full' (show all nodes)")),
+		mcp.WithString("mode", mcp.Description("Display mode: 'dry' (default, core + remove log/exception, trim properties), 'core' (prune DISPATCHES/accessors/externals), 'compact' (dry + merge duplicate edges), 'full' (show all)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected from current branch if omitted)")),
 	), srv.handleQueryCallChain)
@@ -215,7 +215,7 @@ func (srv *Server) registerTools() {
 		mcp.WithString("route", mcp.Required(), mcp.Description("Route path (e.g. /api/users)")),
 		mcp.WithString("method", mcp.Description("HTTP method filter (GET/POST/etc)")),
 		mcp.WithNumber("max_depth", mcp.Description("Max traversal depth (default 10)")),
-		mcp.WithString("mode", mcp.Description("Display mode: 'core' (default, hides getters/setters/externals) or 'full' (show all nodes)")),
+		mcp.WithString("mode", mcp.Description("Display mode: 'dry' (default, core + remove log/exception, trim properties), 'core' (prune DISPATCHES/accessors/externals), 'compact' (dry + merge duplicate edges), 'full' (show all)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
 	), srv.handleQueryRouteChain)
@@ -241,7 +241,7 @@ func (srv *Server) registerTools() {
 		mcp.WithNumber("depth", mcp.Description("Max tree depth (default: 5)")),
 		mcp.WithNumber("min_confidence", mcp.Description("Min confidence filter (default: 0.0)")),
 		mcp.WithBoolean("include_unresolved", mcp.Description("Include UNRESOLVED_CALL hint edges (default false)")),
-		mcp.WithString("mode", mcp.Description("Display mode: 'core' (default, hides getters/setters/externals) or 'full' (show all nodes)")),
+		mcp.WithString("mode", mcp.Description("Display mode: 'dry' (default, core + remove log/exception, trim properties), 'core' (prune DISPATCHES/accessors/externals), 'compact' (dry + merge duplicate edges), 'full' (show all)")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected if omitted)")),
 	), srv.handleQueryCallForest)
 
@@ -372,7 +372,7 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	minConfidence := floatArg(request, "min_confidence", 0)
 	reverse, _ := request.GetArguments()["reverse"].(bool)
 	includeUnresolved, _ := request.GetArguments()["include_unresolved"].(bool)
-	mode := stringArg(request, "mode", "core")
+	mode := stringArg(request, "mode", "dry")
 
 	direction := model.Outgoing
 	if reverse {
@@ -393,13 +393,31 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 
 	if mode != "full" {
 		subgraph = service.FilterCoreSubgraph(subgraph)
+		subgraph = service.PruneDeclaredTypeDispatches(subgraph)
+	}
+	if mode == "dry" || mode == "compact" {
+		subgraph = service.FilterDrySubgraph(subgraph)
+	}
+	if mode == "compact" {
+		subgraph = service.CompactSubgraphEdges(subgraph)
 	}
 
 	warning := checkStalenessWarning(ctx, path, branchName)
 	resultJSON, _ := json.Marshal(subgraph)
 	result := injectWarning(resultJSON, warning)
-	if mode != "full" {
-		result = injectHint([]byte(result), "Showing core call chain (getters/setters and external dependencies are hidden). Use mode='full' to see all nodes.")
+	var hint string
+	switch mode {
+	case "full":
+		// no hint
+	case "compact":
+		hint = "[mode=compact] Showing compact call chain (edges merged, log/exception removed). Use mode='full' to see all nodes."
+	case "dry":
+		hint = "[mode=dry] Showing dry call chain (log/exception/accessors removed, properties trimmed). Use mode='full' to see all nodes."
+	default:
+		hint = "[mode=core] Showing core call chain (getters/setters and external dependencies are hidden, DISPATCHES pruned). Use mode='full' to see all nodes."
+	}
+	if hint != "" {
+		result = injectHint([]byte(result), hint)
 	}
 	return mcp.NewToolResultText(result), nil
 }
@@ -650,7 +668,7 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 	}
 	method, _ := request.GetArguments()["method"].(string)
 	maxDepth := intArg(request, "max_depth", 10)
-	mode := stringArg(request, "mode", "core")
+	mode := stringArg(request, "mode", "dry")
 	path, _ := request.GetArguments()["path"].(string)
 	branch, _ := request.GetArguments()["branch"].(string)
 
@@ -797,7 +815,7 @@ func (srv *Server) handleQueryCallForest(ctx context.Context, request mcp.CallTo
 	}
 	entryType, _ := request.GetArguments()["type"].(string)
 	depth := intArg(request, "depth", 5)
-	mode := stringArg(request, "mode", "core")
+	mode := stringArg(request, "mode", "dry")
 	branchName, _ := request.GetArguments()["branch"].(string)
 
 	_, store, err := srv.createQuerier(path, branchName)

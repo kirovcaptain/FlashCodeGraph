@@ -77,7 +77,7 @@ func init() {
 	}
 	traceCmd.Flags().StringVar(&traceMethod, "method", "", "HTTP method filter (GET/POST/etc)")
 	traceCmd.Flags().IntVar(&traceDepth, "depth", 10, "Max traversal depth")
-	traceCmd.Flags().StringVar(&traceMode, "mode", "core", "Display mode: core (fold accessors/externals) or full (show all)")
+	traceCmd.Flags().StringVar(&traceMode, "mode", "dry", "Display mode: dry (default, core + remove log/exception), core (prune DISPATCHES/accessors), compact (dry + merge edges), full (show all)")
 	rootCmd.AddCommand(traceCmd)
 
 	// fcg callchain <function>
@@ -92,7 +92,7 @@ func init() {
 	callchainCmd.Flags().Float64Var(&callchainMinConf, "min-confidence", 0, "Min confidence filter")
 	callchainCmd.Flags().BoolVar(&callchainReverse, "reverse", false, "Show callers instead of callees")
 	callchainCmd.Flags().BoolVar(&callchainFlow, "flow", false, "Show control flow context (if/else/loop/defer)")
-	callchainCmd.Flags().StringVar(&callchainMode, "mode", "core", "Display mode: core (fold accessors/externals) or full (show all)")
+	callchainCmd.Flags().StringVar(&callchainMode, "mode", "dry", "Display mode: dry (default, core + remove log/exception), core (prune DISPATCHES/accessors), compact (dry + merge edges), full (show all)")
 	rootCmd.AddCommand(callchainCmd)
 
 	// fcg impact <function>
@@ -328,13 +328,36 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("%s of %q (depth=%d, minConfidence=%.2f):\n\n", strings.ToUpper(dirLabel[:1])+dirLabel[1:], args[0], callchainDepth, callchainMinConf)
 
+	// Apply mode filters before rendering
+	if callchainMode != "full" {
+		subgraph = service.PruneDeclaredTypeDispatches(subgraph)
+	}
+	if callchainMode == "dry" || callchainMode == "compact" {
+		subgraph = service.FilterCoreSubgraph(subgraph)
+		subgraph = service.FilterDrySubgraph(subgraph)
+	}
+	if callchainMode == "compact" {
+		subgraph = service.CompactSubgraphEdges(subgraph)
+	}
+
 	// Add root node to subgraph for tree rendering
 	subgraph.Nodes = append([]model.Node{*node}, subgraph.Nodes...)
 
 	printCallTree(subgraph, args[0])
 	fmt.Printf("\nTotal: %d %s\n", len(subgraph.Nodes), dirLabel)
-	if callchainMode != "full" {
-		fmt.Println("ℹ Showing core call chain. Use --mode=full to see all nodes including accessors and externals.")
+	var modeHint string
+	switch callchainMode {
+	case "full":
+		// no hint
+	case "compact":
+		modeHint = "ℹ [mode=compact] Showing compact call chain (edges merged, log/exception removed). Use --mode=full to see all nodes."
+	case "dry":
+		modeHint = "ℹ [mode=dry] Showing dry call chain (log/exception removed, properties trimmed). Use --mode=full to see all nodes."
+	default:
+		modeHint = "ℹ [mode=core] Showing core call chain (DISPATCHES pruned). Use --mode=full to see all nodes including accessors and externals."
+	}
+	if modeHint != "" {
+		fmt.Println(modeHint)
 	}
 	return nil
 }
