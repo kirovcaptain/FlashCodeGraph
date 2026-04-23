@@ -224,11 +224,20 @@ func installMCPConfig(mcpPath, configKey, fcgBinary string, serverCfg mcpServerC
 		servers = make(map[string]any)
 	}
 
-	servers["fcg"] = map[string]any{
-		"command":  fcgBinary,
-		"args":     serverCfg.Args,
-		"env":      serverCfg.Env,
-		"disabled": false,
+	// Only create fcg entry if it doesn't exist; if it exists, only update command path
+	existing, exists := servers["fcg"]
+	if exists {
+		if m, ok := existing.(map[string]any); ok {
+			m["command"] = fcgBinary
+			servers["fcg"] = m
+		}
+	} else {
+		servers["fcg"] = map[string]any{
+			"command":  fcgBinary,
+			"args":     serverCfg.Args,
+			"env":      serverCfg.Env,
+			"disabled": false,
+		}
 	}
 	root[configKey] = servers
 
