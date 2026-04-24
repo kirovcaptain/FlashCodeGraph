@@ -959,6 +959,19 @@ func (store *Store) GetStats(_ context.Context) (*model.GraphStats, error) {
 		langResult.Close()
 	}
 
+	// Frameworks from Repository node
+	fwResult, err := store.conn.Query("MATCH (n:Repository) RETURN n.frameworks LIMIT 1")
+	if err == nil {
+		if fwResult.HasNext() {
+			row, _ := fwResult.Next()
+			val, _ := row.GetValue(0)
+			if fwStr, ok := val.(string); ok && fwStr != "" {
+				stats.Frameworks = strings.Split(fwStr, ",")
+			}
+		}
+		fwResult.Close()
+	}
+
 	return stats, nil
 }
 

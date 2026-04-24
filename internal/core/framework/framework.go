@@ -61,37 +61,43 @@ func detectFromFile(fileName, content string) []Framework {
 	}
 }
 
-func detectMavenFrameworks(content string) []Framework {
+// javaPatterns is the shared keyword mapping for Maven and Gradle projects.
+var javaPatterns = []struct {
+	keyword  string
+	name     string
+	category string
+}{
+	{"spring-boot", "spring", "route"},
+	{"spring-web", "spring", "route"},
+	{"spring-webmvc", "spring", "route"},
+	{"org.springframework", "spring", "route"},
+	{"spring-data", "spring", "orm"},
+	{"javax.ws.rs", "jaxrs", "route"},
+	{"jakarta.ws.rs", "jaxrs", "route"},
+	{"mybatis", "mybatis", "orm"},
+	{"hibernate", "hibernate", "orm"},
+	{"quarkus", "quarkus", "route"},
+	{"io.quarkus", "quarkus", "route"},
+	{"micronaut", "micronaut", "route"},
+	{"io.micronaut", "micronaut", "route"},
+	{"android", "android", ""},
+	{"openfeign", "feign", "http_client"},
+	{"grpc-java", "grpc", "rpc"},
+	{"io.grpc", "grpc", "rpc"},
+	{"spring-graphql", "graphql", "graphql"},
+	{"graphql-java", "graphql", "graphql"},
+	{"dubbo", "dubbo", "rpc"},
+	{"org.apache.dubbo", "dubbo", "rpc"},
+	{"xxl-job", "xxl-job", "schedule"},
+	{"xuxueli", "xxl-job", "schedule"},
+	{"springfox", "swagger", "doc"},
+	{"springdoc", "swagger", "doc"},
+	{"swagger", "swagger", "doc"},
+	{"rocketmq", "rocketmq", "mq"},
+}
+
+func matchPatterns(content string, patterns []struct{ keyword, name, category string }) []Framework {
 	var frameworks []Framework
-	patterns := []struct {
-		keyword  string
-		name     string
-		category string
-	}{
-		{"spring-boot", "spring", "route"},
-		{"spring-web", "spring", "route"},
-		{"spring-webmvc", "spring", "route"},
-		{"spring-data", "spring", "orm"},
-		{"javax.ws.rs", "jaxrs", "route"},
-		{"jakarta.ws.rs", "jaxrs", "route"},
-		{"mybatis", "mybatis", "orm"},
-		{"hibernate", "hibernate", "orm"},
-		{"quarkus", "quarkus", "route"},
-		{"micronaut", "micronaut", "route"},
-		{"openfeign", "feign", "http_client"},
-		{"grpc-java", "grpc", "rpc"},
-		{"io.grpc", "grpc", "rpc"},
-		{"spring-graphql", "graphql", "graphql"},
-		{"graphql-java", "graphql", "graphql"},
-		{"dubbo", "dubbo", "rpc"},
-		{"org.apache.dubbo", "dubbo", "rpc"},
-		{"xxl-job", "xxl-job", "schedule"},
-		{"xuxueli", "xxl-job", "schedule"},
-		{"springfox", "swagger", "doc"},
-		{"springdoc", "swagger", "doc"},
-		{"swagger", "swagger", "doc"},
-		{"rocketmq", "rocketmq", "mq"},
-	}
 	seen := make(map[string]bool)
 	for _, p := range patterns {
 		if !seen[p.name] && strings.Contains(content, p.keyword) {
@@ -102,38 +108,12 @@ func detectMavenFrameworks(content string) []Framework {
 	return frameworks
 }
 
+func detectMavenFrameworks(content string) []Framework {
+	return matchPatterns(content, javaPatterns)
+}
+
 func detectGradleFrameworks(content string) []Framework {
-	var frameworks []Framework
-	patterns := []struct {
-		keyword  string
-		name     string
-		category string
-	}{
-		{"spring-boot", "spring", "route"},
-		{"org.springframework", "spring", "route"},
-		{"io.quarkus", "quarkus", "route"},
-		{"io.micronaut", "micronaut", "route"},
-		{"android", "android", ""},
-		{"openfeign", "feign", "http_client"},
-		{"io.grpc", "grpc", "rpc"},
-		{"graphql-java", "graphql", "graphql"},
-		{"spring-graphql", "graphql", "graphql"},
-		{"dubbo", "dubbo", "rpc"},
-		{"xxl-job", "xxl-job", "schedule"},
-		{"xuxueli", "xxl-job", "schedule"},
-		{"springfox", "swagger", "doc"},
-		{"springdoc", "swagger", "doc"},
-		{"swagger", "swagger", "doc"},
-		{"rocketmq", "rocketmq", "mq"},
-	}
-	seen := make(map[string]bool)
-	for _, p := range patterns {
-		if !seen[p.name] && strings.Contains(content, p.keyword) {
-			seen[p.name] = true
-			frameworks = append(frameworks, Framework{Name: p.name, Category: p.category})
-		}
-	}
-	return frameworks
+	return matchPatterns(content, javaPatterns)
 }
 
 func detectNpmFrameworks(content string) []Framework {

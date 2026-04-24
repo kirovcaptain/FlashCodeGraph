@@ -228,7 +228,7 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	// Write structural nodes: full rebuild from scratch (all CREATE)
 	indexer.progress.Emit(PhaseWriting, 0, 0, "nodes and edges")
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, "")
-	symbolEdges, err := indexer.writeFileSystemNodes(ctx, scanCtx.absPath, scanCtx.files, parseResults, scanCtx.result)
+	symbolEdges, err := indexer.writeFileSystemNodes(ctx, scanCtx.absPath, scanCtx.projectInfo.Frameworks, scanCtx.files, parseResults, scanCtx.result)
 	if err != nil {
 		return nil, fmt.Errorf("indexer: write structural: %w", err)
 	}
@@ -326,7 +326,7 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	// Write structural nodes for changed + affected files only
 	// Repository/Directory use MERGE (already exist), File uses CREATE (deleted in Phase 3)
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, "")
-	symbolEdges, err := indexer.writeIncrementalFileSystemNodes(ctx, scanCtx.absPath, filesToParse, parseResults, scanCtx.result)
+	symbolEdges, err := indexer.writeIncrementalFileSystemNodes(ctx, scanCtx.absPath, scanCtx.projectInfo.Frameworks, filesToParse, parseResults, scanCtx.result)
 	if err != nil {
 		return nil, fmt.Errorf("indexer: write structural: %w", err)
 	}
@@ -1176,11 +1176,11 @@ func (indexer *Indexer) writeSymbolContainsEdges(ctx context.Context, symbolEdge
 // writeFileSystemNodes creates Repository, Directory, and File nodes along with their
 // CONTAINS edges (repo→dir→file hierarchy). Returns symbolEdges (File→Symbol, Class→Function)
 // that must be written later after symbol nodes exist.
-func (indexer *Indexer) writeFileSystemNodes(ctx context.Context, absPath string, files []scanner.ScannedFile, parseResults []model.ParseResult, result *model.IndexResult) ([]model.Edge, error) {
+func (indexer *Indexer) writeFileSystemNodes(ctx context.Context, absPath string, frameworks []string, files []scanner.ScannedFile, parseResults []model.ParseResult, result *model.IndexResult) ([]model.Edge, error) {
 	repoName := filepath.Base(absPath)
 	repoID := fmt.Sprintf("repo:%s", repoName)
 
-	nodes, edges, symbolEdges := buildStructuralData(repoID, repoName, absPath, files, parseResults, buildClassMap(parseResults))
+	nodes, edges, symbolEdges := buildStructuralData(repoID, repoName, absPath, frameworks, files, parseResults, buildClassMap(parseResults))
 
 	if len(nodes) > 0 {
 		if err := indexer.graphStore.CreateNodes(ctx, nodes); err != nil {
@@ -1198,7 +1198,7 @@ func (indexer *Indexer) writeFileSystemNodes(ctx context.Context, absPath string
 // writeIncrementalFileSystemNodes writes file system nodes for changed files only.
 // Repository/Directory use MERGE (already exist), File uses CREATE (deleted earlier in incremental flow).
 // Returns symbolEdges that must be written later after symbol nodes exist.
-func (indexer *Indexer) writeIncrementalFileSystemNodes(ctx context.Context, absPath string, files []scanner.ScannedFile, parseResults []model.ParseResult, result *model.IndexResult) ([]model.Edge, error) {
+func (indexer *Indexer) writeIncrementalFileSystemNodes(ctx context.Context, absPath string, frameworks []string, files []scanner.ScannedFile, parseResults []model.ParseResult, result *model.IndexResult) ([]model.Edge, error) {
 	repoName := filepath.Base(absPath)
 	repoID := fmt.Sprintf("repo:%s", repoName)
 
@@ -1214,7 +1214,7 @@ func (indexer *Indexer) writeIncrementalFileSystemNodes(ctx context.Context, abs
 		}
 	}
 
-	nodes, edges, symbolEdges := buildStructuralData(repoID, repoName, absPath, files, parseResults, classIDByQualifiedName)
+	nodes, edges, symbolEdges := buildStructuralData(repoID, repoName, absPath, frameworks, files, parseResults, classIDByQualifiedName)
 
 	var mergeNodes, createNodes []model.Node
 	for _, n := range nodes {
@@ -1242,14 +1242,14 @@ func (indexer *Indexer) writeIncrementalFileSystemNodes(ctx context.Context, abs
 	return symbolEdges, nil
 }
 
-func buildStructuralData(repoID, repoName, absPath string, files []scanner.ScannedFile, parseResults []model.ParseResult, classIDByQualifiedName map[string]string) ([]model.Node, []model.Edge, []model.Edge) {
+func buildStructuralData(repoID, repoName, absPath string, frameworks []string, files []scanner.ScannedFile, parseResults []model.ParseResult, classIDByQualifiedName map[string]string) ([]model.Node, []model.Edge, []model.Edge) {
 	var nodes []model.Node
 	var edges []model.Edge
 
 	// Repository node
 	nodes = append(nodes, model.Node{
 		ID: repoID, Kind: constants.KindRepository,
-		Properties: map[string]any{"name": repoName, "path": absPath, "index_timestamp": time.Now().Unix()},
+		Properties: map[string]any{"name": repoName, "path": absPath, "index_timestamp": time.Now().Unix(), "frameworks": strings.Join(frameworks, ",")},
 	})
 
 	// File nodes + Directory nodes + CONTAINS edges (source files only)

@@ -80,6 +80,7 @@ var DefaultAnnotations = map[string][]AnnotationDef{
 	},
 	"swagger": {
 		{Name: "ApiOperation", Category: "doc", Framework: "swagger"},
+		{Name: "Operation", Category: "doc", Framework: "swagger"},
 	},
 	"_test": {
 		{Name: "Test", Category: "test", Framework: "junit"},

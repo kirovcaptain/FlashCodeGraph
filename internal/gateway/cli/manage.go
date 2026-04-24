@@ -102,6 +102,9 @@ func runOverview(cmd *cobra.Command, args []string) error {
 			fmt.Printf("    %-15s %d\n", lang, count)
 		}
 	}
+	if len(stats.Frameworks) > 0 {
+		fmt.Printf("  Frameworks:     %s\n", strings.Join(stats.Frameworks, ", "))
+	}
 	return nil
 }
 

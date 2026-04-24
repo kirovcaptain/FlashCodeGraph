@@ -891,6 +891,18 @@ func (store *Store) GetStats(ctx context.Context) (*model.GraphStats, error) {
 		}
 	}
 
+	// Frameworks from Repository node
+	fwRows, err := store.query(ctx, "MATCH (n:Repository) RETURN n.frameworks LIMIT 1")
+	if err == nil && len(fwRows) >= 2 {
+		if dataRows, ok := fwRows[1].([]interface{}); ok && len(dataRows) > 0 {
+			if arr, ok := dataRows[0].([]interface{}); ok && len(arr) > 0 {
+				if fwStr, ok := arr[0].(string); ok && fwStr != "" {
+					stats.Frameworks = strings.Split(fwStr, ",")
+				}
+			}
+		}
+	}
+
 	return stats, nil
 }
 func (store *Store) Close() error {

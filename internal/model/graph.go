@@ -75,6 +75,7 @@ type GraphStats struct {
 	NodesByKind map[string]int `json:"nodes_by_kind"`
 	EdgesByKind map[string]int `json:"edges_by_kind"`
 	FilesByLang map[string]int `json:"files_by_lang"`
+	Frameworks  []string       `json:"frameworks,omitempty"`
 }
 
 // Fingerprint tracks file state for incremental indexing.
