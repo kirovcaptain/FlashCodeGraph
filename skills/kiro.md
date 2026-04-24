@@ -56,7 +56,7 @@ Use default `dry` unless user asks for more detail.
 
 ## Annotation Aliases
 
-When users describe annotations in natural language, map to the correct name:
+When users describe annotations in natural language, map to the correct name and use `query_by_annotation` to find matching symbols:
 
 | User says | Annotation | Framework |
 |-----------|-----------|-----------|
@@ -96,8 +96,13 @@ query_entry_points(type="http_endpoint", path=...)  → find route
 query_route_chain(route="...", path=...)             → trace chain
 
 # Search by API doc annotation
-query_by_annotation(annotation="ApiOperation", params="{keyword}", path=...)
-→ extract route from result → query_route_chain
+**When**: user says "api doc xxx" or "接口文档 xxx"
+
+1. First try with user's original phrase as params:
+   `query_by_annotation(annotation="ApiOperation", params="{original phrase}", path=...)`
+2. If no results, try meaningful sub-phrases (not single words):
+   `query_by_annotation(annotation="ApiOperation", params="{sub-phrase}", path=...)`
+3. Extract route from result → `query_route_chain` (if applicable)
 
 # Full call tree from endpoints
 query_call_forest(type="http_endpoint", depth=5, path=...)

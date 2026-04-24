@@ -471,5 +471,6 @@ Override anytime via `storage.database` in config.
 
 - [Changelog](CHANGELOG.md)
 - [Roadmap](docs/roadmap.md)
+- [Configuration](docs/configuration.md) ([example](docs/config.example.toml))
 - [Architecture](docs/architecture.md)
 - [Language Integration Guide](docs/language-integration-guide.md)

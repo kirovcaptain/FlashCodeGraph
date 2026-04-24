@@ -1,0 +1,20 @@
+# Example FCG configuration file
+# Copy to ~/.fcg/config.toml (global) or {project}/.fcg/config.toml (project)
+
+[storage]
+database = "falkordb"
+falkordb_uri = "localhost:6379"
+
+[index]
+max_file_size = 524288
+exclude_tests = true
+# ignore = ["**/generated/**", "**/vendor/**"]
+
+[annotations]
+# include = ["MyCustomAnnotation", "BusinessLog"]
+# exclude = ["Deprecated", "SuppressWarnings"]
+
+[system]
+# goroutines = 0
+# memory_limit = "1GB"
+# log_level = "info"
