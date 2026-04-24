@@ -463,7 +463,7 @@ func (store *Store) QueryNodeByID(ctx context.Context, id string) (*model.Node, 
 				break
 			}
 			if col == "id" {
-				nodeID = fmt.Sprint(cols[i])
+				nodeID = asString(cols[i])
 			} else if cols[i] != nil {
 				props[col] = convertByType(cols[i], model.GetColumnType(label, col))
 			}
@@ -512,7 +512,7 @@ func (store *Store) QueryNodeByQualifiedName(ctx context.Context, qualifiedName 
 				break
 			}
 			if col == "id" {
-				nodeID = fmt.Sprint(cols[i])
+				nodeID = asString(cols[i])
 			} else if cols[i] != nil {
 				props[col] = convertByType(cols[i], model.GetColumnType(label, col))
 			}
@@ -613,8 +613,8 @@ func (store *Store) QueryAllEdges(ctx context.Context, relKind model.RelationKin
 			continue
 		}
 		edge := model.Edge{
-			SourceID:   fmt.Sprint(rowSlice[0]),
-			TargetID:   fmt.Sprint(rowSlice[1]),
+			SourceID:   asString(rowSlice[0]),
+			TargetID:   asString(rowSlice[1]),
 			Kind:       relKind,
 			Properties: make(map[string]any),
 		}
@@ -787,7 +787,7 @@ func (store *Store) QueryAllByKind(ctx context.Context, kind string, limit int) 
 				break
 			}
 			if colNames[i] == "id" {
-				nodeID = fmt.Sprint(val)
+				nodeID = asString(val)
 			} else if val != nil {
 				nodeProps[colNames[i]] = convertByType(val, model.GetColumnType(kind, colNames[i]))
 			}
@@ -853,7 +853,7 @@ func (store *Store) QueryNodesByProperty(ctx context.Context, kind string, key s
 				break
 			}
 			if colNames[i] == "id" {
-				nodeID = fmt.Sprint(val)
+				nodeID = asString(val)
 			} else if val != nil {
 				nodeProps[colNames[i]] = convertByType(val, model.GetColumnType(kind, colNames[i]))
 			}
@@ -1024,7 +1024,7 @@ func parseCallChainResults(rows []interface{}) []model.Node {
 			props["is_constructor"] = convertByType(cols[6], "BOOLEAN")
 		}
 		nodes = append(nodes, model.Node{
-			ID:         fmt.Sprint(cols[0]),
+			ID:         asString(cols[0]),
 			Kind:       "Function",
 			Properties: props,
 		})
@@ -1047,8 +1047,8 @@ func parseSimpleNodeResults(rows []interface{}) []model.Node {
 			continue
 		}
 		node := model.Node{
-			ID:   fmt.Sprint(cols[0]),
-			Kind: fmt.Sprint(cols[1]),
+			ID:   asString(cols[0]),
+			Kind: asString(cols[1]),
 			Properties: map[string]interface{}{
 				"name":       cols[2],
 				"file_path":  safeIndex(cols, 3),
@@ -1095,9 +1095,9 @@ func parseFullNodeResults(rows []interface{}) []model.Node {
 			}
 			switch colNames[i] {
 			case "id":
-				nodeID = fmt.Sprint(val)
+				nodeID = asString(val)
 			case "labels(n)[0]":
-				kind = fmt.Sprint(val)
+				kind = asString(val)
 			default:
 				if val != nil {
 					props[colNames[i]] = val
@@ -1136,8 +1136,8 @@ func parseEdgeResults(rows []interface{}, defaultKind ...model.RelationKind) []m
 			}
 		}
 		edge := model.Edge{
-			SourceID:   fmt.Sprint(cols[0]),
-			TargetID:   fmt.Sprint(cols[1]),
+			SourceID:   asString(cols[0]),
+			TargetID:   asString(cols[1]),
 			Kind:       edgeKind,
 			Properties: make(map[string]any),
 		}
@@ -1209,11 +1209,11 @@ func parseSearchResults(rows []interface{}) []storage.SearchResult {
 			continue
 		}
 		results = append(results, storage.SearchResult{
-			NodeID:        fmt.Sprint(cols[0]),
-			Kind:          fmt.Sprint(cols[1]),
-			Name:          fmt.Sprint(cols[2]),
-			Path:          fmt.Sprint(safeIndex(cols, 3)),
-			QualifiedName: fmt.Sprint(safeIndex(cols, 4)),
+			NodeID:        asString(cols[0]),
+			Kind:          asString(cols[1]),
+			Name:          asString(cols[2]),
+			Path:          asString(safeIndex(cols, 3)),
+			QualifiedName: asString(safeIndex(cols, 4)),
 		})
 	}
 	return results
@@ -1246,4 +1246,13 @@ func safeIndex(slice []interface{}, index int) interface{} {
 		return slice[index]
 	}
 	return nil
+}
+
+// asString converts an interface{} to string with type assertion fast path.
+// Avoids fmt.Sprint reflection overhead for the common case where the value is already a string.
+func asString(value interface{}) string {
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return fmt.Sprint(value)
 }
