@@ -80,7 +80,7 @@ var javaPatterns = []struct {
 	{"io.quarkus", "quarkus", "route"},
 	{"micronaut", "micronaut", "route"},
 	{"io.micronaut", "micronaut", "route"},
-	{"android", "android", ""},
+	{"com.android", "android", ""},
 	{"openfeign", "feign", "http_client"},
 	{"grpc-java", "grpc", "rpc"},
 	{"io.grpc", "grpc", "rpc"},
