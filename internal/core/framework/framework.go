@@ -41,20 +41,21 @@ func Detect(rootPath string, buildFiles []string) []Framework {
 }
 
 func detectFromFile(fileName, content string) []Framework {
+	base := filepath.Base(fileName)
 	switch {
-	case fileName == "pom.xml":
-		return detectMavenFrameworks(content)
-	case strings.HasPrefix(fileName, "build.gradle"):
-		return detectGradleFrameworks(content)
-	case fileName == "package.json":
+	case base == "pom.xml":
+		return matchPatterns(content, javaPatterns)
+	case strings.HasPrefix(base, "build.gradle"):
+		return matchPatterns(content, javaPatterns)
+	case base == "package.json":
 		return detectNpmFrameworks(content)
-	case fileName == "go.mod":
+	case base == "go.mod":
 		return detectGoFrameworks(content)
-	case fileName == "requirements.txt" || fileName == "pyproject.toml":
+	case base == "requirements.txt" || base == "pyproject.toml":
 		return detectPythonFrameworks(content)
-	case fileName == "Gemfile":
+	case base == "Gemfile":
 		return detectRubyFrameworks(content)
-	case fileName == "composer.json":
+	case base == "composer.json":
 		return detectPHPFrameworks(content)
 	default:
 		return nil
