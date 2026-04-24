@@ -6,7 +6,7 @@ import (
 	"io/fs"
 )
 
-//go:embed platforms.json kiro.md
+//go:embed platforms.json kiro.md claude.md copilot.md shared
 var content embed.FS
 
 // FS returns the embedded skill files as an fs.FS.

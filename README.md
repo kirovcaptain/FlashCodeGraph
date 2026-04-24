@@ -287,6 +287,8 @@ fcg remove --cache --force         # only delete cache and fingerprints
 fcg skill install              # interactive platform selection
 fcg skill install kiro         # direct install for Kiro
 fcg skill install claude       # direct install for Claude Code
+fcg skill install copilot      # direct install for GitHub Copilot
+fcg skill install claude       # direct install for Claude Code
 fcg skill list                 # list available platforms
 
 # Start MCP Server (stdio transport)

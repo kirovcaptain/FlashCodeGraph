@@ -145,10 +145,22 @@ func runSkillInstall(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 
-	// Step 1: Install skill file
+	// Step 1: Install skill file (platform header + shared content)
 	skillContent, err := fs.ReadFile(SkillsFS, entry.SkillFile)
 	if err != nil {
 		return fmt.Errorf("read skill file %s: %w", entry.SkillFile, err)
+	}
+	sharedEntries, err := fs.ReadDir(SkillsFS, "shared")
+	if err == nil {
+		for _, e := range sharedEntries {
+			if strings.HasSuffix(e.Name(), ".md") {
+				data, err := fs.ReadFile(SkillsFS, "shared/"+e.Name())
+				if err == nil {
+					skillContent = append(skillContent, '\n')
+					skillContent = append(skillContent, data...)
+				}
+			}
+		}
 	}
 	skillDst := filepath.Join(home, entry.InstallPath)
 	if err := os.MkdirAll(filepath.Dir(skillDst), 0755); err != nil {
