@@ -90,9 +90,9 @@ var javaPatterns = []struct {
 	{"org.apache.dubbo", "dubbo", "rpc"},
 	{"xxl-job", "xxl-job", "schedule"},
 	{"xuxueli", "xxl-job", "schedule"},
-	{"springfox", "swagger", "doc"},
-	{"springdoc", "swagger", "doc"},
-	{"swagger", "swagger", "doc"},
+	{"springfox", "swagger2", "doc"},
+	{"springdoc", "swagger3", "doc"},
+	{"swagger", "swagger2", "doc"},
 	{"rocketmq", "rocketmq", "mq"},
 }
 

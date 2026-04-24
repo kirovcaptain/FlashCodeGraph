@@ -22,6 +22,8 @@ When users describe annotations in natural language, map to the correct annotati
 | graphql query | QueryMapping | GraphQL |
 | graphql mutation | MutationMapping | GraphQL |
 | deprecated | Deprecated | common |
+| swagger / api doc (swagger2) | ApiOperation | swagger2 |
+| swagger / api doc (swagger3/openapi) | Operation | swagger3 |
 | test / unit test | Test | JUnit |
 | mapper / mybatis | Mapper | MyBatis |
 

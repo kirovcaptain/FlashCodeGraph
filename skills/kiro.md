@@ -98,11 +98,13 @@ query_route_chain(route="...", path=...)             → trace chain
 # Search by API doc annotation
 **When**: user says "api doc xxx" or "接口文档 xxx"
 
-1. First try with user's original phrase as params:
-   `query_by_annotation(annotation="ApiOperation", params="{original phrase}", path=...)`
-2. If no results, try meaningful sub-phrases (not single words):
-   `query_by_annotation(annotation="ApiOperation", params="{sub-phrase}", path=...)`
-3. Extract route from result → `query_route_chain` (if applicable)
+1. Check `overview` for frameworks:
+   - `swagger2` → search `ApiOperation`
+   - `swagger3` → search `Operation`
+2. First try with user's original phrase as params:
+   `query_by_annotation(annotation="{annotation}", params="{original phrase}", path=...)`
+3. If no results, try meaningful sub-phrases (not single words).
+4. Extract route from result → `query_route_chain` (if applicable)
 
 # Full call tree from endpoints
 query_call_forest(type="http_endpoint", depth=5, path=...)
