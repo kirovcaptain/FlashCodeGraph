@@ -619,13 +619,8 @@ func (store *Store) QueryAllEdges(ctx context.Context, relKind model.RelationKin
 			Properties: make(map[string]any),
 		}
 		if len(rowSlice) >= 3 && rowSlice[2] != nil {
-			switch c := rowSlice[2].(type) {
-			case float64:
-				edge.Properties["confidence"] = c
-			case string:
-				if f, err := strconv.ParseFloat(c, 64); err == nil {
-					edge.Properties["confidence"] = f
-				}
+			if f, ok := asFloat(rowSlice[2]); ok {
+				edge.Properties["confidence"] = f
 			}
 		}
 		edges = append(edges, edge)
@@ -1096,10 +1091,10 @@ func parseFullNodeResults(rows []interface{}) []model.Node {
 			switch colNames[i] {
 			case "id":
 				nodeID = asString(val)
-			case "labels(n)[0]":
-				kind = asString(val)
 			default:
-				if val != nil {
+				if strings.Contains(colNames[i], "labels(") {
+					kind = asString(val)
+				} else if val != nil {
 					props[colNames[i]] = val
 				}
 			}
@@ -1142,21 +1137,13 @@ func parseEdgeResults(rows []interface{}, defaultKind ...model.RelationKind) []m
 			Properties: make(map[string]any),
 		}
 		if len(cols) >= 3 && cols[2] != nil {
-			switch c := cols[2].(type) {
-			case float64:
-				edge.Properties["confidence"] = c
-			case string:
-				if f, err := strconv.ParseFloat(c, 64); err == nil {
-					edge.Properties["confidence"] = f
-				}
+			if f, ok := asFloat(cols[2]); ok {
+				edge.Properties["confidence"] = f
 			}
 		}
 		if len(cols) >= 4 && cols[3] != nil {
-			switch l := cols[3].(type) {
-			case float64:
-				edge.Properties["line"] = int(l)
-			case int64:
-				edge.Properties["line"] = int(l)
+			if l, ok := asInt(cols[3]); ok {
+				edge.Properties["line"] = l
 			}
 		}
 		if len(cols) >= 5 && cols[4] != nil {
@@ -1165,11 +1152,8 @@ func parseEdgeResults(rows []interface{}, defaultKind ...model.RelationKind) []m
 			}
 		}
 		if len(cols) >= 6 && cols[5] != nil {
-			switch l := cols[5].(type) {
-			case float64:
-				edge.Properties["flow_line"] = int(l)
-			case int64:
-				edge.Properties["flow_line"] = int(l)
+			if l, ok := asInt(cols[5]); ok {
+				edge.Properties["flow_line"] = l
 			}
 		}
 		if len(cols) >= 7 && cols[6] != nil {
@@ -1255,4 +1239,34 @@ func asString(value interface{}) string {
 		return s
 	}
 	return fmt.Sprint(value)
+}
+
+// asFloat extracts a float64 from an interface{} that may be float64 or numeric string.
+func asFloat(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case int64:
+		return float64(v), true
+	case string:
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+// asInt extracts an int from an interface{} that may be int64, float64, or numeric string.
+func asInt(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		if i, err := strconv.Atoi(v); err == nil {
+			return i, true
+		}
+	}
+	return 0, false
 }
