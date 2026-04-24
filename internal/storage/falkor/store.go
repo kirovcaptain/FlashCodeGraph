@@ -3,8 +3,10 @@ package falkor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -113,26 +115,51 @@ func (store *Store) query(ctx context.Context, cypher string) ([]interface{}, er
 	return rows, nil
 }
 
+// cypherParam represents a single parameter for parameterized Cypher queries.
+// Use ordered slice instead of map to ensure stable parameter order for execution plan cache hits.
+type cypherParam struct {
+	Key   string
+	Value any
+}
+
+// buildParamsHeader builds the CYPHER params prefix for parameterized queries.
+// Example: buildParamsHeader([]cypherParam{{"sourceID", "abc"}, {"targetID", "def"}})
+// Returns: `CYPHER sourceID="abc" targetID="def" `
+func buildParamsHeader(params []cypherParam) string {
+	if len(params) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString("CYPHER ")
+	for _, param := range params {
+		builder.WriteString(param.Key)
+		builder.WriteByte('=')
+		encoded, _ := json.Marshal(param.Value)
+		builder.Write(encoded)
+		builder.WriteByte(' ')
+	}
+	return builder.String()
+}
+
+// queryWithParams executes a parameterized Cypher query.
+func (store *Store) queryWithParams(ctx context.Context, cypher string, params []cypherParam) ([]interface{}, error) {
+	return store.query(ctx, buildParamsHeader(params)+cypher)
+}
+
 // Migrate creates indexes on node ID properties for fast MATCH lookups.
 func (store *Store) Migrate(ctx context.Context) error {
+	// Safe: label names are from hardcoded constants, not user input.
 	for _, label := range constants.AllNodeKinds {
-		cypher := fmt.Sprintf("CREATE INDEX ON :%s(id)", label)
-		store.query(ctx, cypher) // ignore error if already exists
+		store.query(ctx, "CREATE INDEX ON :"+label+"(id)")
 	}
-	// Index file_path for QueryNodesByFile (locate_function)
 	for _, label := range constants.BaseSymbolKinds {
-		cypher := fmt.Sprintf("CREATE INDEX ON :%s(file_path)", label)
-		store.query(ctx, cypher)
+		store.query(ctx, "CREATE INDEX ON :"+label+"(file_path)")
 	}
-	// Index name for QueryNodesByName
 	for _, label := range []string{constants.KindFunction, constants.KindClass, constants.KindInterface, constants.KindAnnotation} {
-		cypher := fmt.Sprintf("CREATE INDEX ON :%s(name)", label)
-		store.query(ctx, cypher)
+		store.query(ctx, "CREATE INDEX ON :"+label+"(name)")
 	}
-	// Index qualified_name for QueryNodeByQualifiedName
 	for _, label := range constants.BaseSymbolKinds {
-		cypher := fmt.Sprintf("CREATE INDEX ON :%s(qualified_name)", label)
-		store.query(ctx, cypher)
+		store.query(ctx, "CREATE INDEX ON :"+label+"(qualified_name)")
 	}
 	return nil
 }
@@ -148,84 +175,35 @@ func (store *Store) WriteNodes(ctx context.Context, nodes []model.Node) error {
 }
 
 func (store *Store) CreateNodes(ctx context.Context, nodes []model.Node) error {
-	const batchSize = 200
+	const batchSize = 5000
 	// Group by Kind for batch CREATE
 	grouped := make(map[string][]model.Node)
 	for i := range nodes {
 		grouped[nodes[i].Kind] = append(grouped[nodes[i].Kind], nodes[i])
 	}
 	for kind, kindNodes := range grouped {
-		for i := 0; i < len(kindNodes); i += batchSize {
-			end := i + batchSize
-			if end > len(kindNodes) {
-				end = len(kindNodes)
-			}
-			batch := kindNodes[i:end]
-			var parts []string
-			for j, node := range batch {
-				propParts := []string{fmt.Sprintf("id: '%s'", escapeCypher(node.ID))}
-				for key, value := range node.Properties {
-					if value == nil {
-						continue
-					}
-					propParts = append(propParts, fmt.Sprintf("%s: %s", key, formatCypherValue(value)))
-				}
-				parts = append(parts, fmt.Sprintf("(n%d:%s {%s})", j, kind, strings.Join(propParts, ", ")))
-			}
-			cypher := "CREATE " + strings.Join(parts, ", ")
-			if _, err := store.query(ctx, cypher); err != nil {
-				return err
-			}
+		// Build fixed template per kind using schema columns
+		cols := model.ColumnNames(kind)
+		var propParts []string
+		propParts = append(propParts, "id: $nodeID")
+		for _, col := range cols {
+			propParts = append(propParts, col+": $prop_"+col)
 		}
-	}
-	return nil
-}
+		template := "CREATE (n:" + kind + " {" + strings.Join(propParts, ", ") + "})"
 
-func (store *Store) mergeNode(ctx context.Context, node model.Node) error {
-	setParts := []string{}
-	for key, value := range node.Properties {
-		if value == nil {
-			continue
-		}
-		setParts = append(setParts, fmt.Sprintf("n.%s = %s", key, formatCypherValue(value)))
-	}
-	setClause := ""
-	if len(setParts) > 0 {
-		setClause = " SET " + strings.Join(setParts, ", ")
-	}
-	cypher := fmt.Sprintf("MERGE (n:%s {id: '%s'})%s", node.Kind, escapeCypher(node.ID), setClause)
-	_, err := store.query(ctx, cypher)
-	return err
-}
-
-// WriteEdges writes edges in batch using Redis Pipeline.
-func (store *Store) WriteEdges(ctx context.Context, edges []model.Edge) error {
-	const batchSize = 200
-	for i := 0; i < len(edges); i += batchSize {
-		end := i + batchSize
-		if end > len(edges) {
-			end = len(edges)
-		}
 		pipe := store.client.Pipeline()
-		for _, edge := range edges[i:end] {
-			relType := mapRelationType(edge.Kind)
-			sourceLabel, targetLabel := edgeLabels(edge.Kind, edge.SourceKind)
-
-			propParts := []string{}
-			for key, value := range edge.Properties {
-				propParts = append(propParts, fmt.Sprintf("r.%s = %s", key, formatCypherValue(value)))
+		for i, node := range kindNodes {
+			params := []cypherParam{{"nodeID", node.ID}}
+			for _, col := range cols {
+				params = append(params, cypherParam{"prop_" + col, node.Properties[col]})
 			}
-			setClause := ""
-			if len(propParts) > 0 {
-				setClause = " SET " + strings.Join(propParts, ", ")
+			pipe.Do(ctx, "GRAPH.QUERY", store.graphName, buildParamsHeader(params)+template)
+			if (i+1)%batchSize == 0 {
+				if _, err := pipe.Exec(ctx); err != nil {
+					return err
+				}
+				pipe = store.client.Pipeline()
 			}
-
-			cypher := fmt.Sprintf(
-				"MATCH (a:%s {id: '%s'}), (b:%s {id: '%s'}) MERGE (a)-[r:%s]->(b)%s",
-				sourceLabel, escapeCypher(edge.SourceID),
-				targetLabel, escapeCypher(edge.TargetID),
-				relType, setClause)
-			pipe.Do(ctx, "GRAPH.QUERY", store.graphName, cypher)
 		}
 		if _, err := pipe.Exec(ctx); err != nil {
 			return err
@@ -234,49 +212,120 @@ func (store *Store) WriteEdges(ctx context.Context, edges []model.Edge) error {
 	return nil
 }
 
+func (store *Store) mergeNode(ctx context.Context, node model.Node) error {
+	cols := model.ColumnNames(node.Kind)
+	params := []cypherParam{{"nodeID", node.ID}}
+	var setParts []string
+	for _, col := range cols {
+		paramName := "prop_" + col
+		setParts = append(setParts, "n."+col+" = $"+paramName)
+		params = append(params, cypherParam{paramName, node.Properties[col]})
+	}
+	setClause := ""
+	if len(setParts) > 0 {
+		setClause = " SET " + strings.Join(setParts, ", ")
+	}
+	cypher := "MERGE (n:" + node.Kind + " {id: $nodeID})" + setClause
+	_, err := store.queryWithParams(ctx, cypher, params)
+	return err
+}
+
+// WriteEdges writes edges in batch using Redis Pipeline.
+func (store *Store) WriteEdges(ctx context.Context, edges []model.Edge) error {
+	const batchSize = 5000
+	pipe := store.client.Pipeline()
+	for i, edge := range edges {
+		relType := mapRelationType(edge.Kind)
+		sourceLabel, targetLabel := edgeLabels(edge.Kind, edge.SourceKind)
+
+		params := []cypherParam{{"sourceID", edge.SourceID}, {"targetID", edge.TargetID}}
+		paramSetClause := buildEdgeSetClause(edge.Properties, &params)
+
+		cypher := "MATCH (a:" + sourceLabel + " {id: $sourceID}), (b:" + targetLabel + " {id: $targetID}) MERGE (a)-[r:" + relType + "]->(b)" + paramSetClause
+		pipe.Do(ctx, "GRAPH.QUERY", store.graphName, buildParamsHeader(params)+cypher)
+		if (i+1)%batchSize == 0 {
+			if _, err := pipe.Exec(ctx); err != nil {
+				return err
+			}
+			pipe = store.client.Pipeline()
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
 // CreateEdges writes edges in batch using Redis Pipeline.
-// Each edge is an independent MATCH+CREATE command; Pipeline batches them
-// into a single TCP round-trip to avoid FalkorDB's UNWIND property drift bug.
 func (store *Store) CreateEdges(ctx context.Context, edges []model.Edge) error {
 	if len(edges) == 0 {
 		return nil
 	}
 
-	const batchSize = 500
-	for i := 0; i < len(edges); i += batchSize {
-		end := i + batchSize
-		if end > len(edges) {
-			end = len(edges)
+	const batchSize = 5000
+	pipe := store.client.Pipeline()
+	for i, edge := range edges {
+		sourceLabel, targetLabel := edgeLabels(edge.Kind, edge.SourceKind)
+		relType := mapRelationType(edge.Kind)
+
+		params := []cypherParam{{"sourceID", edge.SourceID}, {"targetID", edge.TargetID}}
+		propClause := buildEdgePropClause(edge.Properties, &params)
+
+		cypher := "MATCH (a:" + sourceLabel + " {id:$sourceID}),(b:" + targetLabel + " {id:$targetID}) CREATE (a)-[:" + relType + propClause + "]->(b)"
+		pipe.Do(ctx, "GRAPH.QUERY", store.graphName, buildParamsHeader(params)+cypher)
+		if (i+1)%batchSize == 0 {
+			if _, err := pipe.Exec(ctx); err != nil {
+				return fmt.Errorf("pipeline batch %d: %w", i/batchSize, err)
+			}
+			pipe = store.client.Pipeline()
 		}
-		pipe := store.client.Pipeline()
-		for _, edge := range edges[i:end] {
-			sourceLabel, targetLabel := edgeLabels(edge.Kind, edge.SourceKind)
-			relType := mapRelationType(edge.Kind)
-			cypher := buildSingleEdgeCypher(sourceLabel, targetLabel, relType, edge)
-			pipe.Do(ctx, "GRAPH.QUERY", store.graphName, cypher)
-		}
-		if _, err := pipe.Exec(ctx); err != nil {
-			return fmt.Errorf("pipeline batch %d: %w", i/batchSize, err)
-		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("pipeline final: %w", err)
 	}
 	return nil
 }
 
-// buildSingleEdgeCypher builds a MATCH+CREATE cypher for one edge.
-func buildSingleEdgeCypher(sourceLabel, targetLabel, relType string, edge model.Edge) string {
-	var propParts []string
-	for key, value := range edge.Properties {
-		propParts = append(propParts, fmt.Sprintf("%s:%s", key, formatCypherValue(value)))
+// buildEdgeSetClause builds a parameterized SET clause for edge properties.
+// Keys are sorted for stable template order.
+func buildEdgeSetClause(props map[string]any, params *[]cypherParam) string {
+	if len(props) == 0 {
+		return ""
 	}
-	propClause := ""
-	if len(propParts) > 0 {
-		propClause = " {" + strings.Join(propParts, ",") + "}"
+	keys := sortedKeys(props)
+	var parts []string
+	for _, key := range keys {
+		paramName := "ep_" + key
+		parts = append(parts, "r."+key+" = $"+paramName)
+		*params = append(*params, cypherParam{paramName, props[key]})
 	}
-	return fmt.Sprintf(
-		"MATCH (a:%s {id:'%s'}),(b:%s {id:'%s'}) CREATE (a)-[:%s%s]->(b)",
-		sourceLabel, escapeCypher(edge.SourceID),
-		targetLabel, escapeCypher(edge.TargetID),
-		relType, propClause)
+	return " SET " + strings.Join(parts, ", ")
+}
+
+// buildEdgePropClause builds a parameterized property clause for CREATE edge.
+// Keys are sorted for stable template order.
+func buildEdgePropClause(props map[string]any, params *[]cypherParam) string {
+	if len(props) == 0 {
+		return ""
+	}
+	keys := sortedKeys(props)
+	var parts []string
+	for _, key := range keys {
+		paramName := "ep_" + key
+		parts = append(parts, key+": $"+paramName)
+		*params = append(*params, cypherParam{paramName, props[key]})
+	}
+	return " {" + strings.Join(parts, ", ") + "}"
+}
+
+// sortedKeys returns map keys in sorted order for stable Cypher template generation.
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // edgeLabels returns source and target node labels for a relation kind.
@@ -328,8 +377,8 @@ func edgeLabels(kind model.RelationKind, sourceKind string) (string, string) {
 // DeleteNodesByFile removes all nodes associated with a file path.
 func (store *Store) DeleteNodesByFile(ctx context.Context, filePath string) error {
 	for _, label := range []string{constants.KindFunction, constants.KindClass, constants.KindInterface, constants.KindFile, constants.KindRoute, constants.KindQueryNode, constants.KindAnnotation} {
-		cypher := fmt.Sprintf("MATCH (n:%s) WHERE n.file_path = '%s' DETACH DELETE n", label, escapeCypher(filePath))
-		if _, err := store.query(ctx, cypher); err != nil {
+		cypher := "MATCH (n:" + label + ") WHERE n.file_path = $filePath DETACH DELETE n"
+		if _, err := store.queryWithParams(ctx, cypher, []cypherParam{{"filePath", filePath}}); err != nil {
 			return err
 		}
 	}
@@ -338,8 +387,8 @@ func (store *Store) DeleteNodesByFile(ctx context.Context, filePath string) erro
 
 func (store *Store) DeleteNodeByID(ctx context.Context, id string) error {
 	for _, label := range allNodeLabels {
-		cypher := fmt.Sprintf("MATCH (n:%s {id: '%s'}) DETACH DELETE n", label, escapeCypher(id))
-		if _, err := store.query(ctx, cypher); err != nil {
+		cypher := "MATCH (n:" + label + " {id: $nodeID}) DETACH DELETE n"
+		if _, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeID", id}}); err != nil {
 			return err
 		}
 	}
@@ -349,8 +398,8 @@ func (store *Store) DeleteNodeByID(ctx context.Context, id string) error {
 // DeleteEdgesBySource removes all outgoing edges from a source node.
 func (store *Store) DeleteEdgesBySource(ctx context.Context, sourceID string) error {
 	for _, label := range allNodeLabels {
-		cypher := fmt.Sprintf("MATCH (a:%s {id: '%s'})-[r]->(b) DELETE r", label, escapeCypher(sourceID))
-		if _, err := store.query(ctx, cypher); err != nil {
+		cypher := "MATCH (a:" + label + " {id: $nodeID})-[r]->(b) DELETE r"
+		if _, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeID", sourceID}}); err != nil {
 			return err
 		}
 	}
@@ -360,8 +409,8 @@ func (store *Store) DeleteEdgesBySource(ctx context.Context, sourceID string) er
 // DeleteEdgesByTarget removes all incoming edges to a target node.
 func (store *Store) DeleteEdgesByTarget(ctx context.Context, targetID string) error {
 	for _, label := range allNodeLabels {
-		cypher := fmt.Sprintf("MATCH (a)-[r]->(b:%s {id: '%s'}) DELETE r", label, escapeCypher(targetID))
-		if _, err := store.query(ctx, cypher); err != nil {
+		cypher := "MATCH (a)-[r]->(b:" + label + " {id: $nodeID}) DELETE r"
+		if _, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeID", targetID}}); err != nil {
 			return err
 		}
 	}
@@ -369,8 +418,8 @@ func (store *Store) DeleteEdgesByTarget(ctx context.Context, targetID string) er
 }
 
 func (store *Store) DeleteAllByKind(ctx context.Context, kind string) error {
-	cypher := fmt.Sprintf("MATCH (n:%s) DETACH DELETE n", kind)
-	_, err := store.query(ctx, cypher)
+	// Safe: kind is from hardcoded constants, not user input.
+	_, err := store.query(ctx, "MATCH (n:"+kind+") DETACH DELETE n")
 	return err
 }
 
@@ -379,8 +428,8 @@ func (store *Store) QueryNodeByID(ctx context.Context, id string) (*model.Node, 
 	// Try each label in order (Function first — most common)
 	for _, label := range allNodeLabels {
 		returnClause := model.QueryReturnClause(label)
-		cypher := fmt.Sprintf("MATCH (n:%s {id: '%s'}) RETURN %s LIMIT 1", label, escapeCypher(id), returnClause)
-		rows, err := store.query(ctx, cypher)
+		cypher := "MATCH (n:" + label + " {id: $nodeID}) RETURN " + returnClause + " LIMIT 1"
+		rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeID", id}})
 		if err != nil {
 			return nil, err
 		}
@@ -428,8 +477,8 @@ func (store *Store) QueryNodeByID(ctx context.Context, id string) (*model.Node, 
 func (store *Store) QueryNodeByQualifiedName(ctx context.Context, qualifiedName string) (*model.Node, error) {
 	for _, label := range constants.BaseSymbolKinds {
 		returnClause := model.QueryReturnClause(label)
-		cypher := fmt.Sprintf("MATCH (n:%s {qualified_name: '%s'}) RETURN %s LIMIT 1", label, escapeCypher(qualifiedName), returnClause)
-		rows, err := store.query(ctx, cypher)
+		cypher := "MATCH (n:" + label + " {qualified_name: $qualifiedName}) RETURN " + returnClause + " LIMIT 1"
+		rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"qualifiedName", qualifiedName}})
 		if err != nil {
 			return nil, err
 		}
@@ -495,16 +544,14 @@ func (store *Store) QueryNodesByName(ctx context.Context, name string, opts mode
 	// UNION across labels to hit name index
 	var parts []string
 	for _, label := range labels {
-		parts = append(parts, fmt.Sprintf(
-			"MATCH (n:%s) WHERE n.name = '%s' RETURN %s",
-			label, escapeCypher(name), allCols))
+		parts = append(parts, "MATCH (n:"+label+") WHERE n.name = $nodeName RETURN "+allCols)
 	}
 	cypher := strings.Join(parts, " UNION ")
 	if opts.Limit > 0 {
 		cypher += fmt.Sprintf(" LIMIT %d", opts.Limit)
 	}
 
-	rows, err := store.query(ctx, cypher)
+	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeName", name}})
 	if err != nil {
 		return nil, err
 	}
@@ -522,14 +569,14 @@ func (store *Store) QueryEdges(ctx context.Context, nodeID string, nodeKind stri
 	var cypher string
 	switch direction {
 	case model.Outgoing:
-		cypher = fmt.Sprintf("MATCH (a:%s {id: '%s'})-[r:%s]->(b) RETURN a.id, b.id", label, escapeCypher(nodeID), relType)
+		cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]->(b) RETURN a.id, b.id"
 	case model.Incoming:
-		cypher = fmt.Sprintf("MATCH (a)-[r:%s]->(b {id: '%s'}) RETURN a.id, b.id", relType, escapeCypher(nodeID))
+		cypher = "MATCH (a)-[r:" + relType + "]->(b {id: $nodeID}) RETURN a.id, b.id"
 	default:
-		cypher = fmt.Sprintf("MATCH (a:%s {id: '%s'})-[r:%s]-(b) RETURN a.id, b.id", label, escapeCypher(nodeID), relType)
+		cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]-(b) RETURN a.id, b.id"
 	}
 
-	rows, err := store.query(ctx, cypher)
+	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeID", nodeID}})
 	if err != nil {
 		return nil, err
 	}
@@ -541,7 +588,8 @@ func (store *Store) QueryEdges(ctx context.Context, nodeID string, nodeKind stri
 // QueryAllEdges returns all edges of a given relation kind in a single query.
 func (store *Store) QueryAllEdges(ctx context.Context, relKind model.RelationKind, limit int) ([]model.Edge, error) {
 	relType := mapRelationType(relKind)
-	cypher := fmt.Sprintf("MATCH (a)-[r:%s]->(b) RETURN a.id, b.id, r.confidence", relType)
+	// Safe: relType is from hardcoded mapping, not user input.
+	cypher := "MATCH (a)-[r:" + relType + "]->(b) RETURN a.id, b.id, r.confidence"
 	if limit > 0 {
 		cypher += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -598,19 +646,19 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 	switch direction {
 	case model.Outgoing:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: '%s'})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor",
-			escapeCypher(nodeID), depth)
+			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor",
+			depth)
 	case model.Incoming:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: '%s'}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor",
-			depth, escapeCypher(nodeID))
+			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: $nodeID}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor",
+			depth)
 	default:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: '%s'})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor",
-			escapeCypher(nodeID), depth)
+			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor",
+			depth)
 	}
 
-	rows, err := store.query(ctx, nodeCypher)
+	rows, err := store.queryWithParams(ctx, nodeCypher, []cypherParam{{"nodeID", nodeID}})
 	if err != nil {
 		return subgraph, nil
 	}
@@ -621,15 +669,13 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 	}
 
 	// Query CALLS edges between root + all reachable nodes for tree structure
-	nodeIDs := make([]string, 0, len(subgraph.Nodes)+1)
-	nodeIDs = append(nodeIDs, "'"+escapeCypher(nodeID)+"'")
+	idList := make([]string, 0, len(subgraph.Nodes)+1)
+	idList = append(idList, nodeID)
 	for _, n := range subgraph.Nodes {
-		nodeIDs = append(nodeIDs, "'"+escapeCypher(n.ID)+"'")
+		idList = append(idList, n.ID)
 	}
-	edgeCypher := fmt.Sprintf(
-		"MATCH (a:Function)-[r:CALLS|DISPATCHES]->(b:Function) WHERE a.id IN [%s] AND b.id IN [%s] RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, type(r)",
-		strings.Join(nodeIDs, ","), strings.Join(nodeIDs, ","))
-	edgeRows, err := store.query(ctx, edgeCypher)
+	edgeCypher := "MATCH (a:Function)-[r:CALLS|DISPATCHES]->(b:Function) WHERE a.id IN $nodeIDs AND b.id IN $nodeIDs RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, type(r)"
+	edgeRows, err := store.queryWithParams(ctx, edgeCypher, []cypherParam{{"nodeIDs", idList}})
 	if err == nil {
 		subgraph.Edges = parseEdgeResults(edgeRows)
 	}
@@ -647,31 +693,30 @@ func (store *Store) BatchUpdateNodeProperties(ctx context.Context, kind string, 
 	if len(updates) == 0 {
 		return nil
 	}
-	const batchSize = 500
-	for i := 0; i < len(updates); i += batchSize {
-		end := i + batchSize
-		if end > len(updates) {
-			end = len(updates)
+	const batchSize = 5000
+	pipe := store.client.Pipeline()
+	count := 0
+	for _, u := range updates {
+		keys := sortedKeys(u.Props)
+		params := []cypherParam{{"nodeID", u.NodeID}}
+		var setParts []string
+		for i, k := range keys {
+			paramName := fmt.Sprintf("pv_%d", i)
+			setParts = append(setParts, "n."+k+" = $"+paramName)
+			params = append(params, cypherParam{paramName, u.Props[k]})
 		}
-		pipe := store.client.Pipeline()
-		for _, u := range updates[i:end] {
-			var setClauses []string
-			for k, v := range u.Props {
-				switch val := v.(type) {
-				case string:
-					setClauses = append(setClauses, fmt.Sprintf("n.%s = '%s'", k, escapeCypher(val)))
-				case float64:
-					setClauses = append(setClauses, fmt.Sprintf("n.%s = %f", k, val))
-				default:
-					setClauses = append(setClauses, fmt.Sprintf("n.%s = '%v'", k, v))
-				}
+		cypher := "MATCH (n:" + kind + " {id: $nodeID}) SET " + strings.Join(setParts, ", ")
+		pipe.Do(ctx, "GRAPH.QUERY", store.graphName, buildParamsHeader(params)+cypher)
+		count++
+		if count%batchSize == 0 {
+			if _, err := pipe.Exec(ctx); err != nil {
+				return err
 			}
-			cypher := fmt.Sprintf("MATCH (n:%s {id: '%s'}) SET %s", kind, escapeCypher(u.NodeID), strings.Join(setClauses, ", "))
-			pipe.Do(ctx, "GRAPH.QUERY", store.graphName, cypher)
+			pipe = store.client.Pipeline()
 		}
-		if _, err := pipe.Exec(ctx); err != nil {
-			return fmt.Errorf("batch update %d: %w", i/batchSize, err)
-		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
 	}
 	return nil
 }
@@ -680,12 +725,11 @@ func (store *Store) BatchUpdateNodeProperties(ctx context.Context, kind string, 
 func (store *Store) QueryNodesByFile(ctx context.Context, filePath string) ([]model.Node, error) {
 	var parts []string
 	for _, label := range constants.BaseSymbolKinds {
-		parts = append(parts, fmt.Sprintf(
-			"MATCH (n:%s) WHERE n.file_path = '%s' AND n.start_line IS NOT NULL AND n.end_line IS NOT NULL RETURN n.id, labels(n)[0], n.qualified_name, n.start_line, n.end_line",
-			label, escapeCypher(filePath)))
+		parts = append(parts,
+			"MATCH (n:"+label+") WHERE n.file_path = $filePath AND n.start_line IS NOT NULL AND n.end_line IS NOT NULL RETURN n.id, labels(n)[0], n.qualified_name, n.start_line, n.end_line")
 	}
 	cypher := strings.Join(parts, " UNION ")
-	rows, err := store.query(ctx, cypher)
+	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"filePath", filePath}})
 	if err != nil {
 		return nil, err
 	}
@@ -699,7 +743,8 @@ func (store *Store) QueryAllByKind(ctx context.Context, kind string, limit int) 
 	if limit > 0 {
 		limitClause = fmt.Sprintf(" LIMIT %d", limit)
 	}
-	cypher := fmt.Sprintf("MATCH (n:%s) RETURN %s%s", kind, returnClause, limitClause)
+	// Safe: kind and returnClause are from hardcoded constants.
+	cypher := "MATCH (n:" + kind + ") RETURN " + returnClause + limitClause
 	rows, err := store.query(ctx, cypher)
 	if err != nil {
 		return nil, err
@@ -759,16 +804,16 @@ func (store *Store) QueryNodesByProperty(ctx context.Context, kind string, key s
 	var whereClause string
 	switch matchMode {
 	case "contains":
-		whereClause = fmt.Sprintf("WHERE n.%s CONTAINS '%s'", key, escapeCypher(value))
+		whereClause = fmt.Sprintf("WHERE n.%s CONTAINS $propertyValue", key)
 	default: // exact
-		whereClause = fmt.Sprintf("WHERE n.%s = '%s'", key, escapeCypher(value))
+		whereClause = fmt.Sprintf("WHERE n.%s = $propertyValue", key)
 	}
 	limitClause := ""
 	if limit > 0 {
 		limitClause = fmt.Sprintf(" LIMIT %d", limit)
 	}
-	cypher := fmt.Sprintf("MATCH (n:%s) %s RETURN %s%s", kind, whereClause, returnClause, limitClause)
-	rows, err := store.query(ctx, cypher)
+	cypher := "MATCH (n:" + kind + ") " + whereClause + " RETURN " + returnClause + limitClause
+	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"propertyValue", value}})
 	if err != nil {
 		return nil, err
 	}
@@ -822,13 +867,12 @@ func (store *Store) QueryNodesByProperty(ctx context.Context, kind string, key s
 func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) ([]storage.SearchResult, error) {
 	var parts []string
 	for _, label := range constants.BaseSymbolKinds {
-		parts = append(parts, fmt.Sprintf(
-			"MATCH (n:%s) WHERE n.name CONTAINS '%s' RETURN n.id AS id, '%s' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name",
-			label, escapeCypher(queryText), label))
+		parts = append(parts,
+			"MATCH (n:"+label+") WHERE n.name CONTAINS $searchText RETURN n.id AS id, '"+label+"' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name")
 	}
 	cypher := strings.Join(parts, " UNION ") + fmt.Sprintf(" LIMIT %d", limit)
 
-	rows, err := store.query(ctx, cypher)
+	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"searchText", queryText}})
 	if err != nil {
 		return nil, err
 	}
@@ -844,9 +888,9 @@ func (store *Store) GetStats(ctx context.Context) (*model.GraphStats, error) {
 		FilesByLang: make(map[string]int),
 	}
 
+	// Safe: label and rel names are from hardcoded constants, not user input.
 	for _, label := range constants.AllNodeKinds {
-		cypher := fmt.Sprintf("MATCH (n:%s) RETURN count(n)", label)
-		rows, err := store.query(ctx, cypher)
+		rows, err := store.query(ctx, "MATCH (n:"+label+") RETURN count(n)")
 		if err != nil {
 			continue
 		}
@@ -862,8 +906,7 @@ func (store *Store) GetStats(ctx context.Context) (*model.GraphStats, error) {
 	edgeTypes := []string{"CALLS", "EXTENDS", "IMPLEMENTS", "OVERRIDES", "IMPORTS",
 		"HANDLES", "EXECUTES", "REMOTE_CALLS", "CONTAINS", "HAS_ANNOTATION", "STEP", "UNRESOLVED_CALL"}
 	for _, rel := range edgeTypes {
-		cypher := fmt.Sprintf("MATCH ()-[r:%s]->() RETURN count(r)", rel)
-		rows, err := store.query(ctx, cypher)
+		rows, err := store.query(ctx, "MATCH ()-[r:"+rel+"]->() RETURN count(r)")
 		if err != nil {
 			continue
 		}
@@ -935,18 +978,7 @@ func mapRelationType(kind model.RelationKind) string {
 	}
 }
 
-// escapeCypher escapes string values for Cypher queries.
-// NOTE: FalkorDB's GRAPH.QUERY does not support parameterized queries.
-// This is a known limitation. Input comes from our own parser, not user input,
-// so injection risk is low. But we escape known dangerous characters.
-func escapeCypher(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "'", "\\'")
-	return s
-}
-
 // convertByType converts a FalkorDB result value to the proper Go type based on schema column type.
-// FalkorDB may return booleans as string "true"/"false" — this normalizes them to Go bool.
 func convertByType(val interface{}, colType string) interface{} {
 	switch colType {
 	case "BOOLEAN":
@@ -959,30 +991,6 @@ func convertByType(val interface{}, colType string) interface{} {
 		return false
 	default:
 		return val
-	}
-}
-
-func formatCypherValue(value interface{}) string {
-	switch v := value.(type) {
-	case string:
-		return fmt.Sprintf("'%s'", escapeCypher(v))
-	case float64:
-		return fmt.Sprintf("%f", v)
-	case float32:
-		return fmt.Sprintf("%f", v)
-	case int:
-		return fmt.Sprintf("%d", v)
-	case int32:
-		return fmt.Sprintf("%d", v)
-	case int64:
-		return fmt.Sprintf("%d", v)
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	default:
-		return fmt.Sprintf("'%v'", v)
 	}
 }
 
