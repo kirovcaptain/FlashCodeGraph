@@ -606,7 +606,7 @@ func (store *Store) QueryAllEdges(ctx context.Context, relKind model.RelationKin
 		return nil, nil
 	}
 
-	var edges []model.Edge
+	edges := make([]model.Edge, 0, len(dataRows))
 	for _, row := range dataRows {
 		rowSlice, ok := row.([]interface{})
 		if !ok || len(rowSlice) < 2 {
@@ -774,7 +774,7 @@ func (store *Store) QueryAllByKind(ctx context.Context, kind string, limit int) 
 		return nil, nil
 	}
 
-	var nodes []model.Node
+	nodes := make([]model.Node, 0, len(dataRows))
 	for _, row := range dataRows {
 		rowSlice, ok := row.([]interface{})
 		if !ok {
@@ -840,7 +840,7 @@ func (store *Store) QueryNodesByProperty(ctx context.Context, kind string, key s
 		return nil, nil
 	}
 
-	var nodes []model.Node
+	nodes := make([]model.Node, 0, len(dataRows))
 	for _, row := range dataRows {
 		rowSlice, ok := row.([]interface{})
 		if !ok {
@@ -1003,7 +1003,7 @@ func parseCallChainResults(rows []interface{}) []model.Node {
 	if !ok {
 		return nil
 	}
-	var nodes []model.Node
+	nodes := make([]model.Node, 0, len(dataRows))
 	for _, row := range dataRows {
 		cols, ok := row.([]interface{})
 		if !ok || len(cols) < 4 {
@@ -1040,7 +1040,7 @@ func parseSimpleNodeResults(rows []interface{}) []model.Node {
 	if !ok {
 		return nil
 	}
-	var nodes []model.Node
+	nodes := make([]model.Node, 0, len(dataRows))
 	for _, row := range dataRows {
 		cols, ok := row.([]interface{})
 		if !ok || len(cols) < 4 {
@@ -1080,7 +1080,7 @@ func parseFullNodeResults(rows []interface{}) []model.Node {
 	if !ok {
 		return nil
 	}
-	var nodes []model.Node
+	nodes := make([]model.Node, 0, len(dataRows))
 	for _, row := range dataRows {
 		cols, ok := row.([]interface{})
 		if !ok || len(cols) < 2 {
@@ -1119,7 +1119,7 @@ func parseEdgeResults(rows []interface{}, defaultKind ...model.RelationKind) []m
 	if !ok {
 		return nil
 	}
-	var edges []model.Edge
+	edges := make([]model.Edge, 0, len(dataRows))
 	for _, row := range dataRows {
 		cols, ok := row.([]interface{})
 		if !ok || len(cols) < 2 {
@@ -1202,7 +1202,7 @@ func parseSearchResults(rows []interface{}) []storage.SearchResult {
 	if !ok {
 		return nil
 	}
-	var results []storage.SearchResult
+	results := make([]storage.SearchResult, 0, len(dataRows))
 	for _, row := range dataRows {
 		cols, ok := row.([]interface{})
 		if !ok || len(cols) < 4 {
