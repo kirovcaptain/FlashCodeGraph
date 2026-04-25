@@ -123,8 +123,8 @@ type cypherParam struct {
 }
 
 // buildParamsHeader builds the CYPHER params prefix for parameterized queries.
-// Example: buildParamsHeader([]cypherParam{{"sourceID", "abc"}, {"targetID", "def"}})
-// Returns: `CYPHER sourceID="abc" targetID="def" `
+// FalkorDB's CYPHER prefix uses a non-standard format: map keys are unquoted.
+// Example: buildParamsHeader([]cypherParam{{"sourceID", "abc"}}) → `CYPHER sourceID="abc" `
 func buildParamsHeader(params []cypherParam) string {
 	if len(params) == 0 {
 		return ""
@@ -134,11 +134,76 @@ func buildParamsHeader(params []cypherParam) string {
 	for _, param := range params {
 		builder.WriteString(param.Key)
 		builder.WriteByte('=')
-		encoded, _ := json.Marshal(param.Value)
-		builder.Write(encoded)
+		formatFalkorValue(&builder, param.Value)
 		builder.WriteByte(' ')
 	}
 	return builder.String()
+}
+
+// formatFalkorValue writes a value in FalkorDB's CYPHER param format.
+// Strings use json.Marshal (double-quoted with escaping).
+// Maps use unquoted keys: {id:"abc"} not {"id":"abc"}.
+// Arrays of maps: [{id:"abc"},{id:"def"}].
+func formatFalkorValue(builder *strings.Builder, value any) {
+	switch v := value.(type) {
+	case string:
+		encoded, _ := json.Marshal(v)
+		builder.Write(encoded)
+	case int:
+		fmt.Fprint(builder, v)
+	case int64:
+		fmt.Fprint(builder, v)
+	case float64:
+		fmt.Fprint(builder, v)
+	case bool:
+		if v {
+			builder.WriteString("true")
+		} else {
+			builder.WriteString("false")
+		}
+	case []map[string]any:
+		builder.WriteByte('[')
+		for i, m := range v {
+			if i > 0 {
+				builder.WriteByte(',')
+			}
+			formatFalkorMap(builder, m)
+		}
+		builder.WriteByte(']')
+	case map[string]any:
+		formatFalkorMap(builder, v)
+	case []string:
+		builder.WriteByte('[')
+		for i, s := range v {
+			if i > 0 {
+				builder.WriteByte(',')
+			}
+			encoded, _ := json.Marshal(s)
+			builder.Write(encoded)
+		}
+		builder.WriteByte(']')
+	case nil:
+		builder.WriteString("null")
+	default:
+		encoded, _ := json.Marshal(v)
+		builder.Write(encoded)
+	}
+}
+
+// formatFalkorMap writes a map with unquoted keys in FalkorDB format.
+func formatFalkorMap(builder *strings.Builder, m map[string]any) {
+	builder.WriteByte('{')
+	first := true
+	for k, v := range m {
+		if !first {
+			builder.WriteByte(',')
+		}
+		first = false
+		builder.WriteString(k)
+		builder.WriteByte(':')
+		formatFalkorValue(builder, v)
+	}
+	builder.WriteByte('}')
 }
 
 // queryWithParams executes a parameterized Cypher query.
@@ -175,38 +240,38 @@ func (store *Store) WriteNodes(ctx context.Context, nodes []model.Node) error {
 }
 
 func (store *Store) CreateNodes(ctx context.Context, nodes []model.Node) error {
-	const batchSize = 5000
-	// Group by Kind for batch CREATE
+	const batchSize = 200
+	// Group by Kind for UNWIND batch CREATE
 	grouped := make(map[string][]model.Node)
 	for i := range nodes {
 		grouped[nodes[i].Kind] = append(grouped[nodes[i].Kind], nodes[i])
 	}
 	for kind, kindNodes := range grouped {
-		// Build fixed template per kind using schema columns
+		// Build fixed UNWIND template per kind using schema columns
 		cols := model.ColumnNames(kind)
 		var propParts []string
-		propParts = append(propParts, "id: $nodeID")
+		propParts = append(propParts, "id: node.id")
 		for _, col := range cols {
-			propParts = append(propParts, col+": $prop_"+col)
+			propParts = append(propParts, col+": node."+col)
 		}
-		template := "CREATE (n:" + kind + " {" + strings.Join(propParts, ", ") + "})"
+		template := "UNWIND $nodes AS node CREATE (n:" + kind + " {" + strings.Join(propParts, ", ") + "})"
 
-		pipe := store.client.Pipeline()
-		for i, node := range kindNodes {
-			params := []cypherParam{{"nodeID", node.ID}}
-			for _, col := range cols {
-				params = append(params, cypherParam{"prop_" + col, node.Properties[col]})
+		for i := 0; i < len(kindNodes); i += batchSize {
+			end := i + batchSize
+			if end > len(kindNodes) {
+				end = len(kindNodes)
 			}
-			pipe.Do(ctx, "GRAPH.QUERY", store.graphName, buildParamsHeader(params)+template)
-			if (i+1)%batchSize == 0 {
-				if _, err := pipe.Exec(ctx); err != nil {
-					return err
+			nodeParams := make([]map[string]any, end-i)
+			for j, node := range kindNodes[i:end] {
+				m := map[string]any{"id": node.ID}
+				for _, col := range cols {
+					m[col] = node.Properties[col]
 				}
-				pipe = store.client.Pipeline()
+				nodeParams[j] = m
 			}
-		}
-		if _, err := pipe.Exec(ctx); err != nil {
-			return err
+			if _, err := store.queryWithParams(ctx, template, []cypherParam{{"nodes", nodeParams}}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
