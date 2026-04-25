@@ -2082,3 +2082,48 @@ func TestResolveCalls_EnrichArgTypes_StaticClassChain(t *testing.T) {
 	}
 	t.Logf("✅ DateUtil.parseDate(s).getTime() resolved to Long via static class name fallback")
 }
+
+func TestResolveCalls_EnrichArgTypes_StaticImportEnum(t *testing.T) {
+	// import static ExceptionCode.Safety → ApiResult.setFail(Safety) should infer Safety as ExceptionCode
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "sf_exc", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"code","type":"ExceptionCode"}]`},
+		{ID: "sf_str", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: `[{"name":"msg","type":"String"}]`},
+		{ID: "c_api", Name: "ApiResult", QualifiedName: "com.example.ApiResult", Kind: "Class", FilePath: "ApiResult.java"},
+		{ID: "caller1", Name: "check", QualifiedName: "com.example.Aspect.check", Kind: "Function", FilePath: "Aspect.java"},
+		{ID: "c_asp", Name: "Aspect", QualifiedName: "com.example.Aspect", Kind: "Class", FilePath: "Aspect.java"},
+	})
+
+	resolver := NewResolver(table, map[string]LanguageHelper{
+		"java": &testJavaJDKHelper{testJavaHelper: testJavaHelper{symbolTable: table}},
+	})
+
+	envs := map[string]*model.TypeEnv{
+		"Aspect.java": {
+			Bindings: map[string]*model.TypeInfo{},
+			Imports: []model.RawImport{
+				{ModulePath: "com.example.ApiResult", SymbolName: "ApiResult", FilePath: "Aspect.java"},
+				{ModulePath: "com.example.ExceptionCode.Safety", SymbolName: "Safety", FilePath: "Aspect.java"},
+			},
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:   "setFail",
+		CallerName:   "Aspect.check",
+		FilePath:     "Aspect.java",
+		ReceiverExpr: "ApiResult",
+		ArgCount:     1,
+		ArgTypes:     []string{""},
+		ArgExprs:     []string{"Safety"},
+	}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	if relations[0].TargetID != "sf_exc" {
+		t.Fatalf("expected sf_exc (ExceptionCode overload), got %s", relations[0].TargetID)
+	}
+	t.Logf("✅ static import Safety → ExceptionCode → setFail(ExceptionCode) disambiguated")
+}

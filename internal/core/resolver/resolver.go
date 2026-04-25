@@ -1096,6 +1096,10 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 	if expr == "" {
 		return ""
 	}
+	// Strip outer parentheses: (expr) → expr
+	for strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
+		expr = expr[1 : len(expr)-1]
+	}
 	// 0. String concatenation: any expr containing + and a string literal is String
 	if strings.Contains(expr, "+") && strings.Contains(expr, "\"") {
 		return "String"
@@ -1112,7 +1116,19 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 			if typeName := resolver.lookupFieldInHierarchy(call.CallerName, expr, envs); typeName != "" {
 				return extractSimpleType(typeName)
 			}
-			// Static import match
+			// Static import symbol match: e.g. import static ExceptionCode.Safety → Safety's type is ExceptionCode
+			for _, imp := range env.Imports {
+				if imp.SymbolName == expr {
+					classPath := strings.TrimSuffix(imp.ModulePath, "."+imp.SymbolName)
+					if classPath != imp.ModulePath {
+						className := extractSimpleType(classPath)
+						if len(className) > 0 && className[0] >= 'A' && className[0] <= 'Z' {
+							return className
+						}
+					}
+				}
+			}
+			// Static import qualified name match (legacy)
 			for _, imp := range env.Imports {
 				syms := resolver.symbolTable.FindByQualifiedName(imp.ModulePath + "." + expr)
 				if len(syms) > 0 {
@@ -1139,7 +1155,10 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 	}
 	// 3. obj.method() — resolve receiver type then lookup method return type
 	if strings.HasSuffix(expr, ")") && strings.Contains(expr, ".") {
-		dotIdx := strings.LastIndex(expr, ".")
+		dotIdx := lastDotOutsideParens(expr)
+		if dotIdx < 0 {
+			return ""
+		}
 		objPart := expr[:dotIdx]
 		methodPart := expr[dotIdx+1:]
 		if parenIdx := strings.Index(methodPart, "("); parenIdx >= 0 {
@@ -1166,6 +1185,25 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 		}
 	}
 	return ""
+}
+
+// lastDotOutsideParens finds the last '.' that is not inside parentheses.
+// Handles nested method calls like "DateUtil.parseDate(reqs.getToDate()).getTime()".
+func lastDotOutsideParens(expr string) int {
+	depth := 0
+	for i := len(expr) - 1; i >= 0; i-- {
+		switch expr[i] {
+		case ')':
+			depth++
+		case '(':
+			depth--
+		case '.':
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 // extractSimpleType strips pointer prefix and package path, returning the short type name.
