@@ -10,7 +10,7 @@ import (
 
 func newJavaResolver(table *resolver.SymbolTable) *resolver.Resolver {
 	return resolver.NewResolver(table, map[string]resolver.LanguageHelper{
-		"java": java.NewHelper(table),
+		"java": java.NewHelper(table, nil),
 	})
 }
 
@@ -142,7 +142,7 @@ func TestJavaHelper_FilterByArgTypes_Exclusion(t *testing.T) {
 		{Name: "e", Params: `[{"name":"code","type":"ResponseCode"},{"name":"data","type":"T"}]`},
 		{Name: "e", Params: `[{"name":"status","type":"Integer"},{"name":"msg","type":"String"}]`},
 	}
-	helper := java.NewHelper(resolver.NewSymbolTable())
+	helper := java.NewHelper(resolver.NewSymbolTable(), nil)
 
 	// e(200, "msg") → ArgTypes=["int", "String"] → exclude ResponseCode, int→Integer via boxing
 	result := resolver.FilterByArgTypesWithHelper(candidates, []string{"int", "String"}, helper)

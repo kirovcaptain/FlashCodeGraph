@@ -10,13 +10,14 @@ import (
 
 // Helper implements resolver.LanguageHelper for Java.
 type Helper struct {
-	symbolTable *resolver.SymbolTable
-	heritage    []model.RawHeritage
+	symbolTable     *resolver.SymbolTable
+	heritage        []model.RawHeritage
+	externalMethods *ExternalMethodManager
 }
 
 // NewHelper creates a Java language helper.
-func NewHelper(symbolTable *resolver.SymbolTable) *Helper {
-	return &Helper{symbolTable: symbolTable}
+func NewHelper(symbolTable *resolver.SymbolTable, externalMethods *ExternalMethodManager) *Helper {
+	return &Helper{symbolTable: symbolTable, externalMethods: externalMethods}
 }
 
 // SetHeritage implements resolver.HeritageAware.
@@ -231,7 +232,7 @@ func (javaHelper *Helper) InferStringConcat(expr string) bool {
 }
 
 func (javaHelper *Helper) LookupMethodReturn(typeName, methodName string) (string, bool) {
-	return lookupJDKMethodReturn(typeName, methodName)
+	return javaHelper.externalMethods.Lookup(typeName, methodName)
 }
 
 func (javaHelper *Helper) extractPackage(filePath string) string {

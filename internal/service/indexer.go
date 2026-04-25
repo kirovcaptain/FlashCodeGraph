@@ -534,7 +534,7 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	indexer.progress.Emit(PhaseResolving, 0, 0, "relations")
 
 	// Build language helper for the project's primary language only
-	langHelpers := buildLanguageHelpers(scanCtx.projectInfo.Language, symbolTable)
+	langHelpers := buildLanguageHelpers(scanCtx.projectInfo.Language, symbolTable, scanCtx.projectInfo.Frameworks, scanCtx.absPath)
 	resolverInstance := resolver.NewResolver(symbolTable, langHelpers)
 	allImports, allCalls, allHeritage := collectRawRelations(parseResults)
 	allFilePaths := collectSourceFilePaths(scanCtx.files)
@@ -1757,11 +1757,11 @@ func isSameLanguageFamily(lang1, lang2 string) bool {
 }
 // buildLanguageHelpers creates resolver helpers only for the project's primary language.
 // TS and JS share the same helper, so both are registered when either is the primary language.
-func buildLanguageHelpers(language string, symbolTable *resolver.SymbolTable) map[string]resolver.LanguageHelper {
+func buildLanguageHelpers(language string, symbolTable *resolver.SymbolTable, frameworks []string, projectRoot string) map[string]resolver.LanguageHelper {
 	helpers := make(map[string]resolver.LanguageHelper)
 	switch language {
 	case constants.LangJava:
-		helpers[constants.LangJava] = resolverjava.NewHelper(symbolTable)
+		helpers[constants.LangJava] = resolverjava.NewHelper(symbolTable, resolverjava.NewExternalMethodManager(frameworks, projectRoot))
 	case constants.LangGo:
 		helpers[constants.LangGo] = resolvergo.NewHelper(symbolTable)
 	case constants.LangPython:

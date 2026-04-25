@@ -44,9 +44,9 @@ func detectFromFile(fileName, content string) []Framework {
 	base := filepath.Base(fileName)
 	switch {
 	case base == "pom.xml":
-		return matchPatterns(content, javaPatterns)
+		return detectJavaFrameworks(content)
 	case strings.HasPrefix(base, "build.gradle"):
-		return matchPatterns(content, javaPatterns)
+		return detectJavaFrameworks(content)
 	case base == "package.json":
 		return detectNpmFrameworks(content)
 	case base == "go.mod":
@@ -95,26 +95,26 @@ var javaPatterns = []struct {
 	{"springdoc", "swagger3", "doc"},
 	{"swagger", "swagger2", "doc"},
 	{"rocketmq", "rocketmq", "mq"},
+	{"com.google.guava", "guava", "util"},
+	{"com.google.common", "guava", "util"},
+	{"commons-lang", "commons", "util"},
+	{"commons-collections", "commons", "util"},
+	{"commons-io", "commons", "util"},
+	{"org.apache.commons", "commons", "util"},
+	{"hutool", "hutool", "util"},
+	{"cn.hutool", "hutool", "util"},
 }
 
-func matchPatterns(content string, patterns []struct{ keyword, name, category string }) []Framework {
+func detectJavaFrameworks(content string) []Framework {
 	var frameworks []Framework
 	seen := make(map[string]bool)
-	for _, p := range patterns {
+	for _, p := range javaPatterns {
 		if !seen[p.name] && strings.Contains(content, p.keyword) {
 			seen[p.name] = true
 			frameworks = append(frameworks, Framework{Name: p.name, Category: p.category})
 		}
 	}
 	return frameworks
-}
-
-func detectMavenFrameworks(content string) []Framework {
-	return matchPatterns(content, javaPatterns)
-}
-
-func detectGradleFrameworks(content string) []Framework {
-	return matchPatterns(content, javaPatterns)
 }
 
 func detectNpmFrameworks(content string) []Framework {
