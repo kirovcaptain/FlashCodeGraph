@@ -1120,6 +1120,10 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 				}
 			}
 		}
+		// Fallback: uppercase first letter → Java class name convention (e.g. DateUtil, StringUtils)
+		if len(expr) > 0 && expr[0] >= 'A' && expr[0] <= 'Z' {
+			return expr
+		}
 		return ""
 	}
 	// 2. Method call — lookup return type in SymbolTable

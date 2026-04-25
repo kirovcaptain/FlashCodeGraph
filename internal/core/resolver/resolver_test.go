@@ -14,11 +14,29 @@ type testJavaJDKHelper struct {
 
 var testJDKReturns = map[string]string{
 	"String.trim": "String", "String.toUpperCase": "String", "String.toLowerCase": "String",
+	"DateUtil.parseDate": "DateTime", "DateTime.getTime": "long",
 }
 
 func (h *testJavaJDKHelper) LookupMethodReturn(typeName, methodName string) (string, bool) {
 	ret, ok := testJDKReturns[typeName+"."+methodName]
 	return ret, ok
+}
+
+func (h *testJavaJDKHelper) IsTypeAssignable(argType, paramType string) bool {
+	if argType == paramType {
+		return true
+	}
+	// Boxing: long↔Long, int↔Integer, etc.
+	boxMap := map[string]string{
+		"int": "Integer", "Integer": "int",
+		"long": "Long", "Long": "long",
+		"double": "Double", "Double": "double",
+		"boolean": "Boolean", "Boolean": "boolean",
+	}
+	if boxed, ok := boxMap[argType]; ok && boxed == paramType {
+		return true
+	}
+	return false
 }
 
 func newTestResolver(table *SymbolTable) *Resolver {
@@ -2015,4 +2033,52 @@ func TestResolveFullQualifiedType_MultipleWildcardImports(t *testing.T) {
 		t.Fatalf("expected 'com.example.dao.CoinFlowDao', got %q", result)
 	}
 	t.Log("✅ resolveFullQualifiedType: multiple wildcards, only correct one matches")
+}
+
+func TestResolveCalls_EnrichArgTypes_StaticClassChain(t *testing.T) {
+	// DateUtil.parseDate(s).getTime() as argument — static class name fallback enables chain inference
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "get_str", Name: "get", QualifiedName: "com.example.Dao.get", Kind: "Function", FilePath: "Dao.java", Params: `[{"name":"id","type":"String"}]`},
+		{ID: "get_long", Name: "get", QualifiedName: "com.example.Dao.get", Kind: "Function", FilePath: "Dao.java", Params: `[{"name":"time","type":"Long"}]`},
+		{ID: "c_dao", Name: "Dao", QualifiedName: "com.example.Dao", Kind: "Class", FilePath: "Dao.java"},
+		{ID: "caller1", Name: "run", QualifiedName: "com.example.Svc.run", Kind: "Function", FilePath: "Svc.java"},
+		{ID: "c_svc", Name: "Svc", QualifiedName: "com.example.Svc", Kind: "Class", FilePath: "Svc.java"},
+	})
+
+	jdkHelper := &testJavaJDKHelper{testJavaHelper: testJavaHelper{symbolTable: table}}
+	resolver := NewResolver(table, map[string]LanguageHelper{
+		"java": jdkHelper,
+	})
+
+	envs := map[string]*model.TypeEnv{
+		"Svc.java": {
+			Bindings: map[string]*model.TypeInfo{
+				"Svc:dao": {TypeName: "Dao"},
+			},
+			Imports: []model.RawImport{},
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:   "get",
+		CallerName:   "Svc.run",
+		FilePath:     "Svc.java",
+		ReceiverExpr: "dao",
+		ArgCount:     1,
+		ArgTypes:     []string{""},
+		ArgExprs:     []string{"DateUtil.parseDate(s).getTime()"},
+	}}
+
+	relations, hints := resolver.ResolveCalls(calls, envs)
+	if len(hints) > 0 {
+		t.Fatalf("expected 0 hints, got %d", len(hints))
+	}
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	if relations[0].TargetID != "get_long" {
+		t.Fatalf("expected get_long (Long overload), got %s", relations[0].TargetID)
+	}
+	t.Logf("✅ DateUtil.parseDate(s).getTime() resolved to Long via static class name fallback")
 }
