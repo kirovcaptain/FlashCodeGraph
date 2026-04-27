@@ -432,11 +432,9 @@ func ExtractDubboReference(fieldNode *tree_sitter.Node, content []byte, packageN
 func ExtractGrpcClientField(fieldNode *tree_sitter.Node, content []byte, packageName, className, filePath string, result *model.ParseResult) {
 	annotations := collectAnnotations(fieldNode, content)
 	isGrpcClient := false
-	var serviceName string
 	for _, annotation := range annotations {
 		if annotation.Name == "GrpcClient" {
 			isGrpcClient = true
-			serviceName = annotation.Params["value"]
 			break
 		}
 	}
@@ -465,14 +463,9 @@ func ExtractGrpcClientField(fieldNode *tree_sitter.Node, content []byte, package
 		ownerClass = packageName + "." + className
 	}
 
-	targetType := fieldType
-	if serviceName != "" {
-		targetType = serviceName
-	}
-
 	result.PendingRemoteCalls = append(result.PendingRemoteCalls, model.PendingRemoteCall{
 		FieldName:   fieldName,
-		FieldType:   targetType,
+		FieldType:   fieldType,
 		Protocol:    "grpc",
 		OwnerClass:  ownerClass,
 		Annotations: annotations,
