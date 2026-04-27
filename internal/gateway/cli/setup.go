@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
@@ -60,10 +61,14 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	// Step 4: Exclude tests
 	excludeTests := promptYesNo(reader, "Exclude test files?", true)
 
+	// Step 4.5: Select dependent projects (toggle mode)
+	existingConfig, _ := config.Load(absPath)
+	dependencies, properties := selectDependencies(reader, absPath, existingConfig)
+
 	// Step 5: Generate config
 	fmt.Println()
 	configPath := config.ProjectConfigPath(absPath)
-	cfg := buildSetupConfig(projectName, projectType, database, ignore, excludeTests)
+	cfg := buildSetupConfig(projectName, projectType, database, ignore, excludeTests, dependencies, properties)
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		return err
 	}
@@ -180,18 +185,30 @@ func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) bool {
 	return line == "y" || line == "yes"
 }
 
-func buildSetupConfig(projectName, projectType, database string, ignore []string, excludeTests bool) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("[project]\nname = %q\ntype = %q\n\n", projectName, projectType))
-	sb.WriteString(fmt.Sprintf("[storage]\ndatabase = %q\n\n", database))
-	sb.WriteString("[index]\n")
+func buildSetupConfig(projectName, projectType, database string, ignore []string, excludeTests bool, dependencies []config.DependencyProject, properties map[string]string) string {
+	var setupBuilder strings.Builder
+	setupBuilder.WriteString(fmt.Sprintf("[project]\nname = %q\ntype = %q\n\n", projectName, projectType))
+	setupBuilder.WriteString(fmt.Sprintf("[storage]\ndatabase = %q\n\n", database))
+	setupBuilder.WriteString("[index]\n")
 	if len(ignore) > 0 {
-		sb.WriteString(fmt.Sprintf("ignore = [%s]\n", formatStringSlice(ignore)))
+		setupBuilder.WriteString(fmt.Sprintf("ignore = [%s]\n", formatStringSlice(ignore)))
 	}
 	if excludeTests {
-		sb.WriteString("exclude_tests = true\n")
+		setupBuilder.WriteString("exclude_tests = true\n")
 	}
-	return sb.String()
+	if len(dependencies) > 0 {
+		setupBuilder.WriteString("\n")
+		for _, dependency := range dependencies {
+			setupBuilder.WriteString(fmt.Sprintf("[[dependencies.projects]]\npath = %q\nbranch = %q\n\n", dependency.Path, dependency.Branch))
+		}
+	}
+	if len(properties) > 0 {
+		setupBuilder.WriteString("[dependencies.properties]\n")
+		for key, value := range properties {
+			setupBuilder.WriteString(fmt.Sprintf("%q = %q\n", key, value))
+		}
+	}
+	return setupBuilder.String()
 }
 
 func formatStringSlice(items []string) string {
@@ -200,4 +217,228 @@ func formatStringSlice(items []string) string {
 		quoted[i] = fmt.Sprintf("%q", item)
 	}
 	return strings.Join(quoted, ", ")
+}
+
+// selectDependencies handles Step 4.5 (dependency toggle) and Step 4.6 (properties editing).
+func selectDependencies(reader *bufio.Reader, absPath string, existingConfig *config.Config) ([]config.DependencyProject, map[string]string) {
+	registry, err := storage.NewRegistry(config.GlobalDir())
+	if err != nil {
+		return nil, nil
+	}
+
+	// Collect available projects (exclude current)
+	type projectInfo struct {
+		name     string
+		path     string
+		branches []string
+	}
+	projectMap := make(map[string]*projectInfo)
+	for _, entry := range registry.List() {
+		entryAbsPath, _ := filepath.Abs(entry.Path)
+		if entryAbsPath == absPath {
+			continue
+		}
+		if existing, ok := projectMap[entry.Path]; ok {
+			existing.branches = append(existing.branches, entry.Branch)
+		} else {
+			projectMap[entry.Path] = &projectInfo{
+				name:     entry.Name,
+				path:     entry.Path,
+				branches: []string{entry.Branch},
+			}
+		}
+	}
+
+	if len(projectMap) == 0 {
+		fmt.Println("\n  No other indexed projects found. Skip dependency selection.")
+		properties := editProperties(reader, existingConfig)
+		return nil, properties
+	}
+
+	// Build ordered list
+	var availableProjects []*projectInfo
+	for _, projectEntry := range projectMap {
+		availableProjects = append(availableProjects, projectEntry)
+	}
+
+	// Build selected set from existing config
+	selectedSet := make(map[string]string) // path → branch
+	if existingConfig != nil {
+		for _, dependency := range existingConfig.Dependencies.Projects {
+			selectedSet[dependency.Path] = dependency.Branch
+		}
+	}
+
+	// Display toggle list
+	fmt.Println("\n  Dependent projects (* = selected):")
+	for i, project := range availableProjects {
+		marker := " "
+		branchInfo := ""
+		if branch, ok := selectedSet[project.path]; ok {
+			marker = "*"
+			branchInfo = fmt.Sprintf(" (%s)", branch)
+		}
+		fmt.Printf("    [%d] %s %s (%s)%s\n", i+1, marker, project.name, project.path, branchInfo)
+		if _, ok := selectedSet[project.path]; !ok {
+			fmt.Printf("         Branches: %s\n", strings.Join(project.branches, ", "))
+		}
+	}
+
+	fmt.Print("\n  Toggle (comma-separated, or Enter to keep): ")
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+
+	if line != "" {
+		for _, part := range strings.Split(line, ",") {
+			index, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil || index < 1 || index > len(availableProjects) {
+				continue
+			}
+			project := availableProjects[index-1]
+			if _, isSelected := selectedSet[project.path]; isSelected {
+				// Toggle off
+				delete(selectedSet, project.path)
+				fmt.Printf("  Removed: %s\n", project.name)
+			} else {
+				// Toggle on — ask for branch
+				branch := selectBranch(reader, project.name, project.branches)
+				selectedSet[project.path] = branch
+				fmt.Printf("  Added: %s (%s)\n", project.name, branch)
+			}
+		}
+	}
+
+	// Build result
+	var dependencies []config.DependencyProject
+	for projectPath, branch := range selectedSet {
+		dependencies = append(dependencies, config.DependencyProject{Path: projectPath, Branch: branch})
+	}
+
+	if len(dependencies) > 0 {
+		fmt.Println("\n  Dependencies:")
+		for _, dependency := range dependencies {
+			fmt.Printf("    - %s (%s)\n", filepath.Base(dependency.Path), dependency.Branch)
+		}
+	}
+
+	// Step 4.6: Properties
+	properties := editProperties(reader, existingConfig)
+
+	return dependencies, properties
+}
+
+// selectBranch prompts user to select a branch from available branches.
+func selectBranch(reader *bufio.Reader, projectName string, branches []string) string {
+	if len(branches) == 1 {
+		return branches[0]
+	}
+	fmt.Printf("  Select branch for %s:\n", projectName)
+	for i, branch := range branches {
+		fmt.Printf("    [%d] %s\n", i+1, branch)
+	}
+	fmt.Print("  Branch: ")
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	index, err := strconv.Atoi(line)
+	if err == nil && index >= 1 && index <= len(branches) {
+		return branches[index-1]
+	}
+	return branches[0]
+}
+
+// editProperties handles Step 4.6 — key-value property editing.
+func editProperties(reader *bufio.Reader, existingConfig *config.Config) map[string]string {
+	properties := make(map[string]string)
+	if existingConfig != nil && len(existingConfig.Dependencies.Properties) > 0 {
+		for key, value := range existingConfig.Dependencies.Properties {
+			properties[key] = value
+		}
+	}
+
+	// Build ordered key list for stable display
+	orderedKeys := make([]string, 0, len(properties))
+	for key := range properties {
+		orderedKeys = append(orderedKeys, key)
+	}
+
+	if len(properties) > 0 {
+		fmt.Println("\n  Current properties:")
+		for i, key := range orderedKeys {
+			fmt.Printf("    [%d] %s = %s\n", i+1, key, properties[key])
+		}
+		fmt.Println("\n  Edit: [number] to modify, [a] to add, [d number] to delete, Enter to keep")
+	} else {
+		fmt.Println("\n  Properties (for @FeignClient placeholders like ${xxx}):")
+		fmt.Println("    (none)")
+		fmt.Println("\n  Edit: [a] to add, Enter to skip")
+	}
+
+	for {
+		fmt.Print("  > ")
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+
+		if line == "" {
+			break
+		}
+
+		if line == "a" {
+			// Add new property
+			fmt.Print("  Key: ")
+			key, _ := reader.ReadString('\n')
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			fmt.Print("  Value: ")
+			value, _ := reader.ReadString('\n')
+			value = strings.TrimSpace(value)
+			properties[key] = value
+			orderedKeys = append(orderedKeys, key)
+			fmt.Printf("  Added: %s = %s\n", key, value)
+			continue
+		}
+
+		if strings.HasPrefix(line, "d ") || strings.HasPrefix(line, "d\t") {
+			// Delete property
+			indexStr := strings.TrimSpace(line[2:])
+			index, err := strconv.Atoi(indexStr)
+			if err != nil || index < 1 || index > len(orderedKeys) {
+				fmt.Println("  Invalid number")
+				continue
+			}
+			deletedKey := orderedKeys[index-1]
+			delete(properties, deletedKey)
+			orderedKeys = append(orderedKeys[:index-1], orderedKeys[index:]...)
+			fmt.Printf("  Deleted: %s\n", deletedKey)
+			continue
+		}
+
+		// Modify existing property by number
+		index, err := strconv.Atoi(line)
+		if err != nil || index < 1 || index > len(orderedKeys) {
+			fmt.Println("  Invalid input. Use [number], [a], [d number], or Enter.")
+			continue
+		}
+		key := orderedKeys[index-1]
+		fmt.Printf("  %s = %s\n", key, properties[key])
+		fmt.Print("  New value (Enter to keep): ")
+		newValue, _ := reader.ReadString('\n')
+		newValue = strings.TrimSpace(newValue)
+		if newValue != "" {
+			properties[key] = newValue
+			fmt.Printf("  Updated: %s = %s\n", key, newValue)
+		}
+	}
+
+	if len(properties) > 0 {
+		fmt.Println("\n  Final properties:")
+		for _, key := range orderedKeys {
+			if value, ok := properties[key]; ok {
+				fmt.Printf("    %s = %s\n", key, value)
+			}
+		}
+	}
+
+	return properties
 }
