@@ -11,16 +11,16 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
-// Base confidence scores by match type.
+// Base confidence scores by match type — defined in constants/confidence.go.
 const (
-	ConfidenceTypeExact  = 0.95
-	ConfidenceArgCount   = 0.85
-	ConfidenceSameFile   = 0.85
-	ConfidenceNameUnique = 0.70
-	ConfidenceTypeParent = 0.65
-	ConfidenceBestGuess  = 0.25
-	ConfidenceExternal   = 0.70
-	ConfidenceImportPath = 1.0
+	ConfidenceTypeExact  = constants.ConfidenceTypeExact
+	ConfidenceArgCount   = constants.ConfidenceArgCount
+	ConfidenceSameFile   = constants.ConfidenceSameFile
+	ConfidenceNameUnique = constants.ConfidenceNameUnique
+	ConfidenceTypeParent = constants.ConfidenceTypeParent
+	ConfidenceBestGuess  = constants.ConfidenceBestGuess
+	ConfidenceExternal   = constants.ConfidenceExternal
+	ConfidenceImportPath = constants.ConfidenceImportPath
 )
 
 // Resolver resolves raw calls and heritage into typed relationships.

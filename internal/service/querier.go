@@ -138,7 +138,7 @@ func (querier *Querier) resolveAnnotatedNodes(ctx context.Context, annIDs []stri
 // DefaultMinConfidence is the minimum confidence threshold for call chain traversal.
 // Filters out best_guess (0.25) and type_parent (0.65) edges, keeping only
 // type_exact (0.95), arg_count (0.85), same_file (0.85), and name_unique (0.70).
-const DefaultMinConfidence = 0.70
+const DefaultMinConfidence = constants.ConfidenceDefaultMin
 
 // ResolveFunction finds a function by name or qualified name.
 // Returns (node, candidates, error). If multiple matches, node is nil and candidates are returned.

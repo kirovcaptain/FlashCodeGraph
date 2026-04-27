@@ -183,7 +183,7 @@ func (goHelper *Helper) InferImplements() []model.ResolvedRelation {
 				Kind:       model.RelImplements,
 				SourceKind: constants.KindClass,
 				ResolvedBy: "inferred_implements",
-				Confidence: 0.85,
+				Confidence: constants.ConfidenceArgCount,
 			})
 
 			for _, ifaceMethod := range goHelper.symbolTable.FindMethodsByQualifiedName(ifaceQN) {
@@ -193,12 +193,12 @@ func (goHelper *Helper) InferImplements() []model.ResolvedRelation {
 						relations = append(relations, model.ResolvedRelation{
 							SourceID: structMethod.ID, TargetID: ifaceMethod.ID,
 							Kind: model.RelOverrides, SourceKind: constants.KindFunction,
-							Confidence: 0.85, ResolvedBy: "inferred_override", Candidates: 1,
+							Confidence: constants.ConfidenceArgCount, ResolvedBy: "inferred_override", Candidates: 1,
 						})
 						relations = append(relations, model.ResolvedRelation{
 							SourceID: ifaceMethod.ID, TargetID: structMethod.ID,
 							Kind: model.RelDispatches, SourceKind: constants.KindFunction,
-							Confidence: 0.85, ResolvedBy: "inferred_dispatch", Candidates: 1,
+							Confidence: constants.ConfidenceArgCount, ResolvedBy: "inferred_dispatch", Candidates: 1,
 						})
 					}
 				}

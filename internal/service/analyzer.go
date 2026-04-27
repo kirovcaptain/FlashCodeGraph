@@ -394,7 +394,7 @@ func (analyzer *Analyzer) traceDFS(forest *CallForest, step *ProcessStep, visite
 		return
 	}
 	for _, edge := range forest.Children[step.NodeID] {
-		if visited[edge.TargetID] || edge.Confidence < 0.5 {
+		if visited[edge.TargetID] || edge.Confidence < constants.ConfidenceLowThreshold {
 			continue
 		}
 		visited[edge.TargetID] = true

@@ -831,7 +831,7 @@ func (indexer *Indexer) writeResolvedRelations(
 
 	// Count low-confidence calls for reporting
 	for _, relation := range callRelations {
-		if relation.Confidence < 0.5 {
+		if relation.Confidence < constants.ConfidenceLowThreshold {
 			scanCtx.result.LowConfidenceCount++
 		}
 	}
@@ -1964,7 +1964,7 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 						"cross_service":      false,
 						"consumer_interface": remoteCall.CallerName,
 						"target_service":     remoteCall.TargetService,
-						"confidence":         0.9,
+						"confidence":         constants.ConfidenceViaRoute,
 					},
 				})
 				scanCtx.result.RelationsByKind["CALLS_VIA_ROUTE"]++
@@ -2006,7 +2006,7 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 						"target_project":     match.ProjectPath,
 						"target_branch":      match.Branch,
 						"target_handler":     match.Route.HandlerName,
-						"confidence":         0.85,
+						"confidence":         constants.ConfidenceCrossService,
 					},
 				})
 				scanCtx.result.RelationsByKind["CALLS_CROSS_SERVICE"]++
@@ -2265,7 +2265,7 @@ func (indexer *Indexer) resolvePendingRemoteCalls(ctx context.Context, scanCtx *
 					"target_service": pending.FieldType,
 					"protocol":       pending.Protocol,
 					"field_name":     pending.FieldName,
-					"confidence":     0.9,
+					"confidence":     constants.ConfidencePendingRemote,
 				},
 			})
 			scanCtx.result.RelationsByKind["REMOTE_CALLS_EXT"]++
