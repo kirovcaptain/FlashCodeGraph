@@ -13,6 +13,7 @@
 | Find by architectural layer | `query_by_layer` | grep for package names |
 | List HTTP endpoints | `query_entry_points` (type="http_endpoint") | grep for route annotations |
 | Trace API request chain | `query_route_chain` | manual read through layers |
+| Trace cross-service calls | `query_cross_chain` | manual grep + read across repos |
 | View full call trees from entries | `query_call_forest` | manual trace |
 
 ## Decision Rules
@@ -27,6 +28,7 @@
 | Layer-based lookup | `query_by_layer` | grep for package path |
 | Who calls a function | `query_call_chain(reverse=true)` | grep for function name |
 | HTTP route full chain | `query_route_chain` | grep for route path |
+| Cross-service dependencies | `query_cross_chain` | grep across repos |
 | All HTTP endpoints | `query_entry_points(type="http_endpoint")` | grep for @GetMapping etc. |
 
 ## Mode Parameter

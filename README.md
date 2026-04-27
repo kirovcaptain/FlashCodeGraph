@@ -22,6 +22,7 @@ Code understanding should be as fast as a database query. FCG aims to be the **s
 
 - **Multi-language** — Java, Go, Python, TypeScript/JavaScript with framework-aware parsing
 - **Graph-based code intelligence** — call chains, impact analysis, route tracing, annotation queries
+- **Cross-project call chains** — trace calls across project boundaries through dependency configuration (FeignClient, Dubbo, gRPC)
 - **Incremental indexing** — fingerprint-based change detection, only re-parses modified files
 - **Confidence-scored resolution** — multi-strategy call resolution with 6-level confidence scoring
 - **Dual interface** — CLI for interactive use, MCP Server for AI agent integration
@@ -61,7 +62,7 @@ fcg mcp serve
 
 | Language | Framework Detection |
 |----------|-------------------|
-| Java | Spring, MyBatis, Hibernate, Feign, Dubbo, gRPC |
+| Java | Spring, MyBatis, Hibernate, Feign, Dubbo, gRPC, Protobuf |
 | Go | Gin, Echo, Fiber, gRPC |
 | Python | FastAPI, Django, Flask, Requests, Httpx, Strawberry |
 | TypeScript / JavaScript | Express, NestJS, Axios |
@@ -304,6 +305,7 @@ The MCP Server exposes the following tools for AI agent integration:
 | `check_index_status` | Check if index is up-to-date, returns added/modified/deleted file counts |
 | `query_symbol` | Find symbol by exact name, returns file path, kind, and properties |
 | `query_call_chain` | Traverse call chain — callees or callers with depth/confidence/mode control |
+| `query_cross_chain` | Query cross-service call relationships — aggregated by target project, protocol, and routes |
 | `query_class_methods` | List all methods of a class |
 | `query_dependencies` | Query IMPORTS/EXTENDS/IMPLEMENTS/CALLS edges for a symbol |
 | `query_by_annotation` | Find symbols by annotation name and optional params filter |
@@ -335,6 +337,19 @@ database = "falkordb"   # falkordb | kuzu
 max_file_size = 524288  # skip files > 512KB
 exclude_tests = true
 ```
+
+For cross-project call chain support, configure dependencies in the project config:
+
+```toml
+[[dependencies.projects]]
+path = "/path/to/shared-api"
+branch = "master"
+
+[dependencies.properties]
+"feign.payment.name" = "payment-service"
+```
+
+See [docs/configuration.md](docs/configuration.md) ([example](docs/config.example.toml)) for all options.
 
 ## Storage Backends
 

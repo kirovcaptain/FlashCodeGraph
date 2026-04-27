@@ -9,12 +9,30 @@ falkordb_uri = "localhost:6379"
 max_file_size = 524288
 exclude_tests = true
 # ignore = ["**/generated/**", "**/vendor/**"]
+# annotation_nodes = ["Transactional", "Async"]
 
 [annotations]
 # include = ["MyCustomAnnotation", "BusinessLog"]
 # exclude = ["Deprecated", "SuppressWarnings"]
 
+[embedding]
+# enabled = false
+
 [system]
 # goroutines = 0
 # memory_limit = "1GB"
 # log_level = "info"
+
+# ── Global only (~/.fcg/config.toml) ──
+
+[cross_project_index]
+# backend = "json"
+
+# ── Project only ({project}/.fcg/config.toml) ──
+
+# [[dependencies.projects]]
+# path = "/path/to/shared-api"
+# branch = "master"
+
+# [dependencies.properties]
+# "feign.payment.name" = "payment-service"

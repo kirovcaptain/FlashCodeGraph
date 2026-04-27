@@ -39,6 +39,22 @@ When multiple routes match, always present the list and ask user to select.
 3. Deduplicate functions
 4. `impact_analysis` per function → caller chains + affected routes
 
+### Cross-Project Call Chain
+
+**When**: tracing calls that cross project boundaries (FeignClient, Dubbo, gRPC interfaces from jar dependencies), or seeing `[cross-project]` nodes in call chain results.
+
+1. Call chain results may contain `[cross-project]` nodes — these are symbols injected from dependency projects.
+2. The response includes `cross_project_hints` with the source project path and a suggested follow-up query.
+3. To trace into the dependency project, follow the hint:
+   ```
+   query_call_chain(function="targetMethod", path="/path/to/dependency-project")
+   ```
+4. For a project-level view of all cross-service dependencies:
+   ```
+   query_cross_chain(function="entryFunction", path=...)
+   ```
+   Returns aggregated results by target project, protocol (http/dubbo/grpc), and routes.
+
 ### Performance Profiling
 
 **When**: a function has abnormal execution time, need branch-level timing.
