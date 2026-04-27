@@ -177,6 +177,12 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 			break
 		}
 	}
+
+	// Resolve short type names to fully qualified names via imports.
+	// Fixpoint may produce Tier 2 types with short names (e.g. "KnowledgeGraph" from
+	// lookupReturnType). Without this, downstream consumers (resolver's declared_type,
+	// dry mode filtering) see short names that don't match fully qualified class names.
+	resolveTypeNames(env, env.Imports)
 }
 
 func lookupInEnv(env *model.TypeEnv, scope, varName string) string {
@@ -198,7 +204,18 @@ func lookupReturnType(callee string, findByName func(string) []model.Symbol) str
 	symbols := findByName(callee)
 	for _, s := range symbols {
 		if s.Kind == constants.KindFunction && len(s.ReturnTypes) > 0 {
-			return s.ReturnTypes[0]
+			retType := s.ReturnTypes[0]
+			// Try to resolve short return type name to fully qualified name via symbolTable.
+			// e.g. createKnowledgeGraph() returns "KnowledgeGraph" (short name),
+			// but symbolTable has Interface "src.core.graph.types.KnowledgeGraph".
+			candidates := findByName(retType)
+			for _, candidate := range candidates {
+				if candidate.Kind == constants.KindClass || candidate.Kind == constants.KindInterface ||
+					candidate.Kind == "abstract_class" || candidate.ClassType == "struct" {
+					return candidate.QualifiedName
+				}
+			}
+			return retType
 		}
 	}
 	return ""
