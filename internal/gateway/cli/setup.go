@@ -94,9 +94,10 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	// Step 7: Index now?
+	// Step 7: Index now? (force full index since setup may have changed config)
 	if promptYesNo(reader, "Run fcg index now?", true) {
 		fmt.Println()
+		indexForce = true
 		return runIndex(cmd, []string{projectPath})
 	}
 	return nil

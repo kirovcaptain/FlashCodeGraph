@@ -283,7 +283,7 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 		allRemoteCalls = append(allRemoteCalls, parseResult.RemoteCalls...)
 		allPendingCalls = append(allPendingCalls, parseResult.PendingRemoteCalls...)
 	}
-
+	indexer.dump.OnRemoteCalls(allRemoteCalls, allPendingCalls)
 	// Step 8: Match consumer to provider (cross-service CALLS edges)
 	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, allPendingCalls, symbolTable, allRoutes, routeToHandler); err != nil {
 		return nil, fmt.Errorf("indexer: match consumer to provider: %w", err)
@@ -421,7 +421,7 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 		allRemoteCalls = append(allRemoteCalls, parseResult.RemoteCalls...)
 		allPendingCalls = append(allPendingCalls, parseResult.PendingRemoteCalls...)
 	}
-
+	indexer.dump.OnRemoteCalls(allRemoteCalls, allPendingCalls)
 	// Step 8: Match consumer to provider (cross-service CALLS edges)
 	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, allPendingCalls, symbolTable, allRoutes, routeToHandler); err != nil {
 		return nil, fmt.Errorf("indexer: match consumer to provider: %w", err)
@@ -834,6 +834,7 @@ func (indexer *Indexer) writeReferencedCrossProjectNodes(
 	}
 	indexer.progress.EmitSub(PhaseResolving, SubCrossProjectNodes,
 		fmt.Sprintf("%d nodes (of %d prepared)", len(referencedNodes), len(crossProjectNodes)))
+	indexer.dump.OnCrossProjectSymbols(len(crossProjectNodes), len(referencedNodes))
 	return nil
 }
 
@@ -2358,6 +2359,7 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 			return fmt.Errorf("create cross-service CALLS edges: %w", err)
 		}
 	}
+	indexer.dump.OnCrossServiceEdges(newNodes, newEdges)
 
 	indexer.progress.EmitSub(PhaseWriting, SubMatchConsumerToProvider,
 		fmt.Sprintf("%d via_route, %d cross_service",

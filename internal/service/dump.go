@@ -17,6 +17,9 @@ type DumpManager interface {
 	OnAllRelations(heritage, overrides, implements []model.ResolvedRelation)
 	OnAnnotations(nodes []model.Node, edges []model.Edge)
 	OnRoutes(nodes []model.Node)
+	OnRemoteCalls(remoteCalls []model.RawRemoteCall, pendingCalls []model.PendingRemoteCall)
+	OnCrossServiceEdges(nodes []model.Node, edges []model.Edge)
+	OnCrossProjectSymbols(prepared int, referenced int)
 }
 
 // NopDumpManager does nothing (debug=false).
@@ -27,6 +30,9 @@ func (NopDumpManager) OnResolved([]model.ResolvedRelation, []model.UnresolvedHin
 func (NopDumpManager) OnAllRelations(_, _, _ []model.ResolvedRelation)             {}
 func (NopDumpManager) OnAnnotations([]model.Node, []model.Edge)                   {}
 func (NopDumpManager) OnRoutes([]model.Node)                                      {}
+func (NopDumpManager) OnRemoteCalls([]model.RawRemoteCall, []model.PendingRemoteCall) {}
+func (NopDumpManager) OnCrossServiceEdges([]model.Node, []model.Edge)             {}
+func (NopDumpManager) OnCrossProjectSymbols(int, int)                             {}
 
 // FileDumpManager writes CSV files to .fcg/debug/.
 type FileDumpManager struct {
@@ -230,4 +236,71 @@ func propStr(properties map[string]any, key string) string {
 	default:
 		return ""
 	}
+}
+
+func (d *FileDumpManager) OnRemoteCalls(remoteCalls []model.RawRemoteCall, pendingCalls []model.PendingRemoteCall) {
+	if len(remoteCalls) > 0 {
+		header := []string{"method", "target_url", "target_service", "protocol", "caller_name", "file_path", "line", "service_resolved_by"}
+		writer, file := d.createCSV("remote_calls.csv", header)
+		if writer != nil {
+			for _, call := range remoteCalls {
+				writer.Write([]string{
+					call.Method, call.TargetURL, call.TargetService, call.Protocol,
+					call.CallerName, call.FilePath, strconv.Itoa(call.Line), call.ServiceResolvedBy,
+				})
+			}
+			writer.Flush()
+			file.Close()
+		}
+	}
+	if len(pendingCalls) > 0 {
+		header := []string{"field_name", "field_type", "protocol", "owner_class", "file_path", "line"}
+		writer, file := d.createCSV("pending_remote_calls.csv", header)
+		if writer != nil {
+			for _, call := range pendingCalls {
+				writer.Write([]string{
+					call.FieldName, call.FieldType, call.Protocol,
+					call.OwnerClass, call.FilePath, strconv.Itoa(call.Line),
+				})
+			}
+			writer.Flush()
+			file.Close()
+		}
+	}
+	log.Printf("[debug] dumped %d remote calls, %d pending calls to .fcg/debug/", len(remoteCalls), len(pendingCalls))
+}
+
+func (d *FileDumpManager) OnCrossServiceEdges(nodes []model.Node, edges []model.Edge) {
+	if len(edges) == 0 {
+		return
+	}
+	header := []string{"source_id", "target_id", "via_route", "protocol", "target_project", "target_handler", "confidence"}
+	writer, file := d.createCSV("cross_service_edges.csv", header)
+	if writer == nil {
+		return
+	}
+	for _, edge := range edges {
+		props := edge.Properties
+		writer.Write([]string{
+			edge.SourceID, edge.TargetID,
+			propStr(props, "via_route"), propStr(props, "protocol"),
+			propStr(props, "target_project"), propStr(props, "target_handler"),
+			propStr(props, "confidence"),
+		})
+	}
+	writer.Flush()
+	file.Close()
+	log.Printf("[debug] dumped %d cross-service nodes, %d cross-service edges to .fcg/debug/", len(nodes), len(edges))
+}
+
+func (d *FileDumpManager) OnCrossProjectSymbols(prepared int, referenced int) {
+	header := []string{"prepared", "referenced"}
+	writer, file := d.createCSV("cross_project_symbols.csv", header)
+	if writer == nil {
+		return
+	}
+	writer.Write([]string{strconv.Itoa(prepared), strconv.Itoa(referenced)})
+	writer.Flush()
+	file.Close()
+	log.Printf("[debug] cross-project symbols: %d prepared, %d referenced", prepared, referenced)
 }
