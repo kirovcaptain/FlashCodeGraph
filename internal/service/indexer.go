@@ -253,11 +253,12 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 
 
 	// Inject cross-project symbols into symbolTable for resolver
-	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+	crossProjectNodes, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable)
+	if err != nil {
 		return nil, fmt.Errorf("indexer: inject cross-project symbols: %w", err)
 	}
 	// Resolve and write relationships
-	callRelations, err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable)
+	callRelations, err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable, crossProjectNodes)
 	if err != nil {
 		return nil, err
 	}
@@ -391,11 +392,12 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 
 
 	// Inject cross-project symbols into symbolTable for resolver (clean old nodes first for incremental)
-	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+	crossProjectNodes, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable)
+	if err != nil {
 		return nil, fmt.Errorf("indexer: inject cross-project symbols: %w", err)
 	}
 	// Resolve and write relationships
-	callRelations, err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable)
+	callRelations, err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable, crossProjectNodes)
 	if err != nil {
 	}
 
@@ -608,12 +610,14 @@ func (indexer *Indexer) writeSemanticNodes(ctx context.Context, scanCtx *scanCon
 // Phase D — Write Results:
 //   1. External Nodes: creates virtual Function nodes for external dependencies
 //      (symbols with ID prefix "external:") that were referenced but not defined in source.
-//   2. Relation Edges: writes all resolved CALLS + EXTENDS + IMPLEMENTS + OVERRIDES edges.
-//   3. InferImplements: language helpers infer additional IMPLEMENTS edges
+//   2. InferImplements: language helpers infer additional IMPLEMENTS edges
 //      (e.g. Go struct satisfying an interface without explicit declaration).
-//   4. Unresolved Hint Edges: writes UNRESOLVED_CALL edges for calls that could not be
+//   3. Cross-Project Nodes: writes only the cross-project dependency nodes that are
+//      actually referenced by resolved relations, avoiding thousands of unused nodes.
+//   4. Relation Edges: writes all resolved CALLS + EXTENDS + IMPLEMENTS + OVERRIDES edges.
+//   5. Unresolved Hint Edges: writes UNRESOLVED_CALL edges for calls that could not be
 //      confidently resolved, preserving candidate information for downstream analysis.
-func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable) ([]model.ResolvedRelation, error) {
+func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, crossProjectNodes map[string]model.Node) ([]model.ResolvedRelation, error) {
 	indexer.progress.Emit(PhaseResolving, 0, 0, "relations")
 
 	// Build language helper for the project's primary language only
@@ -635,9 +639,23 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 		return nil, err
 	}
 
-	// Phase D: Write all resolved data to graph
-	if err := indexer.writeResolvedRelations(ctx, scanCtx, symbolTable, langHelpers,
-		callRelations, heritageRelations, overrideRelations, callHints); err != nil {
+	// Phase D: Write results to graph
+
+	// D-1: Infer implicit interface implementations (e.g. Go structs satisfying interfaces)
+	var implementsRelations []model.ResolvedRelation
+	for _, helper := range langHelpers {
+		implementsRelations = append(implementsRelations, helper.InferImplements()...)
+	}
+
+	// D-2: Write only cross-project nodes that are actually referenced by resolved relations
+	if err := indexer.writeReferencedCrossProjectNodes(ctx, symbolTable, crossProjectNodes,
+		callRelations, heritageRelations, overrideRelations, implementsRelations, callHints); err != nil {
+		return nil, err
+	}
+
+	// D-3: Write external nodes, relation edges, and unresolved hints
+	if err := indexer.writeResolvedRelations(ctx, scanCtx, symbolTable,
+		callRelations, heritageRelations, overrideRelations, implementsRelations, callHints); err != nil {
 		return nil, err
 	}
 	return callRelations, nil
@@ -760,12 +778,70 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 }
 
 // writeResolvedRelations writes external nodes and all relation edges to the graph.
+// writeReferencedCrossProjectNodes writes only the cross-project nodes that are actually
+// referenced by resolved relations or unresolved hints. This avoids writing thousands of
+// unused dependency symbols into the graph — only nodes whose IDs appear as edge endpoints are written.
+func (indexer *Indexer) writeReferencedCrossProjectNodes(
+	ctx context.Context,
+	symbolTable *resolver.SymbolTable,
+	crossProjectNodes map[string]model.Node,
+	callRelations, heritageRelations, overrideRelations, implementsRelations []model.ResolvedRelation,
+	callHints []model.UnresolvedHint,
+) error {
+	if len(crossProjectNodes) == 0 {
+		return nil
+	}
+
+	referencedIDs := make(map[string]bool)
+
+	// Collect from all relation types
+	allRelations := make([]model.ResolvedRelation, 0, len(callRelations)+len(heritageRelations)+len(overrideRelations)+len(implementsRelations))
+	allRelations = append(allRelations, callRelations...)
+	allRelations = append(allRelations, heritageRelations...)
+	allRelations = append(allRelations, overrideRelations...)
+	allRelations = append(allRelations, implementsRelations...)
+	for _, relation := range allRelations {
+		if strings.HasPrefix(relation.SourceID, "cross-project:") {
+			referencedIDs[relation.SourceID] = true
+		}
+		if strings.HasPrefix(relation.TargetID, "cross-project:") {
+			referencedIDs[relation.TargetID] = true
+		}
+	}
+
+	// Collect from unresolved call hints
+	for _, hint := range callHints {
+		for _, candidateQualifiedName := range hint.Candidates {
+			candidateSymbols := symbolTable.FindByQualifiedName(candidateQualifiedName)
+			for _, candidate := range candidateSymbols {
+				if strings.HasPrefix(candidate.ID, "cross-project:") {
+					referencedIDs[candidate.ID] = true
+				}
+			}
+		}
+	}
+
+	var referencedNodes []model.Node
+	for referencedID := range referencedIDs {
+		if node, exists := crossProjectNodes[referencedID]; exists {
+			referencedNodes = append(referencedNodes, node)
+		}
+	}
+	if len(referencedNodes) > 0 {
+		if err := indexer.graphStore.CreateNodes(ctx, referencedNodes); err != nil {
+			return fmt.Errorf("indexer: write cross-project nodes: %w", err)
+		}
+	}
+	indexer.progress.EmitSub(PhaseResolving, SubCrossProjectNodes,
+		fmt.Sprintf("%d nodes (of %d prepared)", len(referencedNodes), len(crossProjectNodes)))
+	return nil
+}
+
 func (indexer *Indexer) writeResolvedRelations(
 	ctx context.Context,
 	scanCtx *scanContext,
 	symbolTable *resolver.SymbolTable,
-	langHelpers map[string]resolver.LanguageHelper,
-	callRelations, heritageRelations, overrideRelations []model.ResolvedRelation,
+	callRelations, heritageRelations, overrideRelations, implementsRelations []model.ResolvedRelation,
 	callHints []model.UnresolvedHint,
 ) error {
 	// Step 1: Write external dependency virtual nodes — creates Function nodes for symbols
@@ -793,16 +869,11 @@ func (indexer *Indexer) writeResolvedRelations(
 	indexer.progress.EmitSub(PhaseResolving, SubExternalNodes, fmt.Sprintf("%d nodes", len(externalNodes)))
 
 	// Step 2: Write all resolved relation edges (CALLS + EXTENDS + IMPLEMENTS + OVERRIDES).
-	// Also invokes InferImplements on language helpers for implicit interface implementations
-	// (e.g. Go structs satisfying interfaces without explicit "implements" keyword).
 	allRelations := append(callRelations, heritageRelations...)
 	allRelations = append(allRelations, overrideRelations...)
-	var implementsRelations []model.ResolvedRelation
-	for _, helper := range langHelpers {
-		implementsRelations = append(implementsRelations, helper.InferImplements()...)
-	}
 	allRelations = append(allRelations, implementsRelations...)
 	indexer.dump.OnAllRelations(heritageRelations, overrideRelations, implementsRelations)
+
 	indexer.progress.EmitSub(PhaseResolving, SubRelationEdges, "")
 	if err := indexer.writeRelations(ctx, allRelations, scanCtx.result); err != nil {
 		return fmt.Errorf("indexer: write relations: %w", err)
@@ -1938,52 +2009,45 @@ func (indexer *Indexer) resolveServiceNamePlaceholders(parseResults []model.Pars
 // injectCrossProjectSymbols loads symbols from dependency projects via the cross-project index
 // and injects them into the symbolTable so the resolver can resolve calls to external types
 // (e.g. FeignClient interfaces imported via wildcard imports from dependency jars).
-// Also writes the symbols as graph nodes so query results can render them.
-func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *scanContext, symbolTable *resolver.SymbolTable) error {
+// Nodes are NOT written to the graph here — they are returned as a map and written lazily
+// by writeResolvedRelations (only nodes actually referenced by edges).
+func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *scanContext, symbolTable *resolver.SymbolTable) (map[string]model.Node, error) {
 	if indexer.crossIndex == nil || len(indexer.config.Dependencies.Projects) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	dependencies := toCrossIndexDeps(indexer.config.Dependencies.Projects)
 	globalSymbols := indexer.crossIndex.GetDependencySymbols(ctx, dependencies)
 	if len(globalSymbols) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Clean up previously injected cross-project nodes (safe no-op if none exist)
 	if err := indexer.graphStore.DeleteNodesByFile(ctx, constants.FilePathCrossProject); err != nil {
-		return fmt.Errorf("clean old cross-project nodes: %w", err)
+		return nil, fmt.Errorf("clean old cross-project nodes: %w", err)
 	}
 
-	// Build source project lookup: qualifiedName prefix → (project, branch)
+	// Resolve which dependency each symbol came from by querying per dependency.
 	type projectSource struct {
 		path   string
 		branch string
 	}
-	depSourceByKey := make(map[string]projectSource)
-	for _, dep := range indexer.config.Dependencies.Projects {
-		depSourceByKey[dep.Path+"::"+dep.Branch] = projectSource{path: dep.Path, branch: dep.Branch}
-	}
-
-	// Resolve which dependency each symbol came from
-	// GetDependencySymbols returns symbols from all matching deps, but we need per-symbol source.
-	// Re-query per dependency to tag source. For simplicity, query all and match by iterating deps.
 	type symbolWithSource struct {
-		symbol  crossindex.GlobalSymbol
-		source  projectSource
+		symbol crossindex.GlobalSymbol
+		source projectSource
 	}
 	var taggedSymbols []symbolWithSource
 	for _, dep := range indexer.config.Dependencies.Projects {
 		singleDep := []crossindex.Dependency{{Path: dep.Path, Branch: dep.Branch}}
 		depSymbols := indexer.crossIndex.GetDependencySymbols(ctx, singleDep)
-		src := projectSource{path: dep.Path, branch: dep.Branch}
+		source := projectSource{path: dep.Path, branch: dep.Branch}
 		for _, globalSymbol := range depSymbols {
-			taggedSymbols = append(taggedSymbols, symbolWithSource{symbol: globalSymbol, source: src})
+			taggedSymbols = append(taggedSymbols, symbolWithSource{symbol: globalSymbol, source: source})
 		}
 	}
 
 	var symbols []model.Symbol
-	var graphNodes []model.Node
+	preparedNodes := make(map[string]model.Node)
 
 	for _, tagged := range taggedSymbols {
 		globalSymbol := tagged.symbol
@@ -2000,7 +2064,7 @@ func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *
 			ClassType:     globalSymbol.ClassType,
 			FilePath:      constants.FilePathCrossProject,
 		})
-		graphNodes = append(graphNodes, model.Node{
+		preparedNodes[classID] = model.Node{
 			ID:   classID,
 			Kind: globalSymbol.Kind,
 			Properties: map[string]any{
@@ -2011,7 +2075,7 @@ func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *
 				"source_project": sourceProject,
 				"source_branch":  sourceBranch,
 			},
-		})
+		}
 
 		// Method level symbols — detect overloads for unique IDs
 		methodNameCount := make(map[string]int)
@@ -2028,8 +2092,8 @@ func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *
 
 			// Build params JSON matching parser format: [{"name":"p0","type":"TypeName"}]
 			paramEntries := make([]map[string]string, len(method.Params))
-			for i, paramType := range method.Params {
-				paramEntries[i] = map[string]string{"name": fmt.Sprintf("p%d", i), "type": paramType}
+			for index, paramType := range method.Params {
+				paramEntries[index] = map[string]string{"name": fmt.Sprintf("p%d", index), "type": paramType}
 			}
 			paramsJSON, _ := json.Marshal(paramEntries)
 
@@ -2041,7 +2105,7 @@ func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *
 				FilePath:      constants.FilePathCrossProject,
 				Params:        string(paramsJSON),
 			})
-			graphNodes = append(graphNodes, model.Node{
+			preparedNodes[methodID] = model.Node{
 				ID:   methodID,
 				Kind: constants.KindFunction,
 				Properties: map[string]any{
@@ -2054,19 +2118,13 @@ func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *
 					"is_getter":      method.IsGetter,
 					"is_setter":      method.IsSetter,
 				},
-			})
+			}
 		}
 	}
 
 	symbolTable.AddBatch(symbols)
 
-	if len(graphNodes) > 0 {
-		if err := indexer.graphStore.CreateNodes(ctx, graphNodes); err != nil {
-			return fmt.Errorf("create cross-project nodes: %w", err)
-		}
-	}
-
-	return nil
+	return preparedNodes, nil
 }
 
 // by matching HTTP method+path against Route nodes (same-repo) or CrossProjectIndex (cross-repo).

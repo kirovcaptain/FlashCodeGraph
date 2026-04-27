@@ -134,6 +134,7 @@ const (
 	SubDetectOverridesAndDispatches       SubStepID = "detect overrides"
 	SubCrossFilePropagation  SubStepID = "cross-file propagation"
 	SubExternalNodes         SubStepID = "external nodes"
+	SubCrossProjectNodes     SubStepID = "cross-project nodes"
 	SubRelationEdges         SubStepID = "relation edges"
 	SubUnresolvedHints       SubStepID = "unresolved hints"
 	SubDebugDump             SubStepID = "debug dump"

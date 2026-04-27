@@ -1840,7 +1840,7 @@ func TestInjectCrossProjectSymbols_Basic(t *testing.T) {
 	}
 
 	// Inject
-	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+	if _, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
 		t.Fatalf("injectCrossProjectSymbols: %v", err)
 	}
 
@@ -1892,7 +1892,7 @@ func TestInjectCrossProjectSymbols_NoDeps(t *testing.T) {
 	symbolTable := setupEmptySymbolTable()
 
 	// No dependencies configured — should be a no-op
-	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+	if _, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1909,7 +1909,7 @@ func TestInjectCrossProjectSymbols_NoCrossIndex(t *testing.T) {
 		{Path: "/dep-project", Branch: "master"},
 	}
 	// crossIndex is nil — should be a no-op
-	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+	if _, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1930,7 +1930,7 @@ func TestInjectCrossProjectSymbols_MethodOverload(t *testing.T) {
 	scanCtx := &scanContext{result: &model.IndexResult{}}
 	symbolTable := setupEmptySymbolTable()
 
-	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+	if _, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
 		t.Fatalf("injectCrossProjectSymbols: %v", err)
 	}
 
