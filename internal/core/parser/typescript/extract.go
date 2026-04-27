@@ -587,6 +587,21 @@ func extractTSPendingAssignment(node *tree_sitter.Node, content []byte, scope st
 		}
 		lhs := nameNode.Utf8Text(content)
 
+		// Extract local variable type annotation as TypeHint (e.g. const x: SomeType = ...)
+		typeNode := child.ChildByFieldName("type")
+		if typeNode != nil {
+			typeName := extractTypeName(typeNode, content)
+			if typeName != "" {
+				result.TypeHints = append(result.TypeHints, model.TypeBinding{
+					VarName:  lhs,
+					TypeName: typeName,
+					Tier:     0,
+					Scope:    scope,
+					FilePath: result.FilePath,
+				})
+			}
+		}
+
 		switch valueNode.Kind() {
 		case "identifier":
 			result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
