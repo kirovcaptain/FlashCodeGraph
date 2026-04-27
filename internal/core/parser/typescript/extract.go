@@ -437,6 +437,9 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
 		if node.Kind() == "lexical_declaration" || node.Kind() == "variable_declaration" {
 			extractTSPendingAssignment(node, content, qualifiedCallerName, result)
+			// Also extract const arrow functions defined inside function bodies
+			// (e.g. const ensureSlash = (path: string) => ...)
+			extractArrowFunctions(node, content, filePath, result)
 		}
 		if node.Kind() == "call_expression" {
 			ExtractRoutes(node, content, qualifiedCallerName, filePath, result)
