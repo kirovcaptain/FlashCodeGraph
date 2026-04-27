@@ -17,6 +17,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/status"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/crossindex"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/falkor"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/lock"
 )
@@ -78,7 +79,15 @@ func (srv *Server) createIndexer(repoPath string) (*service.Indexer, storage.Gra
 
 	fingerprintStore := branchManager.FingerprintStore()
 	indexLock := lock.NewNoopLock()
-	indexer := service.NewIndexer(store, fingerprintStore, indexLock, cfg, nil)
+
+	// Create cross-project index
+	crossIndexPath := filepath.Join(config.GlobalDir(), "cross_project_index.json")
+	crossIndex := crossindex.NewJSONStore(crossIndexPath)
+	if err := crossIndex.Load(); err != nil {
+		return nil, nil, fmt.Errorf("load cross-project index: %w", err)
+	}
+
+	indexer := service.NewIndexer(store, fingerprintStore, indexLock, cfg, nil, crossIndex)
 
 	return indexer, store, nil
 }
@@ -175,7 +184,7 @@ func (srv *Server) registerTools() {
 		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
-	), srv.handleQueryClassMethods)
+	), srv.handleQueryClassMembers)
 
 	srv.mcpServer.AddTool(mcp.NewTool("overview",
 		mcp.WithDescription("Get project overview — total functions, classes, interfaces, edges, and file counts. Use this to understand project scale and structure."),
@@ -489,7 +498,7 @@ func (srv *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
-func (srv *Server) handleQueryClassMethods(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (srv *Server) handleQueryClassMembers(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	className, _ := request.GetArguments()["class_name"].(string)
 	if className == "" {
 		return mcp.NewToolResultError("class_name is required"), nil
@@ -504,7 +513,7 @@ func (srv *Server) handleQueryClassMethods(ctx context.Context, request mcp.Call
 	}
 	defer store.Close()
 
-	methods, candidates, err := querier.QueryClassMethods(ctx, className, limit)
+	methods, candidates, fields, err := querier.QueryClassMembers(ctx, className, limit)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -521,7 +530,11 @@ func (srv *Server) handleQueryClassMethods(ctx context.Context, request mcp.Call
 		return mcp.NewToolResultText(string(resultJSON)), nil
 	}
 
-	resultJSON, _ := json.Marshal(methods)
+	result := map[string]any{
+		"methods": methods,
+		"fields":  fields,
+	}
+	resultJSON, _ := json.Marshal(result)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 

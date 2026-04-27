@@ -31,7 +31,7 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 			className := astutil.NodeFieldText(node, "name", content)
 			currentClass = className
 			// Extract class annotations for route prefix
-			var classAnnotations []string
+			var classAnnotations []model.StructuredAnnotation
 			for i := uint(0); i < node.ChildCount(); i++ {
 				child := node.Child(i)
 				if child.Kind() == "modifiers" {
@@ -111,7 +111,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 	classType := constants.ClassTypeClass
 	isAbstract := false
 	isExported := false
-	var annotations []string
+	var annotations []model.StructuredAnnotation
 
 	switch node.Kind() {
 	case "interface_declaration":
@@ -229,7 +229,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 }
 
 // extractJavaClassBody walks the class body for methods and fields.
-func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, packageName, className string, classAnnotations []string, result *model.ParseResult) {
+func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, packageName, className string, classAnnotations []model.StructuredAnnotation, result *model.ParseResult) {
 	body := classNode.ChildByFieldName("body")
 	if body == nil {
 		return
@@ -251,11 +251,11 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 			ExtractDubboReference(child, content, className, filePath, result)
 			// Collect field info for Lombok
 			if typeNode := child.ChildByFieldName("type"); typeNode != nil {
-				ft := ExtractTypeName(typeNode, content)
+				fieldTypeName := ExtractTypeName(typeNode, content)
 				for j := uint(0); j < child.ChildCount(); j++ {
-					if vd := child.Child(j); vd.Kind() == "variable_declarator" {
-						if nn := vd.ChildByFieldName("name"); nn != nil {
-							fields = append(fields, fieldInfo{nn.Utf8Text(content), ft, int(child.StartPosition().Row) + 1})
+					if variableDeclarator := child.Child(j); variableDeclarator.Kind() == "variable_declarator" {
+						if nameNode := variableDeclarator.ChildByFieldName("name"); nameNode != nil {
+							fields = append(fields, fieldInfo{nameNode.Utf8Text(content), fieldTypeName, int(child.StartPosition().Row) + 1})
 						}
 					}
 				}
@@ -265,7 +265,7 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 			innerName := astutil.NodeFieldText(child, "name", content)
 			if innerName != "" {
 				extractClass(child, content, filePath, packageName+"."+className, result)
-				var innerAnnotations []string
+				var innerAnnotations []model.StructuredAnnotation
 				for j := uint(0); j < child.ChildCount(); j++ {
 					if child.Child(j).Kind() == "modifiers" {
 						innerAnnotations = ExtractAnnotations(child.Child(j), content)
@@ -303,7 +303,7 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 
 // extractJavaMethod extracts a method/constructor declaration.
 // Also infers accessor status (IsGetter/IsSetter) based on naming pattern, complexity, and body line count.
-func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName, className string, classAnnotations []string, result *model.ParseResult) {
+func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName, className string, classAnnotations []model.StructuredAnnotation, result *model.ParseResult) {
 	nameNode := node.ChildByFieldName("name")
 	methodName := ""
 	if nameNode != nil {
@@ -382,7 +382,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 	isExported := false
 	isAbstract := false
 	isConstructor := node.Kind() == "constructor_declaration"
-	var annotations []string
+	var annotations []model.StructuredAnnotation
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -485,18 +485,18 @@ type fieldInfo struct {
 }
 
 // generateLombokAccessors creates synthetic getter/setter symbols for @Data/@Getter/@Setter classes.
-func generateLombokAccessors(classAnnotations []string, fields []fieldInfo, filePath, packageName, className string, result *model.ParseResult) {
+func generateLombokAccessors(classAnnotations []model.StructuredAnnotation, fields []fieldInfo, filePath, packageName, className string, result *model.ParseResult) {
 	hasGetter := false
 	hasSetter := false
-	for _, ann := range classAnnotations {
-		if strings.Contains(ann, "Data") {
+	for _, annotation := range classAnnotations {
+		if annotation.Name == "Data" {
 			hasGetter = true
 			hasSetter = true
 		}
-		if strings.Contains(ann, "Getter") {
+		if annotation.Name == "Getter" {
 			hasGetter = true
 		}
-		if strings.Contains(ann, "Setter") {
+		if annotation.Name == "Setter" {
 			hasSetter = true
 		}
 	}
@@ -556,6 +556,37 @@ func extractField(node *tree_sitter.Node, content []byte, filePath, packageName,
 		fieldType = ExtractTypeName(typeNode, content)
 	}
 
+	// Extract modifiers for visibility, static, final
+	isStatic := false
+	isFinal := false
+	visibility := "package"
+	var fieldAnnotations []model.StructuredAnnotation
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "modifiers" {
+			modText := child.Utf8Text(content)
+			if strings.Contains(modText, "static") {
+				isStatic = true
+			}
+			if strings.Contains(modText, "final") {
+				isFinal = true
+			}
+			if strings.Contains(modText, "private") {
+				visibility = "private"
+			} else if strings.Contains(modText, "protected") {
+				visibility = "protected"
+			} else if strings.Contains(modText, "public") {
+				visibility = "public"
+			}
+			fieldAnnotations = ExtractAnnotations(child, content)
+		}
+	}
+
+	// Skip static final constants
+	if isStatic && isFinal {
+		// Still emit TypeHints for constants (existing behavior), but no FieldDeclaration
+	}
+
 	// Find variable declarators
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -573,7 +604,7 @@ func extractField(node *tree_sitter.Node, content []byte, filePath, packageName,
 				qualifiedName = packageName + "." + qualifiedName
 			}
 
-			// Type hint for TypeEnv
+			// Type hint for TypeEnv (always emit, even for static final)
 			if fieldType != "" {
 				classQualifiedName := className
 				if packageName != "" {
@@ -586,6 +617,26 @@ func extractField(node *tree_sitter.Node, content []byte, filePath, packageName,
 					Tier:     0,
 					Scope:    classQualifiedName,
 					FilePath: filePath,
+				})
+			}
+
+			// FieldDeclaration output (skip static final constants)
+			if !(isStatic && isFinal) && fieldType != "" {
+				ownerQualifiedName := className
+				if packageName != "" {
+					ownerQualifiedName = packageName + "." + className
+				}
+				result.Fields = append(result.Fields, model.FieldDeclaration{
+					FieldInfo: model.FieldInfo{
+						Name:        fieldName,
+						Type:        fieldType,
+						Visibility:  visibility,
+						Annotations: fieldAnnotations,
+						IsStatic:    isStatic,
+					},
+					OwnerQualifiedName: ownerQualifiedName,
+					FilePath:           filePath,
+					Line:               int(node.StartPosition().Row) + 1,
 				})
 			}
 		}
@@ -890,36 +941,98 @@ func extractConstructorCall(node *tree_sitter.Node, content []byte, filePath, qu
 // Helper functions
 
 // extractAnnotations extracts annotation names from a modifiers node.
-func ExtractAnnotations(modifiers *tree_sitter.Node, content []byte) []string {
-	var annotations []string
+func ExtractAnnotations(modifiers *tree_sitter.Node, content []byte) []model.StructuredAnnotation {
+	var annotations []model.StructuredAnnotation
 	for i := uint(0); i < modifiers.ChildCount(); i++ {
 		child := modifiers.Child(i)
 		if child.Kind() == "marker_annotation" || child.Kind() == "annotation" {
 			nameNode := child.ChildByFieldName("name")
 			if nameNode == nil {
-				// Try first named child
 				for j := uint(0); j < child.ChildCount(); j++ {
-					c := child.Child(j)
-					if c.Kind() == "identifier" {
-						nameNode = c
+					candidate := child.Child(j)
+					if candidate.Kind() == "identifier" {
+						nameNode = candidate
 						break
 					}
 				}
 			}
 			if nameNode != nil {
 				name := nameNode.Utf8Text(content)
-				args := ""
+				var params map[string]string
 				for j := uint(0); j < child.ChildCount(); j++ {
 					part := child.Child(j)
 					if part.Kind() == "annotation_argument_list" {
-						args = part.Utf8Text(content)
+						params = parseAnnotationArguments(part, content)
 					}
 				}
-				annotations = append(annotations, "@"+name+args)
+				annotations = append(annotations, model.StructuredAnnotation{
+					Name:   name,
+					Params: params,
+				})
 			}
 		}
 	}
 	return annotations
+}
+
+// parseAnnotationArguments parses annotation_argument_list into key-value pairs.
+// Handles: ("value"), (key = "value"), (key1 = "v1", key2 = "v2"), (key = EnumType.VALUE)
+func parseAnnotationArguments(argList *tree_sitter.Node, content []byte) map[string]string {
+	params := make(map[string]string)
+	for i := uint(0); i < argList.ChildCount(); i++ {
+		child := argList.Child(i)
+		switch child.Kind() {
+		case "element_value_pair":
+			// key = value
+			keyNode := child.ChildByFieldName("key")
+			valueNode := child.ChildByFieldName("value")
+			if keyNode != nil && valueNode != nil {
+				key := keyNode.Utf8Text(content)
+				value := extractAnnotationValueText(valueNode, content)
+				params[key] = value
+			}
+		case "string_literal":
+			// Single value: ("literal")
+			value := strings.Trim(child.Utf8Text(content), "\"")
+			params["value"] = value
+		case "identifier", "field_access", "scoped_identifier":
+			// Single enum/constant value: (RequestMethod.POST)
+			params["value"] = child.Utf8Text(content)
+		}
+	}
+	return params
+}
+
+// extractAnnotationValueText extracts the text value from an annotation value node.
+// Strips quotes from string literals, preserves other values as-is.
+func extractAnnotationValueText(valueNode *tree_sitter.Node, content []byte) string {
+	text := valueNode.Utf8Text(content)
+	if valueNode.Kind() == "string_literal" {
+		return strings.Trim(text, "\"")
+	}
+	return text
+}
+
+// AnnotationsToLegacyStrings converts structured annotations to legacy string format.
+// Used for backward compatibility where string format is still needed.
+func AnnotationsToLegacyStrings(annotations []model.StructuredAnnotation) []string {
+	result := make([]string, 0, len(annotations))
+	for _, annotation := range annotations {
+		str := "@" + annotation.Name
+		if len(annotation.Params) > 0 {
+			var parts []string
+			for key, value := range annotation.Params {
+				if key == "value" && len(annotation.Params) == 1 {
+					parts = append(parts, "\""+value+"\"")
+				} else {
+					parts = append(parts, key+" = \""+value+"\"")
+				}
+			}
+			str += "(" + strings.Join(parts, ", ") + ")"
+		}
+		result = append(result, str)
+	}
+	return result
 }
 
 // buildTypeEnv builds a variable→type map from TypeHints for a given class scope.

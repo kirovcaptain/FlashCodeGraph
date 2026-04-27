@@ -119,6 +119,8 @@ const (
 	SubQueryNodes       SubStepID = "query nodes"
 	SubAnnotationNodes  SubStepID = "annotation nodes"
 	SubRemoteCallEdges  SubStepID = "remote call edges"
+	SubMatchConsumerToProvider  SubStepID = "match consumer to provider"
+	SubWriteCrossProjectIndex  SubStepID = "write cross-project index"
 	SubSaveFingerprints SubStepID = "save fingerprints"
 
 	// Index — Resolving phase

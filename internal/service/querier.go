@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -851,11 +852,11 @@ func (querier *Querier) ImpactAnalysis(ctx context.Context, symbolName string, d
 	return subgraph, nil
 }
 
-// QueryClassMethods returns all methods belonging to a class.
+// QueryClassMembers returns all methods belonging to a class.
 // Supports short name ("Store") and qualified name ("falkor.Store").
 // Returns (methods, nil, nil) on unique match.
 // Returns (nil, candidates, nil) when multiple classes match.
-func (querier *Querier) QueryClassMethods(ctx context.Context, className string, limit int) ([]model.Node, []model.Node, error) {
+func (querier *Querier) QueryClassMembers(ctx context.Context, className string, limit int) ([]model.Node, []model.Node, []model.FieldInfo, error) {
 	searchName := className
 	if strings.Contains(className, ".") {
 		searchName = className[strings.LastIndex(className, ".")+1:]
@@ -866,7 +867,7 @@ func (querier *Querier) QueryClassMethods(ctx context.Context, className string,
 		Limit: 20,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if strings.Contains(className, ".") {
@@ -881,15 +882,15 @@ func (querier *Querier) QueryClassMethods(ctx context.Context, className string,
 	}
 
 	if len(classNodes) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	if len(classNodes) > 1 {
-		return nil, classNodes, nil
+		return nil, classNodes, nil, nil
 	}
 
 	edges, err := querier.graphStore.QueryEdges(ctx, classNodes[0].ID, classNodes[0].Kind, model.RelContains, model.Outgoing)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var methods []model.Node
 	for _, edge := range edges {
@@ -902,8 +903,13 @@ func (querier *Querier) QueryClassMethods(ctx context.Context, className string,
 			break
 		}
 	}
-	return methods, nil, nil
-}
+	
+	// Parse fields from Class node property
+	var fields []model.FieldInfo
+	if fieldsJSON, ok := classNodes[0].Properties["fields"].(string); ok && fieldsJSON != "" && fieldsJSON != "null" {
+		_ = json.Unmarshal([]byte(fieldsJSON), &fields)
+	}
+	return methods, nil, fields, nil}
 
 // SearchFTS performs full-text search.
 func (querier *Querier) SearchFTS(ctx context.Context, query string, limit int) ([]storage.SearchResult, error) {

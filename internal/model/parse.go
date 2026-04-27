@@ -113,6 +113,7 @@ type ParseResult struct {
 	RemoteCalls []RawRemoteCall `json:"remote_calls"`
 	Queries     []RawQuery      `json:"queries"`
 	Middlewares []RawMiddleware  `json:"middlewares"`
+	Fields              []FieldDeclaration   `json:"fields,omitempty"`
 	TypeHints           []TypeBinding       `json:"type_hints"`
 	PendingAssignments  []PendingAssignment  `json:"pending_assignments,omitempty"`
 	Errors      []ParseError    `json:"errors,omitempty"`

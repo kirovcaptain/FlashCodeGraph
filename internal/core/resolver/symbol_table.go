@@ -15,8 +15,10 @@ const ShardCount = 64
 // SymbolTable provides concurrent-safe symbol lookup by name, qualified name, file, and ID.
 type SymbolTable struct {
 	shards          [ShardCount]shard
-	methodsByClass  map[string][]model.Symbol // classQN → methods
+	methodsByClass  map[string][]model.Symbol    // classQN → methods
+	fieldsByOwner   map[string][]model.FieldInfo // classQN → fields
 	methodsMutex    sync.RWMutex
+	fieldsMutex     sync.RWMutex
 }
 
 type shard struct {
@@ -31,6 +33,7 @@ type shard struct {
 func NewSymbolTable() *SymbolTable {
 	table := &SymbolTable{
 		methodsByClass: make(map[string][]model.Symbol),
+		fieldsByOwner:  make(map[string][]model.FieldInfo),
 	}
 	for i := range table.shards {
 		table.shards[i] = shard{
@@ -179,4 +182,30 @@ func (table *SymbolTable) FindMethodsByQualifiedName(classQN string) []model.Sym
 	table.methodsMutex.RLock()
 	defer table.methodsMutex.RUnlock()
 	return table.methodsByClass[classQN]
+}
+
+// AddField registers a field for a class/struct.
+func (table *SymbolTable) AddField(ownerQualifiedName string, field model.FieldInfo) {
+	table.fieldsMutex.Lock()
+	defer table.fieldsMutex.Unlock()
+	table.fieldsByOwner[ownerQualifiedName] = append(table.fieldsByOwner[ownerQualifiedName], field)
+}
+
+// FindFieldByOwner returns a specific field of a class by name.
+func (table *SymbolTable) FindFieldByOwner(ownerQualifiedName, fieldName string) *model.FieldInfo {
+	table.fieldsMutex.RLock()
+	defer table.fieldsMutex.RUnlock()
+	for _, field := range table.fieldsByOwner[ownerQualifiedName] {
+		if field.Name == fieldName {
+			return &field
+		}
+	}
+	return nil
+}
+
+// FindFieldsByOwner returns all fields of a class/struct.
+func (table *SymbolTable) FindFieldsByOwner(ownerQualifiedName string) []model.FieldInfo {
+	table.fieldsMutex.RLock()
+	defer table.fieldsMutex.RUnlock()
+	return table.fieldsByOwner[ownerQualifiedName]
 }

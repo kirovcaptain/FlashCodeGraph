@@ -56,6 +56,7 @@ var NodeColumns = map[string][]ColumnDef{
 		{"params", "STRING"},
 		{"docstring", "STRING"},
 		{"annotations", "STRING"},
+		{"fields", "STRING"},
 	},
 	"Interface": {
 		{"name", "STRING"},
@@ -66,6 +67,7 @@ var NodeColumns = map[string][]ColumnDef{
 		{"is_exported", "BOOLEAN"},
 		{"class_type", "STRING"},
 		{"annotations", "STRING"},
+		{"fields", "STRING"},
 	},
 	"Variable": {
 		{"name", "STRING"},

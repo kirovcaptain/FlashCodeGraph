@@ -13,6 +13,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/status"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/crossindex"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/lock"
 	"github.com/spf13/cobra"
 )
@@ -91,7 +92,14 @@ func runIndex(cmd *cobra.Command, args []string) error {
 	if indexDebug {
 		dump = service.NewFileDumpManager(repoPath)
 	}
-	indexer := service.NewIndexer(store, fingerprintStore, indexLock, cfg, dump)
+	// Create cross-project index
+	crossIndexPath := filepath.Join(config.GlobalDir(), "cross_project_index.json")
+	crossIndex := crossindex.NewJSONStore(crossIndexPath)
+	if err := crossIndex.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  Failed to load cross-project index: %v\n", err)
+	}
+
+	indexer := service.NewIndexer(store, fingerprintStore, indexLock, cfg, dump, crossIndex)
 
 	database, address, _ := storage.ResolveStorageAddress(cfg)
 	fmt.Printf("Indexing: %s (branch: %s, db: %s)\n", repoPath, branchName, storage.FormatStorageInfo(database, address))

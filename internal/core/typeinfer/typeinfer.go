@@ -125,7 +125,7 @@ func (infer *TypeInfer) InferLocal(result *model.ParseResult) *model.TypeEnv {
 
 // ResolveFixpoint iterates over pending assignments until no new bindings are produced.
 // Handles: copy (b=a), call_result (x=f()), field_access (x=a.field), method_call_result (x=a.method()).
-func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.PendingAssignment, findByName func(string) []model.Symbol) {
+func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.PendingAssignment, findByName func(string) []model.Symbol, findFieldByOwner ...func(string, string) *model.FieldInfo) {
 	if env == nil || len(pendings) == 0 {
 		return
 	}
@@ -150,7 +150,16 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 			case "field_access":
 				receiverType := lookupInEnv(env, p.Scope, p.Receiver)
 				if receiverType != "" {
-					typeName = lookupFieldType(receiverType, p.Field, findByName)
+					// Try SymbolTable field lookup first (direct field type)
+					if len(findFieldByOwner) > 0 && findFieldByOwner[0] != nil {
+						if fieldInfo := findFieldByOwner[0](receiverType, p.Field); fieldInfo != nil {
+							typeName = fieldInfo.Type
+						}
+					}
+					// Fallback: Lombok getter inference
+					if typeName == "" {
+						typeName = lookupFieldType(receiverType, p.Field, findByName)
+					}
 				}
 			case "method_call_result":
 				receiverType := lookupInEnv(env, p.Scope, p.Receiver)

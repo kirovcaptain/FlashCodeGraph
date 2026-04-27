@@ -32,7 +32,7 @@ func setupTestIndexer(t *testing.T) (*Indexer, storage.GraphStore) {
 	fingerprintStore := storage.NewJSONFingerprintStore(t.TempDir())
 	indexLock := lock.NewNoopLock()
 
-	indexer := NewIndexer(store, fingerprintStore, indexLock, cfg, nil)
+	indexer := NewIndexer(store, fingerprintStore, indexLock, cfg, nil, nil)
 	return indexer, store
 }
 
@@ -1619,7 +1619,7 @@ func ParseInt(s string) int { return 0 }
 	}
 }
 
-func TestQuerier_QueryClassMethods(t *testing.T) {
+func TestQuerier_QueryClassMembers(t *testing.T) {
 	indexer, store := setupTestIndexer(t)
 	defer store.Close()
 	projectDir := t.TempDir()
@@ -1636,7 +1636,7 @@ public class UserService {
 	indexer.Index(ctx, projectDir, "main", true, nil)
 	querier := NewQuerier(store)
 
-	methods, candidates, err := querier.QueryClassMethods(ctx, "UserService", 50)
+	methods, candidates, _, err := querier.QueryClassMembers(ctx, "UserService", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1648,7 +1648,7 @@ public class UserService {
 	}
 }
 
-func TestQuerier_QueryClassMethods_Ambiguous(t *testing.T) {
+func TestQuerier_QueryClassMembers_Ambiguous(t *testing.T) {
 	indexer, store := setupTestIndexer(t)
 	defer store.Close()
 	projectDir := t.TempDir()
@@ -1667,7 +1667,7 @@ public class Store { public void put() {} }
 	indexer.Index(ctx, projectDir, "main", true, nil)
 	querier := NewQuerier(store)
 
-	methods, candidates, _ := querier.QueryClassMethods(ctx, "Store", 50)
+	methods, candidates, _, _ := querier.QueryClassMembers(ctx, "Store", 50)
 	if methods != nil {
 		t.Fatal("expected ambiguous, got methods")
 	}
@@ -1675,7 +1675,7 @@ public class Store { public void put() {} }
 		t.Fatalf("expected 2 candidates, got %d", len(candidates))
 	}
 
-	methods, candidates, _ = querier.QueryClassMethods(ctx, "com.a.Store", 50)
+	methods, candidates, _, _ = querier.QueryClassMembers(ctx, "com.a.Store", 50)
 	if candidates != nil {
 		t.Fatal("expected unique match with qualified name")
 	}
@@ -1684,7 +1684,7 @@ public class Store { public void put() {} }
 	}
 }
 
-func TestQuerier_QueryClassMethods_NotFound(t *testing.T) {
+func TestQuerier_QueryClassMembers_NotFound(t *testing.T) {
 	indexer, store := setupTestIndexer(t)
 	defer store.Close()
 	projectDir := t.TempDir()
@@ -1697,7 +1697,7 @@ func main() {}
 	indexer.Index(ctx, projectDir, "main", true, nil)
 	querier := NewQuerier(store)
 
-	methods, candidates, err := querier.QueryClassMethods(ctx, "NonExistent", 50)
+	methods, candidates, _, err := querier.QueryClassMembers(ctx, "NonExistent", 50)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,12 +13,32 @@ import (
 
 // Config is the merged configuration.
 type Config struct {
-	Project     ProjectConfig     `toml:"project"`
-	Storage     StorageConfig     `toml:"storage"`
-	System      SystemConfig      `toml:"system"`
-	Index       IndexConfig       `toml:"index"`
-	Embedding   EmbeddingConfig   `toml:"embedding"`
-	Annotations AnnotationsConfig `toml:"annotations"`
+	Project           ProjectConfig           `toml:"project"`
+	Storage           StorageConfig           `toml:"storage"`
+	System            SystemConfig            `toml:"system"`
+	Index             IndexConfig             `toml:"index"`
+	Embedding         EmbeddingConfig         `toml:"embedding"`
+	Annotations       AnnotationsConfig       `toml:"annotations"`
+	CrossProjectIndex CrossProjectIndexConfig `toml:"cross_project_index"`
+	Dependencies      DependenciesConfig      `toml:"dependencies"`
+}
+
+// CrossProjectIndexConfig holds cross-project index settings (global config).
+type CrossProjectIndexConfig struct {
+	Backend    string `toml:"backend"`               // "json" (default) | "sqlite" (reserved)
+	SQLitePath string `toml:"sqlite_path,omitempty"` // sqlite file path when backend=sqlite
+}
+
+// DependenciesConfig holds project dependency settings (project config).
+type DependenciesConfig struct {
+	Projects   []DependencyProject `toml:"projects"`
+	Properties map[string]string   `toml:"properties"` // placeholder key → resolved value
+}
+
+// DependencyProject represents a dependent project.
+type DependencyProject struct {
+	Path   string `toml:"path"`
+	Branch string `toml:"branch"`
 }
 
 // ProjectConfig holds project-level settings.

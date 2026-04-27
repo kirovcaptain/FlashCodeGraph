@@ -27,6 +27,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/typeinfer"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/crossindex"
 )
 
 // Indexer orchestrates the full indexing pipeline (Phase 0-8).
@@ -37,6 +38,7 @@ type Indexer struct {
 	config           *config.Config
 	progress         *ProgressManager
 	dump             DumpManager
+	crossIndex       crossindex.CrossProjectIndex
 	mu               sync.Mutex
 }
 
@@ -47,6 +49,7 @@ func NewIndexer(
 	indexLock storage.IndexLock,
 	cfg *config.Config,
 	dump DumpManager,
+	crossIndex crossindex.CrossProjectIndex,
 ) *Indexer {
 	if dump == nil {
 		dump = NopDumpManager{}
@@ -57,6 +60,7 @@ func NewIndexer(
 		indexLock:        indexLock,
 		config:           cfg,
 		dump:             dump,
+		crossIndex:       crossIndex,
 	}
 }
 
@@ -234,6 +238,9 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	}
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, fmt.Sprintf("%d files", scanCtx.result.FilesScanned))
 
+	// Step 7.5: Resolve service name placeholders (before writeSemanticNodes so Step 6 uses resolved names)
+	indexer.resolveServiceNamePlaceholders(parseResults)
+
 	// Write all other nodes and edges
 	if err := indexer.writeSemanticNodes(ctx, scanCtx, parseResults, symbolTable); err != nil {
 		return nil, err
@@ -247,6 +254,30 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	// Resolve and write relationships
 	if err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable); err != nil {
 		return nil, err
+	}
+
+	// Preload Route nodes and HANDLES edges once for Step 8 + Step 9
+	allRoutes, _ := indexer.graphStore.QueryAllByKind(ctx, constants.KindRoute, 0)
+	handlesEdges, _ := indexer.graphStore.QueryAllEdges(ctx, model.RelHandles, 0)
+	routeToHandler := make(map[string]string, len(handlesEdges))
+	for _, edge := range handlesEdges {
+		routeToHandler[edge.TargetID] = edge.SourceID
+	}
+
+	// Flatten RemoteCalls for Step 8
+	var allRemoteCalls []model.RawRemoteCall
+	for _, parseResult := range parseResults {
+		allRemoteCalls = append(allRemoteCalls, parseResult.RemoteCalls...)
+	}
+
+	// Step 8: Match consumer to provider (cross-service CALLS edges)
+	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, symbolTable, allRoutes, routeToHandler); err != nil {
+		return nil, fmt.Errorf("indexer: match consumer to provider: %w", err)
+	}
+
+	// Step 9: Write cross-project index
+	if err := indexer.writeCrossProjectIndex(ctx, scanCtx, symbolTable, allRoutes, routeToHandler); err != nil {
+		return nil, fmt.Errorf("indexer: write cross-project index: %w", err)
 	}
 
 	indexer.progress.EmitSub(PhaseResolving, SubSaveFingerprints, "")
@@ -332,6 +363,9 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	}
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, fmt.Sprintf("%d files", len(filesToParse)))
 
+	// Step 7.5: Resolve service name placeholders (before writeSemanticNodes so Step 6 uses resolved names)
+	indexer.resolveServiceNamePlaceholders(parseResults)
+
 	// Write all other nodes and edges
 	if err := indexer.writeSemanticNodes(ctx, scanCtx, parseResults, symbolTable); err != nil {
 		return nil, err
@@ -345,6 +379,30 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	// Resolve and write relationships
 	if err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable); err != nil {
 		return nil, err
+	}
+
+	// Preload Route nodes and HANDLES edges once for Step 8 + Step 9
+	allRoutes, _ := indexer.graphStore.QueryAllByKind(ctx, constants.KindRoute, 0)
+	handlesEdges, _ := indexer.graphStore.QueryAllEdges(ctx, model.RelHandles, 0)
+	routeToHandler := make(map[string]string, len(handlesEdges))
+	for _, edge := range handlesEdges {
+		routeToHandler[edge.TargetID] = edge.SourceID
+	}
+
+	// Flatten RemoteCalls for Step 8
+	var allRemoteCalls []model.RawRemoteCall
+	for _, parseResult := range parseResults {
+		allRemoteCalls = append(allRemoteCalls, parseResult.RemoteCalls...)
+	}
+
+	// Step 8: Match consumer to provider (cross-service CALLS edges)
+	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, symbolTable, allRoutes, routeToHandler); err != nil {
+		return nil, fmt.Errorf("indexer: match consumer to provider: %w", err)
+	}
+
+	// Step 9: Write cross-project index
+	if err := indexer.writeCrossProjectIndex(ctx, scanCtx, symbolTable, allRoutes, routeToHandler); err != nil {
+		return nil, fmt.Errorf("indexer: write cross-project index: %w", err)
 	}
 
 	indexer.progress.EmitSub(PhaseResolving, SubSaveFingerprints, "")
@@ -602,7 +660,7 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 	indexer.progress.EmitSub(PhaseResolving, SubResolveFixpoint, "")
 	for _, parseResult := range parseResults {
 		if len(parseResult.PendingAssignments) > 0 {
-			typeInfer.ResolveFixpoint(envs[parseResult.FilePath], parseResult.PendingAssignments, symbolTable.FindByName)
+			typeInfer.ResolveFixpoint(envs[parseResult.FilePath], parseResult.PendingAssignments, symbolTable.FindByName, symbolTable.FindFieldByOwner)
 		}
 	}
 	indexer.progress.EmitSub(PhaseResolving, SubResolveFixpoint, fmt.Sprintf("%d files", len(parseResults)))
@@ -855,6 +913,10 @@ func (indexer *Indexer) parseFiles(ctx context.Context, files []scanner.ScannedF
 
 				// Build SymbolTable concurrently
 				symbolTable.AddBatch(parseResult.Symbols)
+				// Register fields in SymbolTable for type inference
+				for _, fieldDeclaration := range parseResult.Fields {
+					symbolTable.AddField(fieldDeclaration.OwnerQualifiedName, fieldDeclaration.FieldInfo)
+				}
 
 				mutex.Lock()
 				results = append(results, *parseResult)
@@ -875,6 +937,15 @@ func (indexer *Indexer) parseFiles(ctx context.Context, files []scanner.ScannedF
 }
 
 func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []model.ParseResult, result *model.IndexResult) error {
+	// Build field map: ownerQualifiedName → []FieldInfo
+	fieldsByOwner := make(map[string][]model.FieldInfo)
+	for _, parseResult := range parseResults {
+		for _, fieldDeclaration := range parseResult.Fields {
+			fieldsByOwner[fieldDeclaration.OwnerQualifiedName] = append(
+				fieldsByOwner[fieldDeclaration.OwnerQualifiedName], fieldDeclaration.FieldInfo)
+		}
+	}
+
 	var nodes []model.Node
 	for _, parseResult := range parseResults {
 		for _, symbol := range parseResult.Symbols {
@@ -903,6 +974,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"class_type":     symbol.ClassType,
 				}
 			case constants.KindClass:
+				fieldsJSON, _ := json.Marshal(fieldsByOwner[symbol.QualifiedName])
 				props = map[string]any{
 					"name":           symbol.Name,
 					"qualified_name": symbol.QualifiedName,
@@ -915,8 +987,10 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"annotations":    symbol.Annotations,
 					"complexity":     symbol.Complexity,
 					"params":         symbol.Params,
+					"fields":         string(fieldsJSON),
 				}
 			case constants.KindInterface:
+				fieldsJSON, _ := json.Marshal(fieldsByOwner[symbol.QualifiedName])
 				props = map[string]any{
 					"name":           symbol.Name,
 					"qualified_name": symbol.QualifiedName,
@@ -926,6 +1000,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"is_exported":    symbol.IsExported,
 					"class_type":     symbol.ClassType,
 					"annotations":    symbol.Annotations,
+					"fields":         string(fieldsJSON),
 				}
 			default:
 				props = map[string]any{
@@ -1557,26 +1632,33 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 			if symbol.Annotations == "" || symbol.Annotations == "[]" || symbol.Annotations == "null" {
 				continue
 			}
-			var annList []string
+			var annList []model.StructuredAnnotation
 			if err := json.Unmarshal([]byte(symbol.Annotations), &annList); err != nil {
 				continue
 			}
-			for _, ann := range annList {
-				baseName := annotation.ExtractBaseName(ann)
-				def, ok := whitelist[baseName]
+			for _, structuredAnnotation := range annList {
+				def, ok := whitelist[structuredAnnotation.Name]
 				if !ok {
 					continue
 				}
-				annID := symbol.ID + "::" + baseName
+				annID := symbol.ID + "::" + structuredAnnotation.Name
+				// Build params string from structured params
+				paramsStr := ""
+				for paramKey, paramValue := range structuredAnnotation.Params {
+					if paramsStr != "" {
+						paramsStr += ", "
+					}
+					paramsStr += paramKey + "=" + paramValue
+				}
 				nodes = append(nodes, model.Node{
 					ID:   annID,
 					Kind: constants.KindAnnotation,
 					Properties: map[string]any{
-						"name":      baseName,
+						"name":      structuredAnnotation.Name,
 						"category":  def.Category,
 						"layer":     def.Layer,
 						"framework": def.Framework,
-						"params":    annotation.ExtractParams(ann),
+						"params":    paramsStr,
 						"file_path": symbol.FilePath,
 						"line":      symbol.StartLine,
 					},
@@ -1771,4 +1853,330 @@ func buildLanguageHelpers(language string, symbolTable *resolver.SymbolTable, fr
 		helpers[constants.LangJavaScript] = resolverts.NewHelper()
 	}
 	return helpers
+}
+
+// unresolvedPlaceholder records a service name placeholder that could not be resolved from config.
+type unresolvedPlaceholder struct {
+	Key        string
+	CallerName string
+	FilePath   string
+}
+
+// resolveServiceNamePlaceholders replaces ${...} placeholders in RawRemoteCall.TargetService
+// with human-readable service names from config. Does NOT affect route matching or call chain building.
+func (indexer *Indexer) resolveServiceNamePlaceholders(parseResults []model.ParseResult) []unresolvedPlaceholder {
+	properties := indexer.config.Dependencies.Properties
+	if len(properties) == 0 {
+		return nil
+	}
+
+	var unresolved []unresolvedPlaceholder
+	for i := range parseResults {
+		for j := range parseResults[i].RemoteCalls {
+			remoteCall := &parseResults[i].RemoteCalls[j]
+			if !strings.HasPrefix(remoteCall.TargetService, "${") {
+				continue
+			}
+			key := strings.TrimPrefix(strings.TrimSuffix(remoteCall.TargetService, "}"), "${")
+			if resolved, ok := properties[key]; ok {
+				remoteCall.TargetService = resolved
+				remoteCall.ServiceResolvedBy = "config_mapping"
+			} else {
+				unresolved = append(unresolved, unresolvedPlaceholder{
+					Key:        key,
+					CallerName: remoteCall.CallerName,
+					FilePath:   remoteCall.FilePath,
+				})
+			}
+		}
+	}
+	return unresolved
+}
+
+// matchConsumerToProvider connects RPC consumer methods to provider handler Functions
+// by matching HTTP method+path against Route nodes (same-repo) or CrossProjectIndex (cross-repo).
+// Creates Function→Function CALLS edges so TraverseCallChain can traverse cross-service calls.
+func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *scanContext,
+	remoteCalls []model.RawRemoteCall, symbolTable *resolver.SymbolTable,
+	allRoutes []model.Node, routeToHandler map[string]string) error {
+
+	indexer.progress.EmitSub(PhaseWriting, SubMatchConsumerToProvider, "")
+
+	if len(allRoutes) == 0 && indexer.crossIndex == nil {
+		return nil
+	}
+
+	// Pre-bucket routes by HTTP method to reduce per-RemoteCall scan range.
+	// Exclude consumer routes (e.g. feign) — only match against provider routes.
+	routesByMethod := make(map[string][]model.Node)
+	for _, route := range allRoutes {
+		framework, _ := route.Properties["framework"].(string)
+		if crossindex.DetermineRouteRole(framework) == crossindex.RoleConsumer {
+			continue
+		}
+		method, _ := route.Properties["method"].(string)
+		upperMethod := strings.ToUpper(method)
+		routesByMethod[upperMethod] = append(routesByMethod[upperMethod], route)
+	}
+
+	dependencies := toCrossIndexDeps(indexer.config.Dependencies.Projects)
+
+	var newNodes []model.Node
+	var newEdges []model.Edge
+	seenPlaceholders := make(map[string]bool)
+
+	for _, remoteCall := range remoteCalls {
+		if remoteCall.TargetURL == "" {
+			continue
+		}
+		callerID := resolveHandlerFunction(symbolTable, remoteCall.CallerName, remoteCall.FilePath)
+		if callerID == "" {
+			continue
+		}
+
+		// 1. Match against local Route nodes (use method bucket to narrow scan)
+		candidateRoutes := routesByMethod[strings.ToUpper(remoteCall.Method)]
+		matched := resolver.FindMatchingRoutes(remoteCall.TargetURL, remoteCall.Method, candidateRoutes)
+		if len(matched) > 0 {
+			handlerID := routeToHandler[matched[0]]
+			if handlerID != "" && handlerID != callerID {
+				newEdges = append(newEdges, model.Edge{
+					SourceID:   callerID,
+					TargetID:   handlerID,
+					Kind:       model.RelCalls,
+					SourceKind: constants.KindFunction,
+					Properties: map[string]any{
+						"via_route":          remoteCall.Method + " " + remoteCall.TargetURL,
+						"cross_service":      false,
+						"consumer_interface": remoteCall.CallerName,
+						"target_service":     remoteCall.TargetService,
+						"confidence":         0.9,
+					},
+				})
+				scanCtx.result.RelationsByKind["CALLS_VIA_ROUTE"]++
+			}
+			continue
+		}
+
+		// 2. Match against CrossProjectIndex (only when dependencies configured)
+		if len(dependencies) > 0 && indexer.crossIndex != nil {
+			routeMatches := indexer.crossIndex.MatchRoute(ctx, remoteCall.Method, remoteCall.TargetURL, dependencies)
+			if len(routeMatches) > 0 {
+				match := routeMatches[0]
+				placeholderID := match.Route.HandlerID
+				if !seenPlaceholders[placeholderID] {
+					seenPlaceholders[placeholderID] = true
+					newNodes = append(newNodes, model.Node{
+						ID:   placeholderID,
+						Kind: constants.KindFunction,
+						Properties: map[string]any{
+							"name":           match.Route.HandlerName,
+							"file_path":      "[cross-service]",
+							"qualified_name": match.Route.HandlerName,
+							"cross_service":  true,
+							"target_project": match.ProjectPath,
+							"target_branch":  match.Branch,
+						},
+					})
+				}
+				newEdges = append(newEdges, model.Edge{
+					SourceID:   callerID,
+					TargetID:   placeholderID,
+					Kind:       model.RelCalls,
+					SourceKind: constants.KindFunction,
+					Properties: map[string]any{
+						"via_route":          remoteCall.Method + " " + remoteCall.TargetURL,
+						"cross_service":      true,
+						"consumer_interface": remoteCall.CallerName,
+						"target_service":     remoteCall.TargetService,
+						"target_project":     match.ProjectPath,
+						"target_branch":      match.Branch,
+						"target_handler":     match.Route.HandlerName,
+						"confidence":         0.85,
+					},
+				})
+				scanCtx.result.RelationsByKind["CALLS_CROSS_SERVICE"]++
+			}
+		}
+		// 3. No match → REMOTE_CALLS_EXT already created by writeRemoteCallEdges (Step 6)
+	}
+
+	if len(newNodes) > 0 {
+		if err := indexer.graphStore.CreateNodes(ctx, newNodes); err != nil {
+			return fmt.Errorf("create cross-service placeholder nodes: %w", err)
+		}
+	}
+	if len(newEdges) > 0 {
+		if err := indexer.graphStore.CreateEdges(ctx, newEdges); err != nil {
+			return fmt.Errorf("create cross-service CALLS edges: %w", err)
+		}
+	}
+
+	indexer.progress.EmitSub(PhaseWriting, SubMatchConsumerToProvider,
+		fmt.Sprintf("%d via_route, %d cross_service",
+			scanCtx.result.RelationsByKind["CALLS_VIA_ROUTE"],
+			scanCtx.result.RelationsByKind["CALLS_CROSS_SERVICE"]))
+	return nil
+}
+
+// toCrossIndexDeps converts config dependencies to crossindex.Dependency slice.
+func toCrossIndexDeps(projects []config.DependencyProject) []crossindex.Dependency {
+	dependencies := make([]crossindex.Dependency, len(projects))
+	for i, project := range projects {
+		dependencies[i] = crossindex.Dependency{Path: project.Path, Branch: project.Branch}
+	}
+	return dependencies
+}
+
+// writeCrossProjectIndex collects exported symbols and routes from the current project
+// and registers them in the CrossProjectIndex for cross-service discovery.
+func (indexer *Indexer) writeCrossProjectIndex(ctx context.Context, scanCtx *scanContext,
+	symbolTable *resolver.SymbolTable,
+	allRoutes []model.Node, routeToHandler map[string]string) error {
+
+	if indexer.crossIndex == nil {
+		return nil
+	}
+
+	indexer.progress.EmitSub(PhaseWriting, SubWriteCrossProjectIndex, "")
+
+	var symbols []crossindex.GlobalSymbol
+	var routes []crossindex.GlobalRoute
+
+	// Collect exported classes/interfaces from symbolTable (skip functions, test files, unexported)
+	for _, symbol := range symbolTable.All() {
+		if !symbol.IsExported {
+			continue
+		}
+		if isTestFilePath(symbol.FilePath) {
+			continue
+		}
+		if symbol.Kind == constants.KindFunction {
+			continue
+		}
+
+		globalSymbol := crossindex.GlobalSymbol{
+			QualifiedName: symbol.QualifiedName,
+			Name:          symbol.Name,
+			Kind:          symbol.Kind,
+			ClassType:     symbol.ClassType,
+			NodeID:        symbol.ID,
+			Annotations:   parseAnnotationNames(symbol.Annotations),
+			FilePath:      symbol.FilePath,
+		}
+
+		// Collect methods of this class/interface
+		methods := symbolTable.FindMethodsByQualifiedName(symbol.QualifiedName)
+		for _, method := range methods {
+			globalMethod := crossindex.GlobalMethod{
+				Name:        method.Name,
+				NodeID:      method.ID,
+				Params:      parseParamTypes(method.Params),
+				ReturnType:  firstReturnType(method.ReturnTypes),
+				Annotations: parseAnnotationNames(method.Annotations),
+			}
+			globalMethod.RouteMethod, globalMethod.RoutePath = extractRouteFromAnnotations(method.Annotations)
+			globalSymbol.Methods = append(globalSymbol.Methods, globalMethod)
+		}
+
+		symbols = append(symbols, globalSymbol)
+	}
+
+	// Collect routes with role (provider/consumer) using preloaded routeToHandler map
+	for _, route := range allRoutes {
+		framework, _ := route.Properties["framework"].(string)
+		handlerMethod, _ := route.Properties["handler_method"].(string)
+		routes = append(routes, crossindex.GlobalRoute{
+			Method:      fmt.Sprint(route.Properties["method"]),
+			Path:        fmt.Sprint(route.Properties["path_pattern"]),
+			HandlerName: handlerMethod,
+			HandlerID:   routeToHandler[route.ID],
+			Framework:   framework,
+			Role:        crossindex.DetermineRouteRole(framework),
+		})
+	}
+
+	entry := crossindex.ProjectEntry{
+		ProjectPath: scanCtx.absPath,
+		Branch:      scanCtx.branch,
+		Symbols:     symbols,
+		Routes:      routes,
+		UpdatedAt:   time.Now().Unix(),
+	}
+	if err := indexer.crossIndex.RegisterProject(ctx, entry); err != nil {
+		return err
+	}
+	indexer.progress.EmitSub(PhaseWriting, SubWriteCrossProjectIndex,
+		fmt.Sprintf("%d symbols, %d routes", len(symbols), len(routes)))
+	return nil
+}
+
+// isTestFilePath checks if a file path looks like a test file.
+func isTestFilePath(filePath string) bool {
+	lower := strings.ToLower(filePath)
+	return strings.Contains(lower, "/test/") || strings.Contains(lower, "/tests/") ||
+		strings.Contains(lower, "_test.") || strings.Contains(lower, ".test.")
+}
+
+// parseAnnotationNames extracts annotation names from JSON structured annotation array.
+func parseAnnotationNames(annotationsJSON string) []string {
+	if annotationsJSON == "" || annotationsJSON == "null" {
+		return nil
+	}
+	var annotations []model.StructuredAnnotation
+	if err := json.Unmarshal([]byte(annotationsJSON), &annotations); err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(annotations))
+	for _, annotation := range annotations {
+		names = append(names, annotation.Name)
+	}
+	return names
+}
+
+// parseParamTypes extracts parameter type names from JSON params string.
+func parseParamTypes(paramsJSON string) []string {
+	if paramsJSON == "" {
+		return nil
+	}
+	var params []struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return nil
+	}
+	types := make([]string, 0, len(params))
+	for _, param := range params {
+		types = append(types, param.Type)
+	}
+	return types
+}
+
+// firstReturnType returns the first return type or empty string.
+func firstReturnType(returnTypes []string) string {
+	if len(returnTypes) > 0 {
+		return returnTypes[0]
+	}
+	return ""
+}
+
+// extractRouteFromAnnotations parses route method and path from structured annotation JSON.
+func extractRouteFromAnnotations(annotationsJSON string) (string, string) {
+	if annotationsJSON == "" || annotationsJSON == "null" {
+		return "", ""
+	}
+	var annotations []model.StructuredAnnotation
+	if err := json.Unmarshal([]byte(annotationsJSON), &annotations); err != nil {
+		return "", ""
+	}
+	routeAnnotations := map[string]string{
+		"GetMapping": "GET", "PostMapping": "POST",
+		"PutMapping": "PUT", "DeleteMapping": "DELETE", "PatchMapping": "PATCH",
+	}
+	for _, annotation := range annotations {
+		if httpMethod, ok := routeAnnotations[annotation.Name]; ok {
+			return httpMethod, annotation.Params["value"]
+		}
+	}
+	return "", ""
 }

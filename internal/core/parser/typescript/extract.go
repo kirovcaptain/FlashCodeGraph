@@ -229,23 +229,33 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 			nameNode := astutil.FindChildByKind(child, "property_identifier")
 			typeAnn := astutil.FindChildByKind(child, "type_annotation")
 			if nameNode != nil && typeAnn != nil {
-				// First named child of type_annotation is the type node (skip ":")
 				var typeNode *tree_sitter.Node
 				for j := uint(0); j < typeAnn.ChildCount(); j++ {
-					if c := typeAnn.Child(j); c.IsNamed() {
-						typeNode = c
+					if candidate := typeAnn.Child(j); candidate.IsNamed() {
+						typeNode = candidate
 						break
 					}
 				}
 				if typeNode != nil {
+					fieldName := nameNode.Utf8Text(content)
 					typeName := extractTypeName(typeNode, content)
 					if typeName != "" {
 						result.TypeHints = append(result.TypeHints, model.TypeBinding{
-							VarName:  nameNode.Utf8Text(content),
+							VarName:  fieldName,
 							TypeName: typeName,
 							Tier:     0,
 							Scope:    qualifiedName,
 							FilePath: file.RelPath,
+						})
+						// FieldDeclaration output
+						result.Fields = append(result.Fields, model.FieldDeclaration{
+							FieldInfo: model.FieldInfo{
+								Name: fieldName,
+								Type: typeName,
+							},
+							OwnerQualifiedName: qualifiedName,
+							FilePath:           file.RelPath,
+							Line:               int(child.StartPosition().Row) + 1,
 						})
 					}
 				}

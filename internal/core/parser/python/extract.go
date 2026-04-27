@@ -447,6 +447,23 @@ func extractPythonPendingAssignment(node *tree_sitter.Node, content []byte, scop
 					Scope:    classQN,
 					FilePath: filePath,
 				})
+				// FieldDeclaration output
+				fieldVisibility := "public"
+				if strings.HasPrefix(fieldName, "__") {
+					fieldVisibility = "private"
+				} else if strings.HasPrefix(fieldName, "_") {
+					fieldVisibility = "protected"
+				}
+				result.Fields = append(result.Fields, model.FieldDeclaration{
+					FieldInfo: model.FieldInfo{
+						Name:       fieldName,
+						Type:       typeName,
+						Visibility: fieldVisibility,
+					},
+					OwnerQualifiedName: classQN,
+					FilePath:           filePath,
+					Line:               int(node.StartPosition().Row) + 1,
+				})
 			}
 		}
 		return

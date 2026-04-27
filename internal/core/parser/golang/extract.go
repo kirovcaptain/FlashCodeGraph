@@ -143,6 +143,21 @@ func extractStruct(specNode, structNode *tree_sitter.Node, content []byte, file 
 					Scope:    structQualifiedName,
 					FilePath: file.RelPath,
 				})
+				// FieldDeclaration output
+				fieldVisibility := "private"
+				if isExported(fieldName) {
+					fieldVisibility = "public"
+				}
+				result.Fields = append(result.Fields, model.FieldDeclaration{
+					FieldInfo: model.FieldInfo{
+						Name:       fieldName,
+						Type:       fieldType,
+						Visibility: fieldVisibility,
+					},
+					OwnerQualifiedName: structQualifiedName,
+					FilePath:           file.RelPath,
+					Line:               int(field.StartPosition().Row) + 1,
+				})
 			}
 		} else if typeNode != nil {
 			// Embedded type → heritage (struct embedding)

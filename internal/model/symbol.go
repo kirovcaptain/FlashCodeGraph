@@ -32,3 +32,26 @@ type Symbol struct {
 	EntryPointScore float64 `json:"entry_point_score,omitempty"`
 	EntryType       string `json:"entry_type,omitempty"`
 }
+
+// StructuredAnnotation represents a parsed annotation with name and parameters.
+type StructuredAnnotation struct {
+	Name   string            `json:"name"`             // e.g. "RestController", "DubboReference"
+	Params map[string]string `json:"params,omitempty"` // e.g. {"version": "1.0.0", "group": "payment"}
+}
+
+// FieldInfo represents a class/struct field declaration.
+type FieldInfo struct {
+	Name        string                 `json:"name"`                  // e.g. "graphStore"
+	Type        string                 `json:"type"`                  // e.g. "storage.GraphStore"
+	Visibility  string                 `json:"visibility,omitempty"`  // public/private/protected/package
+	Annotations []StructuredAnnotation `json:"annotations,omitempty"` // e.g. [{"name":"Autowired"}]
+	IsStatic    bool                   `json:"is_static,omitempty"`
+}
+
+// FieldDeclaration extends FieldInfo with owner and location info for parser output.
+type FieldDeclaration struct {
+	FieldInfo
+	OwnerQualifiedName string `json:"owner_qualified_name"` // owning class qualified_name
+	FilePath           string `json:"file_path"`
+	Line               int    `json:"line"`
+}

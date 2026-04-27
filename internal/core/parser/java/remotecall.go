@@ -30,7 +30,7 @@ var httpClientTypes = map[string]bool{
 
 // ExtractFeignClient extracts remote calls from a @FeignClient interface.
 // Detects @FeignClient(name, url, path) + method-level @GetMapping/@PostMapping.
-func ExtractFeignClient(classAnnotations []string, node *tree_sitter.Node, content []byte, className, filePath string, result *model.ParseResult) {
+func ExtractFeignClient(classAnnotations []model.StructuredAnnotation, node *tree_sitter.Node, content []byte, className, filePath string, result *model.ParseResult) {
 	serviceName, feignPath := parseFeignClientAnnotation(classAnnotations)
 	if serviceName == "" {
 		return
@@ -38,9 +38,9 @@ func ExtractFeignClient(classAnnotations []string, node *tree_sitter.Node, conte
 
 	// Also check @RequestMapping for class-level path prefix
 	if feignPath == "" {
-		for _, ann := range classAnnotations {
-			if strings.Contains(ann, "RequestMapping") {
-				feignPath = extractAnnotationValue(ann)
+		for _, annotation := range classAnnotations {
+			if annotation.Name == "RequestMapping" {
+				feignPath = annotation.Params["value"]
 				break
 			}
 		}
@@ -70,17 +70,12 @@ func ExtractFeignClient(classAnnotations []string, node *tree_sitter.Node, conte
 		// Extract method annotations
 		annotations := collectAnnotations(child, content)
 		for _, annotation := range annotations {
-			baseName := strings.TrimPrefix(annotation, "@")
-			if idx := strings.Index(baseName, "("); idx >= 0 {
-				baseName = baseName[:idx]
-			}
-
-			httpMethod, isRoute := javaRouteAnnotations[baseName]
+			httpMethod, isRoute := javaRouteAnnotations[annotation.Name]
 			if !isRoute {
 				continue
 			}
 
-			methodPath := extractAnnotationValue(annotation)
+			methodPath := annotation.Params["value"]
 			fullPath := feignPath + methodPath
 
 			result.Routes = append(result.Routes, model.RawRoute{
@@ -185,21 +180,16 @@ func ExtractRestTemplateCalls(bodyNode *tree_sitter.Node, content []byte, caller
 }
 
 // parseFeignClientAnnotation extracts name, url, path from @FeignClient annotation.
-func parseFeignClientAnnotation(annotations []string) (serviceName, path string) {
+func parseFeignClientAnnotation(annotations []model.StructuredAnnotation) (serviceName, path string) {
 	for _, annotation := range annotations {
-		if !strings.Contains(annotation, "FeignClient") {
+		if annotation.Name != "FeignClient" {
 			continue
 		}
-
-		// Extract name attribute
-		serviceName = extractNamedAttribute(annotation, "name")
+		serviceName = annotation.Params["name"]
 		if serviceName == "" {
-			serviceName = extractNamedAttribute(annotation, "value")
+			serviceName = annotation.Params["value"]
 		}
-
-		// Extract path attribute
-		path = extractNamedAttribute(annotation, "path")
-
+		path = annotation.Params["path"]
 		return serviceName, path
 	}
 	return "", ""
@@ -275,26 +265,21 @@ func extractFirstStringArg(argsNode *tree_sitter.Node, content []byte, stringVar
 }
 
 // collectAnnotations extracts annotation strings from a node's modifiers.
-func collectAnnotations(node *tree_sitter.Node, content []byte) []string {
-	var annotations []string
+func collectAnnotations(node *tree_sitter.Node, content []byte) []model.StructuredAnnotation {
+	var annotations []model.StructuredAnnotation
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "modifiers" {
-			for j := uint(0); j < child.ChildCount(); j++ {
-				mod := child.Child(j)
-				if mod.Kind() == "marker_annotation" || mod.Kind() == "annotation" {
-					annotations = append(annotations, mod.Utf8Text(content))
-				}
-			}
+			annotations = append(annotations, ExtractAnnotations(child, content)...)
 		}
 	}
 	return annotations
 }
 
 // hasFeignClient checks if class annotations contain @FeignClient.
-func HasFeignClient(annotations []string) bool {
+func HasFeignClient(annotations []model.StructuredAnnotation) bool {
 	for _, annotation := range annotations {
-		if strings.Contains(annotation, "FeignClient") {
+		if annotation.Name == "FeignClient" {
 			return true
 		}
 	}
@@ -360,6 +345,7 @@ func extractGRPCVarDecl(node *tree_sitter.Node, content []byte, channelVars, stu
 	}
 }
 
+
 func extractGRPCMethodCall(node *tree_sitter.Node, content []byte, callerName, filePath string, stubVars, channelVars map[string]string, result *model.ParseResult) {
 	objNode := node.ChildByFieldName("object")
 	nameNode := node.ChildByFieldName("name")
@@ -399,8 +385,8 @@ func extractGRPCMethodCall(node *tree_sitter.Node, content []byte, callerName, f
 func ExtractDubboReference(fieldNode *tree_sitter.Node, content []byte, className, filePath string, result *model.ParseResult) {
 	annotations := collectAnnotations(fieldNode, content)
 	isDubbo := false
-	for _, a := range annotations {
-		if strings.Contains(a, "DubboReference") || strings.Contains(a, "Reference") {
+	for _, annotation := range annotations {
+		if annotation.Name == "DubboReference" || annotation.Name == "Reference" {
 			isDubbo = true
 			break
 		}
@@ -442,9 +428,9 @@ func ExtractDubboReference(fieldNode *tree_sitter.Node, content []byte, classNam
 }
 
 // HasDubboService checks if class annotations contain @DubboService.
-func HasDubboService(annotations []string) bool {
-	for _, a := range annotations {
-		if strings.Contains(a, "DubboService") {
+func HasDubboService(annotations []model.StructuredAnnotation) bool {
+	for _, annotation := range annotations {
+		if annotation.Name == "DubboService" {
 			return true
 		}
 	}
@@ -462,17 +448,13 @@ var graphqlAnnotations = map[string]string{
 }
 
 // ExtractGraphQLRoutes extracts GraphQL resolver routes from method annotations.
-func ExtractGraphQLRoutes(annotations []string, methodName, className, filePath string, line int, result *model.ParseResult) {
+func ExtractGraphQLRoutes(annotations []model.StructuredAnnotation, methodName, className, filePath string, line int, result *model.ParseResult) {
 	for _, annotation := range annotations {
-		baseName := strings.TrimPrefix(annotation, "@")
-		if idx := strings.Index(baseName, "("); idx >= 0 {
-			baseName = baseName[:idx]
-		}
-		opType, ok := graphqlAnnotations[baseName]
+		opType, ok := graphqlAnnotations[annotation.Name]
 		if !ok {
 			continue
 		}
-			result.Routes = append(result.Routes, model.RawRoute{
+		result.Routes = append(result.Routes, model.RawRoute{
 			Method:      methodName,
 			PathPattern: opType,
 			Framework:   "graphql",

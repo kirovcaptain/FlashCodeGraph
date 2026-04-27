@@ -11,13 +11,13 @@ import (
 
 // ExtractORM extracts ORM queries from Java method bodies.
 // Detects: @Query annotations, string SQL literals, MyBatis-style queries.
-func ExtractORM(annotations []string, bodyNode *tree_sitter.Node, content []byte, callerName, filePath string, startLine int, result *model.ParseResult) {
+func ExtractORM(annotations []model.StructuredAnnotation, bodyNode *tree_sitter.Node, content []byte, callerName, filePath string, startLine int, result *model.ParseResult) {
 	// 1. @Query annotation with JPQL/SQL
 	for _, annotation := range annotations {
-		if !strings.Contains(annotation, "Query") {
+		if annotation.Name != "Query" {
 			continue
 		}
-		sqlText := extractAnnotationValue(annotation)
+		sqlText := annotation.Params["value"]
 		if sqlText == "" {
 			continue
 		}

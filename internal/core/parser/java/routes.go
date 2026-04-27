@@ -18,7 +18,7 @@ var javaRouteAnnotations = map[string]string{
 // ExtractRoutes extracts HTTP route definitions from Spring MVC annotations (@GetMapping, @PostMapping, @RequestMapping, etc.).
 // Currently only supports Spring framework annotations. Framework field is hardcoded to "spring".
 // To support other frameworks (e.g. JAX-RS @Path/@GET), add new route annotation mappings and detect framework dynamically.
-func ExtractRoutes(annotations []string, classAnnotations []string, methodName, className, filePath string, startLine int, result *model.ParseResult) {
+func ExtractRoutes(annotations []model.StructuredAnnotation, classAnnotations []model.StructuredAnnotation, methodName, className, filePath string, startLine int, result *model.ParseResult) {
 	// FeignClient routes are handled by ExtractFeignClient with correct path prefix
 	if HasFeignClient(classAnnotations) {
 		return
@@ -27,31 +27,27 @@ func ExtractRoutes(annotations []string, classAnnotations []string, methodName, 
 	// Get class-level route prefix from class annotations
 	classRoute := ""
 	for _, annotation := range classAnnotations {
-		if strings.Contains(annotation, "RequestMapping") {
-			classRoute = extractAnnotationValue(annotation)
+		if annotation.Name == "RequestMapping" {
+			classRoute = annotation.Params["value"]
 		}
 	}
 
 	for _, annotation := range annotations {
-		annotationName := strings.TrimPrefix(annotation, "@")
-		baseName := annotationName
-		if idx := strings.Index(baseName, "("); idx >= 0 {
-			baseName = baseName[:idx]
-		}
-
-		httpMethod, isRoute := javaRouteAnnotations[baseName]
+		httpMethod, isRoute := javaRouteAnnotations[annotation.Name]
 		if !isRoute {
 			continue
 		}
 
 		// For @RequestMapping, check explicit method param
-		if baseName == "RequestMapping" {
-			if m := extractRequestMappingMethod(annotation); m != "" {
-				httpMethod = m
+		if annotation.Name == "RequestMapping" {
+			if methodParam := annotation.Params["method"]; methodParam != "" {
+				if mapped := mapRequestMethod(methodParam); mapped != "" {
+					httpMethod = mapped
+				}
 			}
 		}
 
-		pathPattern := extractAnnotationValue(annotation)
+		pathPattern := annotation.Params["value"]
 		if classRoute != "" {
 			pathPattern = classRoute + pathPattern
 		}
@@ -67,7 +63,7 @@ func ExtractRoutes(annotations []string, classAnnotations []string, methodName, 
 	}
 }
 
-func extractRequestMappingMethod(annotation string) string {
+func mapRequestMethod(methodParam string) string {
 	methodPatterns := map[string]string{
 		"RequestMethod.GET":    "GET",
 		"RequestMethod.POST":   "POST",
@@ -76,7 +72,7 @@ func extractRequestMappingMethod(annotation string) string {
 		"RequestMethod.PATCH":  "PATCH",
 	}
 	for pattern, method := range methodPatterns {
-		if strings.Contains(annotation, pattern) {
+		if strings.Contains(methodParam, pattern) {
 			return method
 		}
 	}
