@@ -248,7 +248,8 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 			extractMethod(child, content, filePath, packageName, className, classAnnotations, result)
 		case "field_declaration":
 			extractField(child, content, filePath, packageName, className, result)
-			ExtractDubboReference(child, content, className, filePath, result)
+			ExtractDubboReference(child, content, packageName, className, filePath, result)
+			ExtractGrpcClientField(child, content, packageName, className, filePath, result)
 			// Collect field info for Lombok
 			if typeNode := child.ChildByFieldName("type"); typeNode != nil {
 				fieldTypeName := ExtractTypeName(typeNode, content)

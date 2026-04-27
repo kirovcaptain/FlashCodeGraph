@@ -113,6 +113,7 @@ type ParseResult struct {
 	RemoteCalls []RawRemoteCall `json:"remote_calls"`
 	Queries     []RawQuery      `json:"queries"`
 	Middlewares []RawMiddleware  `json:"middlewares"`
+	PendingRemoteCalls  []PendingRemoteCall  `json:"pending_remote_calls,omitempty"`
 	Fields              []FieldDeclaration   `json:"fields,omitempty"`
 	TypeHints           []TypeBinding       `json:"type_hints"`
 	PendingAssignments  []PendingAssignment  `json:"pending_assignments,omitempty"`
@@ -124,4 +125,17 @@ type ParseError struct {
 	FilePath string `json:"file_path"`
 	Line     int    `json:"line"`
 	Message  string `json:"message"`
+}
+
+// PendingRemoteCall records a field-level remote call declaration.
+// The actual caller method is unknown at parse time; it will be resolved
+// in the indexer post-processing phase by matching against callRelations.
+type PendingRemoteCall struct {
+	FieldName   string                 `json:"field_name"`    // e.g. paymentDubboService
+	FieldType   string                 `json:"field_type"`    // e.g. PaymentDubboService
+	Protocol    string                 `json:"protocol"`      // dubbo / grpc
+	OwnerClass  string                 `json:"owner_class"`   // e.g. com.example.PaymentDubboCaller
+	Annotations []StructuredAnnotation `json:"annotations"`   // e.g. @DubboReference(version="1.0")
+	FilePath    string                 `json:"file_path"`
+	Line        int                    `json:"line"`
 }

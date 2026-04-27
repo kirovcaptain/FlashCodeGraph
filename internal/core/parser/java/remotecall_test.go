@@ -621,16 +621,22 @@ class OrderController {
 `)
 	result := extractRemoteCalls(code)
 	found := false
-	for _, rc := range result.RemoteCalls {
-		if rc.Protocol == "dubbo" && rc.TargetService == "UserService" {
+	for _, pending := range result.PendingRemoteCalls {
+		if pending.Protocol == "dubbo" && pending.FieldType == "UserService" {
 			found = true
-			if rc.ServiceConfidence != 1.0 {
-				t.Errorf("expected confidence 1.0, got %f", rc.ServiceConfidence)
+			if pending.FieldName != "userService" {
+				t.Errorf("expected field name userService, got %s", pending.FieldName)
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("expected Dubbo reference to UserService, got %+v", result.RemoteCalls)
+		t.Fatalf("expected Dubbo PendingRemoteCall for UserService, got %+v", result.PendingRemoteCalls)
+	}
+	// Should NOT produce RawRemoteCall anymore
+	for _, remoteCall := range result.RemoteCalls {
+		if remoteCall.Protocol == "dubbo" {
+			t.Error("Dubbo should not produce RawRemoteCall, should use PendingRemoteCall")
+		}
 	}
 }
 

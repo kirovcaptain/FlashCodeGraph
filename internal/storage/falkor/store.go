@@ -410,6 +410,10 @@ func edgeLabels(kind model.RelationKind, sourceKind string) (string, string) {
 		return constants.KindFile, constants.KindFile
 	case model.RelHandles:
 		return constants.KindFunction, constants.KindRoute
+	case model.RelRemoteCallsRoute:
+		return constants.KindFunction, constants.KindRoute
+	case model.RelRemoteCallsExt:
+		return constants.KindFunction, constants.KindExternalService
 	case model.RelExecutes:
 		return constants.KindFunction, constants.KindQueryNode
 	case model.RelHasAnnotation:

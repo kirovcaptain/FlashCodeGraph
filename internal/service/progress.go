@@ -121,6 +121,7 @@ const (
 	SubRemoteCallEdges  SubStepID = "remote call edges"
 	SubMatchConsumerToProvider  SubStepID = "match consumer to provider"
 	SubWriteCrossProjectIndex  SubStepID = "write cross-project index"
+	SubResolvePendingRemoteCalls SubStepID = "resolve pending remote calls"
 	SubSaveFingerprints SubStepID = "save fingerprints"
 
 	// Index — Resolving phase

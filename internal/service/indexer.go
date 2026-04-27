@@ -252,8 +252,14 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	}
 
 	// Resolve and write relationships
-	if err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable); err != nil {
+	callRelations, err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable)
+	if err != nil {
 		return nil, err
+	}
+
+	// Resolve pending remote calls (field-level @DubboReference, @GrpcClient)
+	if err := indexer.resolvePendingRemoteCalls(ctx, scanCtx, parseResults, callRelations, symbolTable); err != nil {
+		return nil, fmt.Errorf("indexer: resolve pending remote calls: %w", err)
 	}
 
 	// Preload Route nodes and HANDLES edges once for Step 8 + Step 9
@@ -377,11 +383,16 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	}
 
 	// Resolve and write relationships
-	if err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable); err != nil {
-		return nil, err
+	callRelations, err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable)
+	if err != nil {
 	}
 
 	// Preload Route nodes and HANDLES edges once for Step 8 + Step 9
+
+	// Resolve pending remote calls (field-level @DubboReference, @GrpcClient)
+	if err := indexer.resolvePendingRemoteCalls(ctx, scanCtx, parseResults, callRelations, symbolTable); err != nil {
+		return nil, fmt.Errorf("indexer: resolve pending remote calls: %w", err)
+	}
 	allRoutes, _ := indexer.graphStore.QueryAllByKind(ctx, constants.KindRoute, 0)
 	handlesEdges, _ := indexer.graphStore.QueryAllEdges(ctx, model.RelHandles, 0)
 	routeToHandler := make(map[string]string, len(handlesEdges))
@@ -588,7 +599,7 @@ func (indexer *Indexer) writeSemanticNodes(ctx context.Context, scanCtx *scanCon
 //      (e.g. Go struct satisfying an interface without explicit declaration).
 //   4. Unresolved Hint Edges: writes UNRESOLVED_CALL edges for calls that could not be
 //      confidently resolved, preserving candidate information for downstream analysis.
-func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable) error {
+func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable) ([]model.ResolvedRelation, error) {
 	indexer.progress.Emit(PhaseResolving, 0, 0, "relations")
 
 	// Build language helper for the project's primary language only
@@ -600,19 +611,22 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	// Phase A: Import resolution
 	importRelations, err := indexer.resolveImports(ctx, resolverInstance, allImports, allFilePaths, scanCtx.result)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Phase B + C: Type inference, call/heritage/override resolution, cross-file propagation
 	callRelations, heritageRelations, overrideRelations, callHints, err := indexer.resolveCallsAndHeritage(
 		ctx, resolverInstance, parseResults, symbolTable, allCalls, allHeritage, importRelations)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Phase D: Write all resolved data to graph
-	return indexer.writeResolvedRelations(ctx, scanCtx, symbolTable, langHelpers,
-		callRelations, heritageRelations, overrideRelations, callHints)
+	if err := indexer.writeResolvedRelations(ctx, scanCtx, symbolTable, langHelpers,
+		callRelations, heritageRelations, overrideRelations, callHints); err != nil {
+		return nil, err
+	}
+	return callRelations, nil
 }
 
 // resolveImports resolves raw import statements into File→File IMPORTS edges and writes them.
@@ -2179,4 +2193,98 @@ func extractRouteFromAnnotations(annotationsJSON string) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+// resolvePendingRemoteCalls matches field-level remote call declarations against
+// resolved call relations to build REMOTE_CALLS_EXT edges with protocol metadata.
+func (indexer *Indexer) resolvePendingRemoteCalls(ctx context.Context, scanCtx *scanContext,
+	parseResults []model.ParseResult, callRelations []model.ResolvedRelation,
+	symbolTable *resolver.SymbolTable) error {
+
+	var pendingCalls []model.PendingRemoteCall
+	for _, parseResult := range parseResults {
+		pendingCalls = append(pendingCalls, parseResult.PendingRemoteCalls...)
+	}
+	if len(pendingCalls) == 0 {
+		return nil
+	}
+
+	indexer.progress.EmitSub(PhaseWriting, SubResolvePendingRemoteCalls, "")
+
+	// Build ownerClass → []ResolvedRelation map for fast lookup
+	relationsByOwner := make(map[string][]model.ResolvedRelation)
+	for _, relation := range callRelations {
+		sourceSymbol := symbolTable.FindByID(relation.SourceID)
+		if sourceSymbol == nil {
+			continue
+		}
+		lastDot := strings.LastIndex(sourceSymbol.QualifiedName, ".")
+		if lastDot <= 0 {
+			continue
+		}
+		ownerClass := sourceSymbol.QualifiedName[:lastDot]
+		relationsByOwner[ownerClass] = append(relationsByOwner[ownerClass], relation)
+	}
+
+	var nodes []model.Node
+	var edges []model.Edge
+	seenExternalServices := make(map[string]bool)
+	matchedCount := 0
+
+	for _, pending := range pendingCalls {
+		ownerRelations := relationsByOwner[pending.OwnerClass]
+		for _, relation := range ownerRelations {
+			targetSymbol := symbolTable.FindByID(relation.TargetID)
+			if targetSymbol == nil {
+				continue
+			}
+			if !strings.Contains(targetSymbol.QualifiedName, pending.FieldType) {
+				continue
+			}
+
+			externalServiceID := "ext:" + pending.FieldType
+			if !seenExternalServices[externalServiceID] {
+				seenExternalServices[externalServiceID] = true
+				nodes = append(nodes, model.Node{
+					ID:   externalServiceID,
+					Kind: constants.KindExternalService,
+					Properties: map[string]any{
+						"name":      pending.FieldType,
+						"protocol":  pending.Protocol,
+						"file_path": pending.FilePath,
+					},
+				})
+			}
+
+			edges = append(edges, model.Edge{
+				SourceID:   relation.SourceID,
+				TargetID:   externalServiceID,
+				Kind:       model.RelRemoteCallsExt,
+				SourceKind: constants.KindFunction,
+				Properties: map[string]any{
+					"target_service": pending.FieldType,
+					"protocol":       pending.Protocol,
+					"field_name":     pending.FieldName,
+					"confidence":     0.9,
+				},
+			})
+			scanCtx.result.RelationsByKind["REMOTE_CALLS_EXT"]++
+			matchedCount++
+		}
+	}
+
+	if len(nodes) > 0 {
+		if err := indexer.graphStore.CreateNodes(ctx, nodes); err != nil {
+			return fmt.Errorf("create pending remote call nodes: %w", err)
+		}
+	}
+	if len(edges) > 0 {
+		if err := indexer.graphStore.CreateEdges(ctx, edges); err != nil {
+			return fmt.Errorf("create pending remote call edges: %w", err)
+		}
+	}
+
+	indexer.progress.EmitSub(PhaseWriting, SubResolvePendingRemoteCalls,
+		fmt.Sprintf("%d pending, %d matched", len(pendingCalls), matchedCount))
+	return nil
 }

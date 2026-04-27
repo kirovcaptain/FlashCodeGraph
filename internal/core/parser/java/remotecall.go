@@ -382,7 +382,7 @@ func extractGRPCMethodCall(node *tree_sitter.Node, content []byte, callerName, f
 
 // ExtractDubboReference extracts @DubboReference field annotations.
 // Returns interface type names that are Dubbo remote references.
-func ExtractDubboReference(fieldNode *tree_sitter.Node, content []byte, className, filePath string, result *model.ParseResult) {
+func ExtractDubboReference(fieldNode *tree_sitter.Node, content []byte, packageName, className, filePath string, result *model.ParseResult) {
 	annotations := collectAnnotations(fieldNode, content)
 	isDubbo := false
 	for _, annotation := range annotations {
@@ -395,37 +395,92 @@ func ExtractDubboReference(fieldNode *tree_sitter.Node, content []byte, classNam
 		return
 	}
 
-	// Extract field type as the interface name
 	typeNode := fieldNode.ChildByFieldName("type")
 	if typeNode == nil {
 		return
 	}
 	interfaceType := typeNode.Utf8Text(content)
 
-	// Extract field name
 	fieldName := ""
 	for i := uint(0); i < fieldNode.ChildCount(); i++ {
 		child := fieldNode.Child(i)
 		if child.Kind() == "variable_declarator" {
-			n := child.ChildByFieldName("name")
-			if n != nil {
-				fieldName = n.Utf8Text(content)
+			if nameNode := child.ChildByFieldName("name"); nameNode != nil {
+				fieldName = nameNode.Utf8Text(content)
 			}
 		}
 	}
 
-	result.RemoteCalls = append(result.RemoteCalls, model.RawRemoteCall{
-		Method:            "*",
-		TargetURL:         interfaceType,
-		TargetService:     interfaceType,
-		ServiceResolvedBy: "interface_type",
-		ServiceConfidence: 1.0,
-		Protocol:          "dubbo",
-		CallerName:        className + "." + fieldName,
-		FilePath:          filePath,
-		Line:              int(fieldNode.StartPosition().Row) + 1,
+	ownerClass := className
+	if packageName != "" {
+		ownerClass = packageName + "." + className
+	}
+
+	result.PendingRemoteCalls = append(result.PendingRemoteCalls, model.PendingRemoteCall{
+		FieldName:   fieldName,
+		FieldType:   interfaceType,
+		Protocol:    "dubbo",
+		OwnerClass:  ownerClass,
+		Annotations: annotations,
+		FilePath:    filePath,
+		Line:        int(fieldNode.StartPosition().Row) + 1,
 	})
 }
+
+// ExtractGrpcClientField extracts @GrpcClient annotated fields as PendingRemoteCall.
+// Detects: @GrpcClient("service-name") private XxxGrpc.XxxBlockingStub stub;
+func ExtractGrpcClientField(fieldNode *tree_sitter.Node, content []byte, packageName, className, filePath string, result *model.ParseResult) {
+	annotations := collectAnnotations(fieldNode, content)
+	isGrpcClient := false
+	var serviceName string
+	for _, annotation := range annotations {
+		if annotation.Name == "GrpcClient" {
+			isGrpcClient = true
+			serviceName = annotation.Params["value"]
+			break
+		}
+	}
+	if !isGrpcClient {
+		return
+	}
+
+	typeNode := fieldNode.ChildByFieldName("type")
+	if typeNode == nil {
+		return
+	}
+	fieldType := typeNode.Utf8Text(content)
+
+	fieldName := ""
+	for i := uint(0); i < fieldNode.ChildCount(); i++ {
+		child := fieldNode.Child(i)
+		if child.Kind() == "variable_declarator" {
+			if nameNode := child.ChildByFieldName("name"); nameNode != nil {
+				fieldName = nameNode.Utf8Text(content)
+			}
+		}
+	}
+
+	ownerClass := className
+	if packageName != "" {
+		ownerClass = packageName + "." + className
+	}
+
+	targetType := fieldType
+	if serviceName != "" {
+		targetType = serviceName
+	}
+
+	result.PendingRemoteCalls = append(result.PendingRemoteCalls, model.PendingRemoteCall{
+		FieldName:   fieldName,
+		FieldType:   targetType,
+		Protocol:    "grpc",
+		OwnerClass:  ownerClass,
+		Annotations: annotations,
+		FilePath:    filePath,
+		Line:        int(fieldNode.StartPosition().Row) + 1,
+	})
+}
+
 
 // HasDubboService checks if class annotations contain @DubboService.
 func HasDubboService(annotations []model.StructuredAnnotation) bool {
