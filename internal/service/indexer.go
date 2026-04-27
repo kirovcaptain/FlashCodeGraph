@@ -1194,6 +1194,12 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 				continue
 			}
 			params, _ := node.Properties["params"].(string)
+			isExported, _ := node.Properties["is_exported"].(bool)
+			classType, _ := node.Properties["class_type"].(string)
+			annotations, _ := node.Properties["annotations"].(string)
+			isGetter, _ := node.Properties["is_getter"].(bool)
+			isSetter, _ := node.Properties["is_setter"].(bool)
+			returnTypes := toStringSlice(node.Properties["return_types"])
 			symbolTable.Add(model.Symbol{
 				ID:            node.ID,
 				Name:          name,
@@ -1201,6 +1207,12 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 				Kind:          kind,
 				FilePath:      filePath,
 				Params:        params,
+				IsExported:    isExported,
+				ClassType:     classType,
+				Annotations:   annotations,
+				IsGetter:      isGetter,
+				IsSetter:      isSetter,
+				ReturnTypes:   returnTypes,
 			})
 		}
 	}
@@ -2437,6 +2449,27 @@ func firstReturnType(returnTypes []string) string {
 		return returnTypes[0]
 	}
 	return ""
+}
+
+// toStringSlice converts []interface{} (from FalkorDB array column) to []string.
+func toStringSlice(value interface{}) []string {
+	if value == nil {
+		return nil
+	}
+	if stringSlice, ok := value.([]string); ok {
+		return stringSlice
+	}
+	interfaceSlice, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(interfaceSlice))
+	for _, element := range interfaceSlice {
+		if stringValue, ok := element.(string); ok {
+			result = append(result, stringValue)
+		}
+	}
+	return result
 }
 
 // extractRouteFromAnnotations parses route method and path from structured annotation JSON.
