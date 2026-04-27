@@ -74,7 +74,7 @@ func isFoldableNode(nodeID string, nodeMap map[string]*model.Node) bool {
 	return filePath == constants.FilePathExternal || filePath == ""
 }
 
-func printCallTree(subgraph *model.Subgraph, rootName string) {
+func printCallTree(subgraph *model.Subgraph, rootName string, maxDepth int) {
 	nodeMap := make(map[string]*model.Node)
 	for i := range subgraph.Nodes {
 		nodeMap[subgraph.Nodes[i].ID] = &subgraph.Nodes[i]
@@ -143,11 +143,11 @@ func printCallTree(subgraph *model.Subgraph, rootName string) {
 
 	visited := make(map[string]bool)
 	for _, rootID := range roots {
-		printCallNode(rootID, nodeMap, children, visited, "", true, "")
+		printCallNode(rootID, nodeMap, children, visited, "", true, "", 0, maxDepth)
 	}
 }
 
-func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[string][]callChild, visited map[string]bool, prefix string, isLast bool, declaredType string) {
+func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[string][]callChild, visited map[string]bool, prefix string, isLast bool, declaredType string, currentDepth int, maxDepth int) {
 	if visited[nodeID] {
 		// Already shown elsewhere — print reference marker
 		node := nodeMap[nodeID]
@@ -233,8 +233,13 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 		childPrefix = prefix + "    "
 	}
 
+	// Stop expanding children if we've reached the requested depth
+	if currentDepth >= maxDepth {
+		return
+	}
+
 	if callchainFlow {
-		renderWithFlow(folded, nodeMap, children, visited, childPrefix)
+		renderWithFlow(folded, nodeMap, children, visited, childPrefix, currentDepth, maxDepth)
 	} else if callchainMode != "full" {
 		// Core mode: fold accessor/external children into summary lines
 		var coreChildren []foldedChild
@@ -248,7 +253,7 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 		}
 		for i, fc := range coreChildren {
 			last := i == len(coreChildren)-1 && foldedCount == 0
-			printCallNode(fc.targetID, nodeMap, children, visited, childPrefix, last, fc.declaredType)
+			printCallNode(fc.targetID, nodeMap, children, visited, childPrefix, last, fc.declaredType, currentDepth+1, maxDepth)
 		}
 		if foldedCount > 0 {
 			connector := "└── "
@@ -257,7 +262,7 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 	} else {
 		for i, fc := range folded {
 			last := i == len(folded)-1
-			printCallNode(fc.targetID, nodeMap, children, visited, childPrefix, last, fc.declaredType)
+			printCallNode(fc.targetID, nodeMap, children, visited, childPrefix, last, fc.declaredType, currentDepth+1, maxDepth)
 		}
 	}
 }
@@ -309,7 +314,7 @@ type vnode struct {
 	children []*vnode
 }
 
-func renderWithFlow(folded []foldedChild, nodeMap map[string]*model.Node, children map[string][]callChild, visited map[string]bool, prefix string) {
+func renderWithFlow(folded []foldedChild, nodeMap map[string]*model.Node, children map[string][]callChild, visited map[string]bool, prefix string, currentDepth int, maxDepth int) {
 	// Build a virtual tree: flow context segments become virtual nodes
 	root := &vnode{}
 
@@ -338,7 +343,7 @@ func renderWithFlow(folded []foldedChild, nodeMap map[string]*model.Node, childr
 	}
 
 	// Render the virtual tree
-	renderVNode(root, nodeMap, children, visited, prefix)
+	renderVNode(root, nodeMap, children, visited, prefix, currentDepth, maxDepth)
 }
 
 func splitFlowContext(ctx string) []string {
@@ -348,7 +353,7 @@ func splitFlowContext(ctx string) []string {
 	return strings.Split(ctx, " > ")
 }
 
-func renderVNode(node *vnode, nodeMap map[string]*model.Node, children map[string][]callChild, visited map[string]bool, prefix string) {
+func renderVNode(node *vnode, nodeMap map[string]*model.Node, children map[string][]callChild, visited map[string]bool, prefix string, currentDepth int, maxDepth int) {
 	for i, ch := range node.children {
 		last := i == len(node.children)-1
 		if ch.fc != nil {
@@ -356,7 +361,7 @@ func renderVNode(node *vnode, nodeMap map[string]*model.Node, children map[strin
 			if ch.fc.implCount > 0 {
 				printFoldedNode(*ch.fc, nodeMap, prefix, last)
 			} else {
-				printCallNode(ch.fc.targetID, nodeMap, children, visited, prefix, last, ch.fc.declaredType)
+				printCallNode(ch.fc.targetID, nodeMap, children, visited, prefix, last, ch.fc.declaredType, currentDepth+1, maxDepth)
 			}
 		} else {
 			// Virtual flow node
@@ -369,7 +374,7 @@ func renderVNode(node *vnode, nodeMap map[string]*model.Node, children map[strin
 			if last {
 				childPrefix = prefix + "    "
 			}
-			renderVNode(ch, nodeMap, children, visited, childPrefix)
+			renderVNode(ch, nodeMap, children, visited, childPrefix, currentDepth, maxDepth)
 		}
 	}
 }

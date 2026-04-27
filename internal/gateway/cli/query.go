@@ -397,7 +397,7 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 	// Add root node to subgraph for tree rendering
 	subgraph.Nodes = append([]model.Node{*node}, subgraph.Nodes...)
 
-	printCallTree(subgraph, args[0])
+	printCallTree(subgraph, args[0], callchainDepth)
 	fmt.Printf("\nTotal: %d %s\n", len(subgraph.Nodes), dirLabel)
 	var modeHint string
 	switch callchainMode {
@@ -463,7 +463,7 @@ func runImpact(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Impact analysis for %q (depth=%d, minConfidence=%.2f):\n\n", args[0], impactDepth, impactMinConf)
 	subgraph.Nodes = append([]model.Node{*node}, subgraph.Nodes...)
-	printCallTree(subgraph, args[0])
+	printCallTree(subgraph, args[0], impactDepth)
 	fmt.Printf("\nTotal: %d affected callers\n", len(subgraph.Nodes)-1)
 
 	// Affected entry points from analyze cache

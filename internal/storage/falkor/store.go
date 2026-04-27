@@ -732,7 +732,10 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 		return subgraph, nil
 	}
 
-	// Query CALLS edges between root + all reachable nodes for tree structure
+	// Query CALLS edges between root + all reachable nodes.
+	// This intentionally queries ALL edges between reachable nodes (not just root→callee),
+	// because the node query (*1..depth) may return nodes at different depths, and we need
+	// edges at every level for tree rendering. The over-fetched edges are filtered below.
 	idList := make([]string, 0, len(subgraph.Nodes)+1)
 	idList = append(idList, nodeID)
 	for _, n := range subgraph.Nodes {
@@ -744,12 +747,89 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 		subgraph.Edges = parseEdgeResults(edgeRows)
 	}
 
+	// Filter edges by depth using BFS from root.
+	//
+	// Why: The edge query above returns ALL edges between reachable nodes, including edges
+	// between callees at the same depth level. For example, with depth=1 and graph:
+	//   root → A, root → B, A → B
+	// The edge query returns 3 edges, but A→B is a depth=2 relationship (root→A→B).
+	// Without filtering, CLI renders A→B as a child of A, creating misleading "depth=2" output.
+	//
+	// How: BFS computes each node's shortest distance from root. An edge is kept only if its
+	// upstream node (source for outgoing, target for incoming) is within depth-1 hops,
+	// ensuring it represents a valid parent→child relationship within the requested depth.
+	subgraph.Edges = filterEdgesByDepth(nodeID, subgraph.Edges, depth, direction)
+
 	return subgraph, nil
 }
 
 // TraverseImpact finds all nodes affected by changes to a node.
 func (store *Store) TraverseImpact(ctx context.Context, nodeID string, depth int) (*model.Subgraph, error) {
 	return store.TraverseCallChain(ctx, nodeID, depth, model.Incoming, 0)
+}
+
+// filterEdgesByDepth uses BFS from rootID to compute each node's shortest distance,
+// then keeps only edges where the source (for outgoing) or target (for incoming) is
+// within depth-1 hops from root. This prevents returning edges between nodes at the
+// same depth level (which would represent deeper relationships).
+func filterEdgesByDepth(rootID string, edges []model.Edge, depth int, direction model.Direction) []model.Edge {
+	if len(edges) == 0 {
+		return edges
+	}
+
+	// Build adjacency list from edges
+	adjacency := make(map[string][]string)
+	for _, edge := range edges {
+		switch direction {
+		case model.Outgoing:
+			adjacency[edge.SourceID] = append(adjacency[edge.SourceID], edge.TargetID)
+		case model.Incoming:
+			adjacency[edge.TargetID] = append(adjacency[edge.TargetID], edge.SourceID)
+		default:
+			adjacency[edge.SourceID] = append(adjacency[edge.SourceID], edge.TargetID)
+			adjacency[edge.TargetID] = append(adjacency[edge.TargetID], edge.SourceID)
+		}
+	}
+
+	// BFS from root to compute shortest distance
+	nodeLevel := map[string]int{rootID: 0}
+	queue := []string{rootID}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		currentLevel := nodeLevel[current]
+		if currentLevel >= depth {
+			continue
+		}
+		for _, neighbor := range adjacency[current] {
+			if _, visited := nodeLevel[neighbor]; !visited {
+				nodeLevel[neighbor] = currentLevel + 1
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+
+	// Filter: keep edges where the "upstream" node is within depth-1
+	var filtered []model.Edge
+	for _, edge := range edges {
+		switch direction {
+		case model.Outgoing:
+			if level, ok := nodeLevel[edge.SourceID]; ok && level < depth {
+				filtered = append(filtered, edge)
+			}
+		case model.Incoming:
+			if level, ok := nodeLevel[edge.TargetID]; ok && level < depth {
+				filtered = append(filtered, edge)
+			}
+		default:
+			sourceLevel, sourceOK := nodeLevel[edge.SourceID]
+			targetLevel, targetOK := nodeLevel[edge.TargetID]
+			if (sourceOK && sourceLevel < depth) || (targetOK && targetLevel < depth) {
+				filtered = append(filtered, edge)
+			}
+		}
+	}
+	return filtered
 }
 
 // BatchUpdateNodeProperties updates properties on multiple nodes using UNWIND.

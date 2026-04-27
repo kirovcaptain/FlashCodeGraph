@@ -388,3 +388,115 @@ func TestResolveGraphName(t *testing.T) {
 		})
 	}
 }
+
+// TestTraverseCallChain_DepthLimit verifies that depth=1 does not return
+// edges between callees (which would be depth=2 relationships).
+// Graph: root → A → B → C
+// depth=1 from root should return: nodes=[A], edges=[root→A]
+// NOT: nodes=[A,B], edges=[root→A, A→B]
+func TestTraverseCallChain_DepthLimit(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+	defer store.DeleteGraph(context.Background())
+	ctx := context.Background()
+
+	nodes := []model.Node{
+		{ID: "root", Kind: "Function", Properties: map[string]any{"name": "root", "file_path": "a.go", "qualified_name": "root"}},
+		{ID: "childA", Kind: "Function", Properties: map[string]any{"name": "childA", "file_path": "a.go", "qualified_name": "childA"}},
+		{ID: "childB", Kind: "Function", Properties: map[string]any{"name": "childB", "file_path": "a.go", "qualified_name": "childB"}},
+		{ID: "childC", Kind: "Function", Properties: map[string]any{"name": "childC", "file_path": "a.go", "qualified_name": "childC"}},
+	}
+	if err := store.WriteNodes(ctx, nodes); err != nil {
+		t.Fatal("write nodes:", err)
+	}
+
+	edges := []model.Edge{
+		{SourceID: "root", TargetID: "childA", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.95}},
+		{SourceID: "childA", TargetID: "childB", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.95}},
+		{SourceID: "childB", TargetID: "childC", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.95}},
+	}
+	if err := store.WriteEdges(ctx, edges); err != nil {
+		t.Fatal("write edges:", err)
+	}
+
+	// depth=1: should only see childA, not childB or childC
+	result, err := store.TraverseCallChain(ctx, "root", 1, model.Outgoing, 0)
+	if err != nil {
+		t.Fatal("traverse:", err)
+	}
+
+	nodeIDs := make(map[string]bool)
+	for _, n := range result.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	if !nodeIDs["childA"] {
+		t.Error("depth=1: expected childA in nodes")
+	}
+	if nodeIDs["childB"] {
+		t.Error("depth=1: childB should NOT be in nodes (that's depth=2)")
+	}
+	if nodeIDs["childC"] {
+		t.Error("depth=1: childC should NOT be in nodes (that's depth=3)")
+	}
+
+	// Check edges: should only have root→childA, not childA→childB
+	for _, edge := range result.Edges {
+		if edge.SourceID == "childA" && edge.TargetID == "childB" {
+			t.Error("depth=1: edge childA→childB should NOT be returned (that's a depth=2 edge)")
+		}
+	}
+
+	// depth=2: should see childA and childB, not childC
+	result2, err := store.TraverseCallChain(ctx, "root", 2, model.Outgoing, 0)
+	if err != nil {
+		t.Fatal("traverse depth=2:", err)
+	}
+
+	nodeIDs2 := make(map[string]bool)
+	for _, n := range result2.Nodes {
+		nodeIDs2[n.ID] = true
+	}
+	if !nodeIDs2["childA"] || !nodeIDs2["childB"] {
+		t.Error("depth=2: expected childA and childB in nodes")
+	}
+	if nodeIDs2["childC"] {
+		t.Error("depth=2: childC should NOT be in nodes (that's depth=3)")
+	}
+
+	t.Logf("depth=1: %d nodes, %d edges", len(result.Nodes), len(result.Edges))
+	t.Logf("depth=2: %d nodes, %d edges", len(result2.Nodes), len(result2.Edges))
+
+	// depth=1 with cross-callee edges: root→A, root→B, A→B
+	// depth=1 should return nodes=[A,B], edges=[root→A, root→B] but NOT A→B
+	store2 := setupTestStore(t)
+	defer store2.Close()
+	defer store2.DeleteGraph(context.Background())
+
+	nodes2 := []model.Node{
+		{ID: "r", Kind: "Function", Properties: map[string]any{"name": "r", "file_path": "a.go", "qualified_name": "r"}},
+		{ID: "a", Kind: "Function", Properties: map[string]any{"name": "a", "file_path": "a.go", "qualified_name": "a"}},
+		{ID: "b", Kind: "Function", Properties: map[string]any{"name": "b", "file_path": "a.go", "qualified_name": "b"}},
+	}
+	if err := store2.WriteNodes(ctx, nodes2); err != nil {
+		t.Fatal("write nodes2:", err)
+	}
+	edges2 := []model.Edge{
+		{SourceID: "r", TargetID: "a", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.95}},
+		{SourceID: "r", TargetID: "b", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.95}},
+		{SourceID: "a", TargetID: "b", Kind: model.RelCalls, Properties: map[string]any{"confidence": 0.95}},
+	}
+	if err := store2.WriteEdges(ctx, edges2); err != nil {
+		t.Fatal("write edges2:", err)
+	}
+
+	result3, err := store2.TraverseCallChain(ctx, "r", 1, model.Outgoing, 0)
+	if err != nil {
+		t.Fatal("traverse cross-callee:", err)
+	}
+	for _, edge := range result3.Edges {
+		if edge.SourceID == "a" && edge.TargetID == "b" {
+			t.Error("depth=1 cross-callee: edge a→b should NOT be returned (a and b are both depth=1 callees, but a→b is a depth=2 relationship from root's perspective)")
+		}
+	}
+	t.Logf("cross-callee depth=1: %d nodes, %d edges", len(result3.Nodes), len(result3.Edges))
+}
