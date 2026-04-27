@@ -701,7 +701,16 @@ func extractInterface(node *tree_sitter.Node, content []byte, file scanner.Scann
 	}
 	for i := uint(0); i < body.ChildCount(); i++ {
 		child := body.Child(i)
-		if child.Kind() != "method_signature" {
+		switch child.Kind() {
+		case "method_signature":
+			// addNode(node: string): void
+		case "property_signature":
+			// addNode: (node: string) => void — function-typed property
+			typeNode := child.ChildByFieldName("type")
+			if typeNode == nil || !strings.Contains(typeNode.Utf8Text(content), "=>") {
+				continue
+			}
+		default:
 			continue
 		}
 		methodNameNode := child.ChildByFieldName("name")
