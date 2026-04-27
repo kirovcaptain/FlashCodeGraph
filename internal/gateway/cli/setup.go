@@ -46,9 +46,14 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("  Project: %s (%s)\n", projectName, projectType)
 
-	// Step 2: Detect storage
-	database := detectStorage()
-	fmt.Printf("  Storage: %s\n\n", database)
+	// Step 2: Select storage
+	database, falkordbURI := selectStorage(reader, absPath)
+	fmt.Printf("  Storage: %s", database)
+	if falkordbURI != "" {
+		fmt.Printf(" (%s)", falkordbURI)
+	}
+	fmt.Println()
+	fmt.Println()
 
 	// Step 3: Select modules to ignore
 	var ignore []string
@@ -68,7 +73,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	// Step 5: Generate config
 	fmt.Println()
 	configPath := config.ProjectConfigPath(absPath)
-	cfg := buildSetupConfig(projectName, projectType, database, ignore, excludeTests, dependencies, properties)
+	cfg := buildSetupConfig(projectName, projectType, database, falkordbURI, ignore, excludeTests, dependencies, properties)
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		return err
 	}
@@ -97,13 +102,104 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// selectStorage lets user choose storage backend, respecting global config.
+func selectStorage(reader *bufio.Reader, projectPath string) (database string, falkordbURI string) {
+	// Check global config first
+	globalConfig, _ := config.Load("")
+	if globalConfig != nil && globalConfig.Storage.Database != "" {
+		globalDB := globalConfig.Storage.Database
+		globalURI := globalConfig.Storage.FalkorDBURI
+		display := globalDB
+		if globalURI != "" {
+			display += " (" + globalURI + ")"
+		}
+		fmt.Printf("  Global storage: %s\n", display)
+		if promptYesNo(reader, "Use same?", true) {
+			return globalDB, globalURI
+		}
+	}
+
+	// Check existing project config
+	existingConfig, _ := config.Load(projectPath)
+	if existingConfig != nil && existingConfig.Storage.Database != "" {
+		existingDB := existingConfig.Storage.Database
+		existingURI := existingConfig.Storage.FalkorDBURI
+		display := existingDB
+		if existingURI != "" {
+			display += " (" + existingURI + ")"
+		}
+		fmt.Printf("  Current storage: %s\n", display)
+		if promptYesNo(reader, "Keep?", true) {
+			return existingDB, existingURI
+		}
+	}
+
+	// Manual selection
+	fmt.Println("  Select storage:")
+	fmt.Println("    [1] falkordb (recommended if FalkorDB is running)")
+	fmt.Println("    [2] kuzu (embedded, no external dependency)")
+	fmt.Print("  Storage: ")
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+
+	switch line {
+	case "1", "falkordb":
+		falkordbURI = selectFalkorDBConnection(reader)
+		return "falkordb", falkordbURI
+	case "2", "kuzu":
+		return "kuzu", ""
+	default:
+		// Auto-detect fallback
+		return detectStorage(), ""
+	}
+}
+
+
+// detectStorage auto-detects storage backend (fallback for non-interactive mode).
 func detectStorage() string {
 	socketPath := storage.DefaultFalkorDBSocket()
 	if _, err := os.Stat(socketPath); err == nil {
 		return "falkordb"
 	}
-	// TODO: try TCP localhost:6379
 	return "kuzu"
+}
+// selectFalkorDBConnection lets user choose FalkorDB connection method.
+func selectFalkorDBConnection(reader *bufio.Reader) string {
+	socketPath := storage.DefaultFalkorDBSocket()
+	hasSocket := false
+	if _, err := os.Stat(socketPath); err == nil {
+		hasSocket = true
+	}
+
+	fmt.Println("  FalkorDB connection:")
+	fmt.Println("    [1] TCP localhost:6379 (default)")
+	if hasSocket {
+		fmt.Printf("    [2] Unix socket %s\n", socketPath)
+	}
+	fmt.Println("    [3] Custom address")
+	fmt.Print("  Connection: ")
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+
+	switch line {
+	case "1", "":
+		return "localhost:6379"
+	case "2":
+		if hasSocket {
+			return "unix://" + socketPath
+		}
+		return "localhost:6379"
+	case "3":
+		fmt.Print("  Address (host:port or unix:///path): ")
+		address, _ := reader.ReadString('\n')
+		address = strings.TrimSpace(address)
+		if address != "" {
+			return address
+		}
+		return "localhost:6379"
+	default:
+		return "localhost:6379"
+	}
 }
 
 func selectIgnoreModules(reader *bufio.Reader, modules []scanner.SubModule) []string {
@@ -185,11 +281,14 @@ func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) bool {
 	return line == "y" || line == "yes"
 }
 
-func buildSetupConfig(projectName, projectType, database string, ignore []string, excludeTests bool, dependencies []config.DependencyProject, properties map[string]string) string {
+func buildSetupConfig(projectName, projectType, database, falkordbURI string, ignore []string, excludeTests bool, dependencies []config.DependencyProject, properties map[string]string) string {
 	var setupBuilder strings.Builder
 	setupBuilder.WriteString(fmt.Sprintf("[project]\nname = %q\ntype = %q\n\n", projectName, projectType))
-	setupBuilder.WriteString(fmt.Sprintf("[storage]\ndatabase = %q\n\n", database))
-	setupBuilder.WriteString("[index]\n")
+	setupBuilder.WriteString(fmt.Sprintf("[storage]\ndatabase = %q\n", database))
+	if falkordbURI != "" {
+		setupBuilder.WriteString(fmt.Sprintf("falkordb_uri = %q\n", falkordbURI))
+	}
+	setupBuilder.WriteString("\n[index]\n")
 	if len(ignore) > 0 {
 		setupBuilder.WriteString(fmt.Sprintf("ignore = [%s]\n", formatStringSlice(ignore)))
 	}
