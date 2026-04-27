@@ -738,7 +738,7 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 	for _, n := range subgraph.Nodes {
 		idList = append(idList, n.ID)
 	}
-	edgeCypher := "MATCH (a:Function)-[r:CALLS|DISPATCHES]->(b:Function) WHERE a.id IN $nodeIDs AND b.id IN $nodeIDs RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, type(r)"
+	edgeCypher := "MATCH (a:Function)-[r:CALLS|DISPATCHES]->(b:Function) WHERE a.id IN $nodeIDs AND b.id IN $nodeIDs RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, type(r), r.cross_service, r.via_route, r.target_project, r.target_handler"
 	edgeRows, err := store.queryWithParams(ctx, edgeCypher, []cypherParam{{"nodeIDs", idList}})
 	if err == nil {
 		subgraph.Edges = parseEdgeResults(edgeRows)
@@ -1231,15 +1231,63 @@ func parseEdgeResults(rows []interface{}, defaultKind ...model.RelationKind) []m
 			}
 		}
 		if len(cols) >= 8 && cols[7] != nil {
-			switch p := cols[7].(type) {
+			switch polymorphicValue := cols[7].(type) {
 			case bool:
-				if p {
+				if polymorphicValue {
 					edge.Properties["polymorphic"] = true
 				}
 			case string:
-				if p == "true" {
+				if polymorphicValue == "true" {
 					edge.Properties["polymorphic"] = true
 				}
+			}
+		}
+		// Cross-service properties (cols 9-12)
+		if len(cols) >= 10 && cols[9] != nil {
+			switch crossServiceValue := cols[9].(type) {
+			case bool:
+				edge.Properties["cross_service"] = crossServiceValue
+			case string:
+				edge.Properties["cross_service"] = crossServiceValue == "true"
+			}
+		}
+		if len(cols) >= 11 && cols[10] != nil {
+			if viaRoute, ok := cols[10].(string); ok && viaRoute != "" {
+				edge.Properties["via_route"] = viaRoute
+			}
+		}
+		if len(cols) >= 12 && cols[11] != nil {
+			if targetProject, ok := cols[11].(string); ok && targetProject != "" {
+				edge.Properties["target_project"] = targetProject
+			}
+		}
+		if len(cols) >= 13 && cols[12] != nil {
+			if targetHandler, ok := cols[12].(string); ok && targetHandler != "" {
+				edge.Properties["target_handler"] = targetHandler
+			}
+		}
+		// Cross-service properties (cols 9-12)
+		if len(cols) >= 10 && cols[9] != nil {
+			switch cs := cols[9].(type) {
+			case bool:
+				edge.Properties["cross_service"] = cs
+			case string:
+				edge.Properties["cross_service"] = cs == "true"
+			}
+		}
+		if len(cols) >= 11 && cols[10] != nil {
+			if vr, ok := cols[10].(string); ok && vr != "" {
+				edge.Properties["via_route"] = vr
+			}
+		}
+		if len(cols) >= 12 && cols[11] != nil {
+			if tp, ok := cols[11].(string); ok && tp != "" {
+				edge.Properties["target_project"] = tp
+			}
+		}
+		if len(cols) >= 13 && cols[12] != nil {
+			if th, ok := cols[12].(string); ok && th != "" {
+				edge.Properties["target_handler"] = th
 			}
 		}
 		edges = append(edges, edge)
