@@ -138,6 +138,9 @@ func selectStorage(reader *bufio.Reader, projectPath string) (database string, f
 	fmt.Println("  Select storage:")
 	fmt.Println("    [1] falkordb (recommended if FalkorDB is running)")
 	fmt.Println("    [2] kuzu (embedded, no external dependency)")
+	if config.IsWSL() {
+		fmt.Println("    ⚠️  WSL detected — falkordb recommended (kuzu disk mode may be unreliable)")
+	}
 	fmt.Print("  Storage: ")
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
