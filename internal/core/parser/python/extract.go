@@ -211,6 +211,7 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 			}
 			paramName := ""
 			paramType := ""
+			hasDefault := false
 
 			switch param.Kind() {
 			case "identifier":
@@ -242,6 +243,7 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 				if pType != nil {
 					paramType = pType.Utf8Text(content)
 				}
+				hasDefault = true
 			default:
 				continue
 			}
@@ -250,6 +252,9 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 				entry := map[string]string{"name": paramName}
 				if paramType != "" {
 					entry["type"] = paramType
+				}
+				if hasDefault {
+					entry["default"] = "true"
 				}
 				paramTypes = append(paramTypes, entry)
 				// Type hint

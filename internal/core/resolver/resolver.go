@@ -790,6 +790,15 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 				}
 			}
 		}
+		// Fallback: lookup field type from class declaration via SymbolTable
+		for _, candidate := range resolver.symbolTable.FindByName(baseType) {
+			if candidate.Kind == constants.KindClass || candidate.Kind == "abstract_class" ||
+				candidate.Kind == constants.KindInterface || candidate.ClassType == "struct" {
+				if fieldInfo := resolver.symbolTable.FindFieldByOwner(candidate.QualifiedName, methodName); fieldInfo != nil && fieldInfo.Type != "" {
+					return fieldInfo.Type
+				}
+			}
+		}
 		return ""
 	}
 
@@ -1045,22 +1054,55 @@ func filterByFile(candidates []model.Symbol, filePath string) []model.Symbol {
 
 // filterByArgCount returns candidates whose parameter count matches the call's argument count.
 // Supports varargs: a varargs function matches if argCount >= (paramCount - 1).
+// Supports default/optional parameters: matches if argCount >= requiredParamCount && argCount <= totalParamCount.
 func filterByArgCount(candidates []model.Symbol, argCount int) []model.Symbol {
 	var matched []model.Symbol
 	for _, candidate := range candidates {
-		params := parseParamTypes(candidate.Params)
+		params := parseParamEntries(candidate.Params)
 		paramCount := len(params)
-		isVarargs := paramCount > 0 && strings.HasSuffix(params[paramCount-1], "...")
-		if isVarargs {
+		if paramCount > 0 && strings.HasSuffix(params[paramCount-1].Type, "...") {
 			// varargs: at least (paramCount - 1) fixed args
 			if argCount >= paramCount-1 {
 				matched = append(matched, candidate)
 			}
-		} else if paramCount == argCount {
+			continue
+		}
+		requiredParamCount := 0
+		for _, param := range params {
+			if !param.HasDefault {
+				requiredParamCount++
+			}
+		}
+		if argCount >= requiredParamCount && argCount <= paramCount {
 			matched = append(matched, candidate)
 		}
 	}
 	return matched
+}
+
+// paramEntry represents a parsed parameter from JSON.
+type paramEntry struct {
+	Type       string
+	HasDefault bool
+}
+
+// parseParamEntries parses a JSON params string into paramEntry slice.
+func parseParamEntries(paramsJSON string) []paramEntry {
+	if paramsJSON == "" || paramsJSON == "null" {
+		return nil
+	}
+	var rawParams []map[string]string
+	if err := json.Unmarshal([]byte(paramsJSON), &rawParams); err != nil {
+		return nil
+	}
+	entries := make([]paramEntry, len(rawParams))
+	for index, rawParam := range rawParams {
+		entries[index] = paramEntry{
+			Type:       rawParam["type"],
+			HasDefault: rawParam["default"] == "true",
+		}
+	}
+	return entries
 }
 
 // countParams parses a JSON params string and returns the number of parameters.

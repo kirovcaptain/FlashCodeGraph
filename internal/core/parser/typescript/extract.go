@@ -527,6 +527,9 @@ func extractParams(node *tree_sitter.Node, content []byte) []map[string]string {
 			if paramType != "" {
 				entry["type"] = paramType
 			}
+			if param.Kind() == "optional_parameter" || param.ChildByFieldName("value") != nil {
+				entry["default"] = "true"
+			}
 			params = append(params, entry)
 		}
 	}

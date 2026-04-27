@@ -2127,3 +2127,74 @@ func TestResolveCalls_EnrichArgTypes_StaticImportEnum(t *testing.T) {
 	}
 	t.Logf("✅ static import Safety → ExceptionCode → setFail(ExceptionCode) disambiguated")
 }
+
+func TestFilterByArgCount_ExactMatch(t *testing.T) {
+	candidates := []model.Symbol{
+		{Name: "f1", Params: `[{"name":"a","type":"string"}]`},
+		{Name: "f2", Params: `[{"name":"a","type":"string"},{"name":"b","type":"int"}]`},
+	}
+	result := filterByArgCount(candidates, 1)
+	if len(result) != 1 || result[0].Name != "f1" {
+		t.Errorf("expected f1, got %v", result)
+	}
+}
+
+func TestFilterByArgCount_Varargs(t *testing.T) {
+	candidates := []model.Symbol{
+		{Name: "f1", Params: `[{"name":"a","type":"string"},{"name":"b","type":"int..."}]`},
+	}
+	// 1 arg: matches (>= paramCount-1 = 1)
+	if result := filterByArgCount(candidates, 1); len(result) != 1 {
+		t.Errorf("argCount=1: expected 1 match, got %d", len(result))
+	}
+	// 3 args: matches (>= 1)
+	if result := filterByArgCount(candidates, 3); len(result) != 1 {
+		t.Errorf("argCount=3: expected 1 match, got %d", len(result))
+	}
+	// 0 args: no match (< 1)
+	if result := filterByArgCount(candidates, 0); len(result) != 0 {
+		t.Errorf("argCount=0: expected 0 matches, got %d", len(result))
+	}
+}
+
+func TestFilterByArgCount_DefaultParams(t *testing.T) {
+	// def create(name, age=0, active=True) → required=1, total=3
+	candidates := []model.Symbol{
+		{Name: "create", Params: `[{"name":"name","type":"str"},{"name":"age","type":"int","default":"true"},{"name":"active","type":"bool","default":"true"}]`},
+	}
+	// 1 arg: matches (>= required=1, <= total=3)
+	if result := filterByArgCount(candidates, 1); len(result) != 1 {
+		t.Errorf("argCount=1: expected 1 match, got %d", len(result))
+	}
+	// 2 args: matches
+	if result := filterByArgCount(candidates, 2); len(result) != 1 {
+		t.Errorf("argCount=2: expected 1 match, got %d", len(result))
+	}
+	// 3 args: matches
+	if result := filterByArgCount(candidates, 3); len(result) != 1 {
+		t.Errorf("argCount=3: expected 1 match, got %d", len(result))
+	}
+	// 0 args: no match (< required=1)
+	if result := filterByArgCount(candidates, 0); len(result) != 0 {
+		t.Errorf("argCount=0: expected 0 matches, got %d", len(result))
+	}
+	// 4 args: no match (> total=3)
+	if result := filterByArgCount(candidates, 4); len(result) != 0 {
+		t.Errorf("argCount=4: expected 0 matches, got %d", len(result))
+	}
+}
+
+func TestFilterByArgCount_BackwardCompat(t *testing.T) {
+	// Old format without "default" key — should behave as exact match
+	candidates := []model.Symbol{
+		{Name: "f1", Params: `[{"name":"a","type":"string"},{"name":"b","type":"int"}]`},
+	}
+	// 2 args: matches (requiredCount=2, totalCount=2)
+	if result := filterByArgCount(candidates, 2); len(result) != 1 {
+		t.Errorf("argCount=2: expected 1 match, got %d", len(result))
+	}
+	// 1 arg: no match (< required=2)
+	if result := filterByArgCount(candidates, 1); len(result) != 0 {
+		t.Errorf("argCount=1: expected 0 matches, got %d", len(result))
+	}
+}

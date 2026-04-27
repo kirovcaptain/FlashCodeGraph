@@ -27,7 +27,7 @@ func (infer *TypeInfer) InferLocal(result *model.ParseResult) *model.TypeEnv {
 	for _, hint := range result.TypeHints {
 		key := scopedKey(hint.Scope, hint.VarName)
 		env.Bindings[key] = &model.TypeInfo{
-			TypeName:      hint.TypeName,
+			TypeName:      StripNullableType(hint.TypeName),
 			TypeArgs:      hint.TypeArgs,
 			Tier:          hint.Tier,
 			Scope:         hint.Scope,
