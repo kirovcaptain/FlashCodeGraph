@@ -181,6 +181,10 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 		name = name + " [external]"
 		filePath = ""
 	}
+	if filePath == "[cross-service]" {
+		name = "🌐 " + name + " [cross-service]"
+		filePath = ""
+	}
 
 	connector := "├── "
 	if isLast {

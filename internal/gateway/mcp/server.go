@@ -428,6 +428,38 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	if hint != "" {
 		result = injectHint([]byte(result), hint)
 	}
+
+	// Cross-service hints: detect cross_service=true edges and append follow-up commands
+	var crossServiceHints []string
+	for _, edge := range subgraph.Edges {
+		crossService, _ := edge.Properties["cross_service"].(bool)
+		if !crossService {
+			continue
+		}
+		targetProject, _ := edge.Properties["target_project"].(string)
+		targetHandler, _ := edge.Properties["target_handler"].(string)
+		viaRoute, _ := edge.Properties["via_route"].(string)
+		protocol, _ := edge.Properties["protocol"].(string)
+		if targetProject != "" && targetHandler != "" {
+			crossServiceHint := fmt.Sprintf("Cross-service call detected: %s (%s). To trace the target handler, run: query_call_chain(function=\"%s\", path=\"%s\")",
+				viaRoute, protocol, targetHandler, targetProject)
+			crossServiceHints = append(crossServiceHints, crossServiceHint)
+		}
+	}
+	if len(crossServiceHints) > 0 {
+		// Deduplicate hints
+		seen := make(map[string]bool)
+		var uniqueHints []string
+		for _, crossServiceHint := range crossServiceHints {
+			if !seen[crossServiceHint] {
+				seen[crossServiceHint] = true
+				uniqueHints = append(uniqueHints, crossServiceHint)
+			}
+		}
+		hintsJSON, _ := json.Marshal(uniqueHints)
+		result = injectField([]byte(result), "cross_service_hints", hintsJSON)
+	}
+
 	return mcp.NewToolResultText(result), nil
 }
 
@@ -468,6 +500,23 @@ func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToo
 	}
 	if routeHint != "" {
 		result["hint"] = routeHint
+	}
+
+	// Cross-service hints for impact analysis
+	var impactCrossServiceHints []string
+	for _, node := range subgraph.Nodes {
+		filePath, _ := node.Properties["file_path"].(string)
+		if filePath == "[cross-service]" {
+			nodeName, _ := node.Properties["name"].(string)
+			targetProject, _ := node.Properties["target_project"].(string)
+			if targetProject != "" {
+				impactCrossServiceHints = append(impactCrossServiceHints,
+					fmt.Sprintf("Impact reaches cross-service boundary: %s in %s. Run impact_analysis on target project to continue.", nodeName, targetProject))
+			}
+		}
+	}
+	if len(impactCrossServiceHints) > 0 {
+		result["cross_service_hints"] = impactCrossServiceHints
 	}
 
 	warning := checkStalenessWarning(ctx, path, branchName)
@@ -1007,6 +1056,14 @@ func injectHint(originalJSON []byte, hint string) string {
 	}
 	if len(originalJSON) > 0 && originalJSON[0] == '[' {
 		return "{\"hint\":" + string(hintJSON) + ",\"items\":" + string(originalJSON) + "}"
+	}
+	return string(originalJSON)
+}
+
+// injectField adds a JSON field to the beginning of a JSON object.
+func injectField(originalJSON []byte, fieldName string, fieldValue []byte) string {
+	if len(originalJSON) > 0 && originalJSON[0] == '{' {
+		return "{\"" + fieldName + "\":" + string(fieldValue) + "," + string(originalJSON[1:])
 	}
 	return string(originalJSON)
 }
