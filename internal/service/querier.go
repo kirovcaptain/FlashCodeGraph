@@ -1393,3 +1393,199 @@ func (querier *Querier) QueryAffectedRoutes(ctx context.Context, nodeIDs []strin
 
 	return routes, hint
 }
+
+// CrossChainResult represents project-level cross-service call relationships.
+type CrossChainResult struct {
+	Entry             CrossChainEntry      `json:"entry"`
+	CrossServiceCalls []CrossServiceCall   `json:"cross_service_calls"`
+	Summary           CrossChainSummary    `json:"summary"`
+}
+
+type CrossChainEntry struct {
+	Function string `json:"function"`
+	Project  string `json:"project"`
+	FilePath string `json:"file_path"`
+}
+
+type CrossServiceCall struct {
+	TargetProject string               `json:"target_project,omitempty"`
+	TargetBranch  string               `json:"target_branch,omitempty"`
+	TargetService string               `json:"target_service,omitempty"`
+	Protocol      string               `json:"protocol,omitempty"`
+	Routes        []CrossServiceRoute  `json:"routes,omitempty"`
+	Callers       []CrossServiceCaller `json:"callers"`
+	Hint          string               `json:"hint,omitempty"`
+}
+
+type CrossServiceRoute struct {
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Handler string `json:"handler"`
+}
+
+type CrossServiceCaller struct {
+	Function string `json:"function"`
+	Type     string `json:"type"` // feign / resttemplate / dubbo / grpc
+}
+
+type CrossChainSummary struct {
+	TotalCrossService int      `json:"total_cross_service"`
+	Resolved          int      `json:"resolved"`
+	Unresolved        int      `json:"unresolved"`
+	Protocols         []string `json:"protocols"`
+}
+
+// QueryCrossChain returns project-level cross-service call relationships for a function.
+// Aggregates cross_service CALLS edges and REMOTE_CALLS_EXT edges by target project/service.
+func (querier *Querier) QueryCrossChain(ctx context.Context, functionName string, depth int, projectPath string) (*CrossChainResult, error) {
+	// Resolve function
+	node, _, _, err := querier.ResolveFunctionWithInheritance(ctx, functionName)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, fmt.Errorf("function %q not found", functionName)
+	}
+
+	// Get call chain
+	subgraph, err := querier.QueryCallChainByNodeID(ctx, node.ID, model.Outgoing, depth, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build entry
+	entryName, _ := node.Properties["qualified_name"].(string)
+	if entryName == "" {
+		entryName, _ = node.Properties["name"].(string)
+	}
+	entryFilePath, _ := node.Properties["file_path"].(string)
+
+	result := &CrossChainResult{
+		Entry: CrossChainEntry{
+			Function: entryName,
+			Project:  filepath.Base(projectPath),
+			FilePath: entryFilePath,
+		},
+	}
+
+	// Aggregate cross-service calls by target project
+	type aggregationKey struct {
+		targetProject string
+		targetService string
+		protocol      string
+	}
+	aggregated := make(map[aggregationKey]*CrossServiceCall)
+
+	// Build node map for lookups
+	nodeMap := make(map[string]*model.Node)
+	for i := range subgraph.Nodes {
+		nodeMap[subgraph.Nodes[i].ID] = &subgraph.Nodes[i]
+	}
+
+	// Process CALLS edges with cross_service=true
+	for _, edge := range subgraph.Edges {
+		crossService, _ := edge.Properties["cross_service"].(bool)
+		if !crossService {
+			continue
+		}
+
+		targetProject, _ := edge.Properties["target_project"].(string)
+		targetHandler, _ := edge.Properties["target_handler"].(string)
+		viaRoute, _ := edge.Properties["via_route"].(string)
+		protocol, _ := edge.Properties["protocol"].(string)
+		if protocol == "" {
+			protocol = "http"
+		}
+
+		targetService := targetHandler
+		if targetProject == "" {
+			targetService, _ = edge.Properties["target_service"].(string)
+		}
+
+		key := aggregationKey{targetProject: targetProject, targetService: targetService, protocol: protocol}
+		call, exists := aggregated[key]
+		if !exists {
+			call = &CrossServiceCall{
+				TargetProject: targetProject,
+				TargetBranch:  "",
+				TargetService: targetService,
+				Protocol:      protocol,
+			}
+			if targetBranch, ok := edge.Properties["target_branch"].(string); ok {
+				call.TargetBranch = targetBranch
+			}
+			if targetProject == "" {
+				call.Hint = fmt.Sprintf("Target project unknown for %s (%s). Configure dependencies to enable cross-project matching.", targetService, protocol)
+			}
+			aggregated[key] = call
+		}
+
+		// Add route info
+		if viaRoute != "" {
+			parts := strings.SplitN(viaRoute, " ", 2)
+			if len(parts) == 2 {
+				call.Routes = append(call.Routes, CrossServiceRoute{
+					Method:  parts[0],
+					Path:    parts[1],
+					Handler: targetHandler,
+				})
+			}
+		}
+
+		// Add caller info
+		sourceNode := nodeMap[edge.SourceID]
+		if sourceNode != nil {
+			callerName, _ := sourceNode.Properties["qualified_name"].(string)
+			if callerName == "" {
+				callerName, _ = sourceNode.Properties["name"].(string)
+			}
+			callerType := protocol
+			consumerInterface, _ := edge.Properties["consumer_interface"].(string)
+			if strings.Contains(strings.ToLower(consumerInterface), "feign") {
+				callerType = "feign"
+			} else if strings.Contains(strings.ToLower(consumerInterface), "resttemplate") || strings.Contains(strings.ToLower(consumerInterface), "rest") {
+				callerType = "resttemplate"
+			}
+			call.Callers = append(call.Callers, CrossServiceCaller{
+				Function: callerName,
+				Type:     callerType,
+			})
+		}
+	}
+
+	// Also check REMOTE_CALLS_EXT edges for protocol info on unresolved services
+	allNodeIDs := make([]string, 0, len(subgraph.Nodes)+1)
+	allNodeIDs = append(allNodeIDs, node.ID)
+	for _, subNode := range subgraph.Nodes {
+		allNodeIDs = append(allNodeIDs, subNode.ID)
+	}
+
+	// Build result list
+	protocolSet := make(map[string]bool)
+	resolved := 0
+	unresolved := 0
+	for _, call := range aggregated {
+		result.CrossServiceCalls = append(result.CrossServiceCalls, *call)
+		protocolSet[call.Protocol] = true
+		if call.TargetProject != "" {
+			resolved++
+		} else {
+			unresolved++
+		}
+	}
+
+	var protocols []string
+	for protocol := range protocolSet {
+		protocols = append(protocols, protocol)
+	}
+	sort.Strings(protocols)
+
+	result.Summary = CrossChainSummary{
+		TotalCrossService: len(aggregated),
+		Resolved:          resolved,
+		Unresolved:        unresolved,
+		Protocols:         protocols,
+	}
+
+	return result, nil
+}

@@ -162,6 +162,14 @@ func (srv *Server) registerTools() {
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected from current branch if omitted)")),
 	), srv.handleQueryCallChain)
 
+	srv.mcpServer.AddTool(mcp.NewTool("query_cross_chain",
+		mcp.WithDescription("Query cross-service call relationships for a function. Returns project-level view: which services are called, via what protocol (http/dubbo/grpc), and through which callers. Use this to understand service dependencies and cross-service architecture."),
+		mcp.WithString("function", mcp.Required(), mcp.Description("Entry function name")),
+		mcp.WithNumber("depth", mcp.Description("Max traversal depth (default 3)")),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
+		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
+	), srv.handleQueryCrossChain)
+
 	srv.mcpServer.AddTool(mcp.NewTool("impact_analysis",
 		mcp.WithDescription("Analyze the impact of changing a symbol — find all direct and indirect callers that would be affected. Use this before refactoring to assess risk."),
 		mcp.WithString("symbol", mcp.Required(), mcp.Description("Symbol name to analyze")),
@@ -461,6 +469,31 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	}
 
 	return mcp.NewToolResultText(result), nil
+}
+
+
+func (srv *Server) handleQueryCrossChain(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	functionName, _ := request.GetArguments()["function"].(string)
+	if functionName == "" {
+		return mcp.NewToolResultError("function is required"), nil
+	}
+	depth := intArg(request, "depth", 3)
+	projectPath, _ := request.GetArguments()["path"].(string)
+	branchName, _ := request.GetArguments()["branch"].(string)
+
+	querier, store, err := srv.createQuerier(projectPath, branchName)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer store.Close()
+
+	result, err := querier.QueryCrossChain(ctx, functionName, depth, projectPath)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	resultJSON, _ := json.Marshal(result)
+	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
 func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
