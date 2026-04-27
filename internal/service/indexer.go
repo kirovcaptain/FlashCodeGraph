@@ -270,14 +270,16 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 		routeToHandler[edge.TargetID] = edge.SourceID
 	}
 
-	// Flatten RemoteCalls for Step 8
+	// Flatten RemoteCalls and PendingRemoteCalls for Step 8
 	var allRemoteCalls []model.RawRemoteCall
+	var allPendingCalls []model.PendingRemoteCall
 	for _, parseResult := range parseResults {
 		allRemoteCalls = append(allRemoteCalls, parseResult.RemoteCalls...)
+		allPendingCalls = append(allPendingCalls, parseResult.PendingRemoteCalls...)
 	}
 
 	// Step 8: Match consumer to provider (cross-service CALLS edges)
-	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, symbolTable, allRoutes, routeToHandler); err != nil {
+	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, allPendingCalls, symbolTable, allRoutes, routeToHandler); err != nil {
 		return nil, fmt.Errorf("indexer: match consumer to provider: %w", err)
 	}
 
@@ -400,14 +402,16 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 		routeToHandler[edge.TargetID] = edge.SourceID
 	}
 
-	// Flatten RemoteCalls for Step 8
+	// Flatten RemoteCalls and PendingRemoteCalls for Step 8
 	var allRemoteCalls []model.RawRemoteCall
+	var allPendingCalls []model.PendingRemoteCall
 	for _, parseResult := range parseResults {
 		allRemoteCalls = append(allRemoteCalls, parseResult.RemoteCalls...)
+		allPendingCalls = append(allPendingCalls, parseResult.PendingRemoteCalls...)
 	}
 
 	// Step 8: Match consumer to provider (cross-service CALLS edges)
-	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, symbolTable, allRoutes, routeToHandler); err != nil {
+	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, allPendingCalls, symbolTable, allRoutes, routeToHandler); err != nil {
 		return nil, fmt.Errorf("indexer: match consumer to provider: %w", err)
 	}
 
@@ -1911,7 +1915,8 @@ func (indexer *Indexer) resolveServiceNamePlaceholders(parseResults []model.Pars
 // by matching HTTP method+path against Route nodes (same-repo) or CrossProjectIndex (cross-repo).
 // Creates Function→Function CALLS edges so TraverseCallChain can traverse cross-service calls.
 func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *scanContext,
-	remoteCalls []model.RawRemoteCall, symbolTable *resolver.SymbolTable,
+	remoteCalls []model.RawRemoteCall, pendingCalls []model.PendingRemoteCall,
+	symbolTable *resolver.SymbolTable,
 	allRoutes []model.Node, routeToHandler map[string]string) error {
 
 	indexer.progress.EmitSub(PhaseWriting, SubMatchConsumerToProvider, "")
@@ -2013,6 +2018,71 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 			}
 		}
 		// 3. No match → REMOTE_CALLS_EXT already created by writeRemoteCallEdges (Step 6)
+	}
+
+	// Step 3: Dubbo/gRPC qualified_name matching via PendingRemoteCall
+	if len(pendingCalls) > 0 && len(dependencies) > 0 && indexer.crossIndex != nil {
+		// Build ownerClass → callerFunctionID map from callRelations in symbolTable
+		for _, pending := range pendingCalls {
+			targetName := pending.FieldType
+			// gRPC: FieldType may be "ServiceName/method" or full stub type, extract service name
+			if pending.Protocol == "grpc" && strings.Contains(targetName, "/") {
+				targetName = targetName[:strings.Index(targetName, "/")]
+			}
+			// Strip generic stub type suffix for gRPC (e.g. "PaymentServiceGrpc.PaymentServiceBlockingStub" → "PaymentService")
+			if pending.Protocol == "grpc" && strings.Contains(targetName, "Grpc.") {
+				grpcIndex := strings.Index(targetName, "Grpc.")
+				if grpcIndex > 0 {
+					targetName = targetName[:grpcIndex]
+				}
+			}
+
+			symbolMatches := indexer.crossIndex.LookupSymbol(ctx, targetName, dependencies)
+			if len(symbolMatches) == 0 {
+				continue
+			}
+			match := symbolMatches[0]
+
+			// Find caller function: look up methods of the owning class that call this field's type
+			callerMethods := symbolTable.FindMethodsByQualifiedName(pending.OwnerClass)
+			for _, callerMethod := range callerMethods {
+				callerID := callerMethod.ID
+				placeholderID := match.Symbol.NodeID
+				if !seenPlaceholders[placeholderID] {
+					seenPlaceholders[placeholderID] = true
+					newNodes = append(newNodes, model.Node{
+						ID:   placeholderID,
+						Kind: constants.KindFunction,
+						Properties: map[string]any{
+							"name":           match.Symbol.Name,
+							"file_path":      "[cross-service]",
+							"qualified_name": match.Symbol.QualifiedName,
+							"cross_service":  true,
+							"target_project": match.ProjectPath,
+							"target_branch":  match.Branch,
+						},
+					})
+				}
+				newEdges = append(newEdges, model.Edge{
+					SourceID:   callerID,
+					TargetID:   placeholderID,
+					Kind:       model.RelCalls,
+					SourceKind: constants.KindFunction,
+					Properties: map[string]any{
+						"cross_service":      true,
+						"consumer_interface": pending.FieldName,
+						"target_service":     pending.FieldType,
+						"target_project":     match.ProjectPath,
+						"target_branch":      match.Branch,
+						"target_handler":     match.Symbol.QualifiedName,
+						"protocol":           pending.Protocol,
+						"confidence":         constants.ConfidenceCrossService,
+					},
+				})
+				scanCtx.result.RelationsByKind["CALLS_CROSS_SERVICE"]++
+				break // one caller per pending is enough
+			}
+		}
 	}
 
 	if len(newNodes) > 0 {

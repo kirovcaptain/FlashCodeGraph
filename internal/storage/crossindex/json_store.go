@@ -55,19 +55,23 @@ func (store *JSONStore) UnregisterProject(_ context.Context, projectPath, branch
 }
 
 // LookupSymbol finds symbols by qualified name, scoped to the given dependencies.
+// Supports exact match and suffix match (e.g. "PaymentDubboService" matches "com.example.api.PaymentDubboService").
 func (store *JSONStore) LookupSymbol(_ context.Context, qualifiedName string, dependencies []Dependency) []SymbolMatch {
 	store.mutex.RLock()
 	defer store.mutex.RUnlock()
 
 	depSet := buildDependencySet(dependencies)
 	var matches []SymbolMatch
+	suffixPattern := "." + qualifiedName
 
 	for key, entry := range store.data.Projects {
 		if !depSet[key] {
 			continue
 		}
 		for _, symbol := range entry.Symbols {
-			if symbol.QualifiedName == qualifiedName {
+			if symbol.QualifiedName == qualifiedName ||
+				symbol.Name == qualifiedName ||
+				strings.HasSuffix(symbol.QualifiedName, suffixPattern) {
 				matches = append(matches, SymbolMatch{
 					Symbol:      symbol,
 					ProjectPath: entry.ProjectPath,
