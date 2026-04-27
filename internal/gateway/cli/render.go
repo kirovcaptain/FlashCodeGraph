@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
@@ -69,8 +70,8 @@ func isFoldableNode(nodeID string, nodeMap map[string]*model.Node) bool {
 	if node.Properties["is_getter"] == true || node.Properties["is_setter"] == true {
 		return true
 	}
-	fp, _ := node.Properties["file_path"].(string)
-	return fp == "[external]" || fp == ""
+	filePath, _ := node.Properties["file_path"].(string)
+	return filePath == constants.FilePathExternal || filePath == ""
 }
 
 func printCallTree(subgraph *model.Subgraph, rootName string) {
@@ -177,11 +178,15 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 		}
 		filePath, _ = node.Properties["file_path"].(string)
 	}
-	if filePath == "[external]" {
+	if filePath == constants.FilePathExternal {
 		name = name + " [external]"
 		filePath = ""
 	}
-	if filePath == "[cross-service]" {
+	if filePath == constants.FilePathCrossProject {
+		name = name + " [cross-project]"
+		filePath = ""
+	}
+	if filePath == constants.FilePathCrossService {
 		name = "🌐 " + name + " [cross-service]"
 		filePath = ""
 	}

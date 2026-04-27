@@ -449,7 +449,7 @@ func FilterCoreSubgraph(sg *model.Subgraph) *model.Subgraph {
 			excluded[n.ID] = true
 			continue
 		}
-		if fp, _ := props["file_path"].(string); fp == "[external]" || fp == "" {
+		if filePath, _ := props["file_path"].(string); filePath == constants.FilePathExternal || filePath == "" {
 			excluded[n.ID] = true
 			continue
 		}
@@ -470,14 +470,14 @@ func FilterCoreRouteChain(chain *model.RouteChain) *model.RouteChain {
 		return chain
 	}
 	var filtered []model.ChainNode
-	for _, cn := range chain.Chain {
-		if cn.FilePath == "[external]" || cn.FilePath == "" {
+	for _, chainNode := range chain.Chain {
+		if chainNode.FilePath == constants.FilePathExternal || chainNode.FilePath == constants.FilePathCrossProject || chainNode.FilePath == "" {
 			continue
 		}
-		if cn.IsGetter || cn.IsSetter {
+		if chainNode.IsGetter || chainNode.IsSetter {
 			continue
 		}
-		filtered = append(filtered, cn)
+		filtered = append(filtered, chainNode)
 	}
 	return &model.RouteChain{
 		Route:   chain.Route,

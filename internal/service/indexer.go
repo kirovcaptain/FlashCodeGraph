@@ -251,6 +251,11 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 		return nil, err
 	}
 
+
+	// Inject cross-project symbols into symbolTable for resolver
+	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+		return nil, fmt.Errorf("indexer: inject cross-project symbols: %w", err)
+	}
 	// Resolve and write relationships
 	callRelations, err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable)
 	if err != nil {
@@ -384,6 +389,11 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 		return nil, err
 	}
 
+
+	// Inject cross-project symbols into symbolTable for resolver (clean old nodes first for incremental)
+	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+		return nil, fmt.Errorf("indexer: inject cross-project symbols: %w", err)
+	}
 	// Resolve and write relationships
 	callRelations, err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable)
 	if err != nil {
@@ -770,7 +780,7 @@ func (indexer *Indexer) writeResolvedRelations(
 				Properties: map[string]interface{}{
 					"name":           sym.Name,
 					"qualified_name": sym.QualifiedName,
-					"file_path":      "[external]",
+					"file_path":      constants.FilePathExternal,
 				},
 			})
 		}
@@ -1912,6 +1922,141 @@ func (indexer *Indexer) resolveServiceNamePlaceholders(parseResults []model.Pars
 }
 
 // matchConsumerToProvider connects RPC consumer methods to provider handler Functions
+
+// injectCrossProjectSymbols loads symbols from dependency projects via the cross-project index
+// and injects them into the symbolTable so the resolver can resolve calls to external types
+// (e.g. FeignClient interfaces imported via wildcard imports from dependency jars).
+// Also writes the symbols as graph nodes so query results can render them.
+func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *scanContext, symbolTable *resolver.SymbolTable) error {
+	if indexer.crossIndex == nil || len(indexer.config.Dependencies.Projects) == 0 {
+		return nil
+	}
+
+	dependencies := toCrossIndexDeps(indexer.config.Dependencies.Projects)
+	globalSymbols := indexer.crossIndex.GetDependencySymbols(ctx, dependencies)
+	if len(globalSymbols) == 0 {
+		return nil
+	}
+
+	// Clean up previously injected cross-project nodes (safe no-op if none exist)
+	if err := indexer.graphStore.DeleteNodesByFile(ctx, constants.FilePathCrossProject); err != nil {
+		return fmt.Errorf("clean old cross-project nodes: %w", err)
+	}
+
+	// Build source project lookup: qualifiedName prefix → (project, branch)
+	type projectSource struct {
+		path   string
+		branch string
+	}
+	depSourceByKey := make(map[string]projectSource)
+	for _, dep := range indexer.config.Dependencies.Projects {
+		depSourceByKey[dep.Path+"::"+dep.Branch] = projectSource{path: dep.Path, branch: dep.Branch}
+	}
+
+	// Resolve which dependency each symbol came from
+	// GetDependencySymbols returns symbols from all matching deps, but we need per-symbol source.
+	// Re-query per dependency to tag source. For simplicity, query all and match by iterating deps.
+	type symbolWithSource struct {
+		symbol  crossindex.GlobalSymbol
+		source  projectSource
+	}
+	var taggedSymbols []symbolWithSource
+	for _, dep := range indexer.config.Dependencies.Projects {
+		singleDep := []crossindex.Dependency{{Path: dep.Path, Branch: dep.Branch}}
+		depSymbols := indexer.crossIndex.GetDependencySymbols(ctx, singleDep)
+		src := projectSource{path: dep.Path, branch: dep.Branch}
+		for _, globalSymbol := range depSymbols {
+			taggedSymbols = append(taggedSymbols, symbolWithSource{symbol: globalSymbol, source: src})
+		}
+	}
+
+	var symbols []model.Symbol
+	var graphNodes []model.Node
+
+	for _, tagged := range taggedSymbols {
+		globalSymbol := tagged.symbol
+		sourceProject := tagged.source.path
+		sourceBranch := tagged.source.branch
+
+		// Class/Interface level symbol
+		classID := "cross-project:" + globalSymbol.QualifiedName
+		symbols = append(symbols, model.Symbol{
+			ID:            classID,
+			Name:          globalSymbol.Name,
+			QualifiedName: globalSymbol.QualifiedName,
+			Kind:          globalSymbol.Kind,
+			ClassType:     globalSymbol.ClassType,
+			FilePath:      constants.FilePathCrossProject,
+		})
+		graphNodes = append(graphNodes, model.Node{
+			ID:   classID,
+			Kind: globalSymbol.Kind,
+			Properties: map[string]any{
+				"name":           globalSymbol.Name,
+				"qualified_name": globalSymbol.QualifiedName,
+				"class_type":     globalSymbol.ClassType,
+				"file_path":      constants.FilePathCrossProject,
+				"source_project": sourceProject,
+				"source_branch":  sourceBranch,
+			},
+		})
+
+		// Method level symbols — detect overloads for unique IDs
+		methodNameCount := make(map[string]int)
+		for _, method := range globalSymbol.Methods {
+			methodNameCount[method.Name]++
+		}
+
+		for _, method := range globalSymbol.Methods {
+			methodQualifiedName := globalSymbol.QualifiedName + "." + method.Name
+			methodID := "cross-project:" + methodQualifiedName
+			if methodNameCount[method.Name] > 1 && len(method.Params) > 0 {
+				methodID = "cross-project:" + methodQualifiedName + "(" + strings.Join(method.Params, ",") + ")"
+			}
+
+			// Build params JSON matching parser format: [{"name":"p0","type":"TypeName"}]
+			paramEntries := make([]map[string]string, len(method.Params))
+			for i, paramType := range method.Params {
+				paramEntries[i] = map[string]string{"name": fmt.Sprintf("p%d", i), "type": paramType}
+			}
+			paramsJSON, _ := json.Marshal(paramEntries)
+
+			symbols = append(symbols, model.Symbol{
+				ID:            methodID,
+				Name:          method.Name,
+				QualifiedName: methodQualifiedName,
+				Kind:          constants.KindFunction,
+				FilePath:      constants.FilePathCrossProject,
+				Params:        string(paramsJSON),
+			})
+			graphNodes = append(graphNodes, model.Node{
+				ID:   methodID,
+				Kind: constants.KindFunction,
+				Properties: map[string]any{
+					"name":           method.Name,
+					"qualified_name": methodQualifiedName,
+					"file_path":      constants.FilePathCrossProject,
+					"params":         string(paramsJSON),
+					"source_project": sourceProject,
+					"source_branch":  sourceBranch,
+					"is_getter":      method.IsGetter,
+					"is_setter":      method.IsSetter,
+				},
+			})
+		}
+	}
+
+	symbolTable.AddBatch(symbols)
+
+	if len(graphNodes) > 0 {
+		if err := indexer.graphStore.CreateNodes(ctx, graphNodes); err != nil {
+			return fmt.Errorf("create cross-project nodes: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // by matching HTTP method+path against Route nodes (same-repo) or CrossProjectIndex (cross-repo).
 // Creates Function→Function CALLS edges so TraverseCallChain can traverse cross-service calls.
 func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *scanContext,
@@ -1990,7 +2135,7 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 						Kind: constants.KindFunction,
 						Properties: map[string]any{
 							"name":           match.Route.HandlerName,
-							"file_path":      "[cross-service]",
+							"file_path":      constants.FilePathCrossService,
 							"qualified_name": match.Route.HandlerName,
 							"cross_service":  true,
 							"target_project": match.ProjectPath,
@@ -2054,7 +2199,7 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 							Kind: constants.KindFunction,
 							Properties: map[string]any{
 								"name":           routeMatch.Route.HandlerName,
-								"file_path":      "[cross-service]",
+								"file_path":      constants.FilePathCrossService,
 								"qualified_name": routeMatch.Route.HandlerName,
 								"cross_service":  true,
 								"target_project": routeMatch.ProjectPath,
@@ -2103,7 +2248,7 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 						Kind: constants.KindFunction,
 						Properties: map[string]any{
 							"name":           match.Symbol.Name,
-							"file_path":      "[cross-service]",
+							"file_path":      constants.FilePathCrossService,
 							"qualified_name": match.Symbol.QualifiedName,
 							"cross_service":  true,
 							"target_project": match.ProjectPath,
@@ -2206,6 +2351,8 @@ func (indexer *Indexer) writeCrossProjectIndex(ctx context.Context, scanCtx *sca
 				Params:      parseParamTypes(method.Params),
 				ReturnType:  firstReturnType(method.ReturnTypes),
 				Annotations: parseAnnotationNames(method.Annotations),
+				IsGetter:    method.IsGetter,
+				IsSetter:    method.IsSetter,
 			}
 			globalMethod.RouteMethod, globalMethod.RoutePath = extractRouteFromAnnotations(method.Annotations)
 			globalSymbol.Methods = append(globalSymbol.Methods, globalMethod)

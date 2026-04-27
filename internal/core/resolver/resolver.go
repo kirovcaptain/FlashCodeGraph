@@ -178,7 +178,7 @@ func (resolver *Resolver) resolveCallNoCandidate(call model.RawCall, envs map[st
 					externalID := "external:" + fqn
 					resolver.symbolTable.AddBatch([]model.Symbol{{
 						ID: externalID, Name: call.CalledName,
-						QualifiedName: fqn, Kind: constants.KindFunction, FilePath: "[external]",
+						QualifiedName: fqn, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
 					}})
 					return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
 				}
@@ -379,7 +379,7 @@ func (resolver *Resolver) resolveAsExternalDependency(
 		externalID := "external:" + externalQN
 		resolver.symbolTable.AddBatch([]model.Symbol{{
 			ID: externalID, Name: call.CalledName,
-			QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
+			QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
 		}})
 		return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
 	}
@@ -392,7 +392,7 @@ func (resolver *Resolver) resolveAsExternalDependency(
 				externalID := "external:" + externalQN
 				resolver.symbolTable.AddBatch([]model.Symbol{{
 					ID: externalID, Name: call.CalledName,
-					QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
+					QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
 				}})
 				return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
 			}
@@ -489,7 +489,7 @@ func (resolver *Resolver) resolveExternalByImport(
 			externalID := "external:" + externalQN
 			resolver.symbolTable.AddBatch([]model.Symbol{{
 				ID: externalID, Name: call.CalledName,
-				QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: "[external]",
+				QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
 			}})
 			return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
 		}
@@ -680,7 +680,7 @@ func (resolver *Resolver) resolveImportedCall(call model.RawCall, envs map[strin
 		Name:          call.CalledName,
 		QualifiedName: externalQN,
 		Kind:          constants.KindFunction,
-		FilePath:      "[external]",
+		FilePath:      constants.FilePathExternal,
 	}})
 	return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, true
 }

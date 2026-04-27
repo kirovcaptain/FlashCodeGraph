@@ -468,6 +468,27 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 		result = injectField([]byte(result), "cross_service_hints", hintsJSON)
 	}
 
+	// Cross-project hints: detect [cross-project] nodes and suggest querying the source project
+	var crossProjectHints []string
+	for _, node := range subgraph.Nodes {
+		filePath, _ := node.Properties["file_path"].(string)
+		if filePath != constants.FilePathCrossProject {
+			continue
+		}
+		qualifiedName, _ := node.Properties["qualified_name"].(string)
+		sourceProject, _ := node.Properties["source_project"].(string)
+		nodeName, _ := node.Properties["name"].(string)
+		if sourceProject != "" && qualifiedName != "" {
+			crossProjectHint := fmt.Sprintf("Cross-project call detected: %s (from dependency project). To trace the implementation, run: query_call_chain(function=\"%s\", path=\"%s\")",
+				qualifiedName, nodeName, sourceProject)
+			crossProjectHints = append(crossProjectHints, crossProjectHint)
+		}
+	}
+	if len(crossProjectHints) > 0 {
+		hintsJSON, _ := json.Marshal(crossProjectHints)
+		result = injectField([]byte(result), "cross_project_hints", hintsJSON)
+	}
+
 	return mcp.NewToolResultText(result), nil
 }
 
@@ -539,7 +560,7 @@ func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToo
 	var impactCrossServiceHints []string
 	for _, node := range subgraph.Nodes {
 		filePath, _ := node.Properties["file_path"].(string)
-		if filePath == "[cross-service]" {
+		if filePath == constants.FilePathCrossService {
 			nodeName, _ := node.Properties["name"].(string)
 			targetProject, _ := node.Properties["target_project"].(string)
 			if targetProject != "" {
@@ -1025,8 +1046,8 @@ func isCoreExcluded(node map[string]any) bool {
 	if node["is_getter"] == true || node["is_setter"] == true {
 		return true
 	}
-	fp, _ := node["file_path"].(string)
-	return fp == "[external]" || fp == ""
+	filePath, _ := node["file_path"].(string)
+	return filePath == constants.FilePathExternal || filePath == ""
 }
 
 func (srv *Server) handleLocateFunction(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

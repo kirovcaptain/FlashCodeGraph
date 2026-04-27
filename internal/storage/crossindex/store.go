@@ -25,6 +25,9 @@ type CrossProjectIndex interface {
 	// ListProjects returns all registered project entries.
 	ListProjects(ctx context.Context) []ProjectEntry
 
+	// GetDependencySymbols returns all symbols from projects matching the given dependencies.
+	GetDependencySymbols(ctx context.Context, dependencies []Dependency) []GlobalSymbol
+
 	// Load reads the index from persistent storage into memory.
 	Load() error
 

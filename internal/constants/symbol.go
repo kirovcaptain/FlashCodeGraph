@@ -55,6 +55,18 @@ const (
 	SourceKindClassFunc     = "ClassFunc"
 )
 
+// FilePath special markers — used to distinguish non-source nodes in the graph.
+const (
+	// FilePathExternal marks nodes from third-party libraries (not in any indexed project).
+	FilePathExternal = "[external]"
+
+	// FilePathCrossProject marks nodes injected from cross-project index (dependency project symbols).
+	FilePathCrossProject = "[cross-project]"
+
+	// FilePathCrossService marks placeholder nodes created by Step 8 matchConsumerToProvider.
+	FilePathCrossService = "[cross-service]"
+)
+
 // ParserKindToNodeKind maps parser-level kind to graph node kind.
 func ParserKindToNodeKind(parserKind string) string {
 	switch parserKind {

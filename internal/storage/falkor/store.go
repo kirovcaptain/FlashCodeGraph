@@ -710,15 +710,15 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 	switch direction {
 	case model.Outgoing:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor",
+			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch",
 			depth)
 	case model.Incoming:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: $nodeID}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor",
+			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: $nodeID}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch",
 			depth)
 	default:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor",
+			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch",
 			depth)
 	}
 
@@ -1086,6 +1086,12 @@ func parseCallChainResults(rows []interface{}) []model.Node {
 		}
 		if len(cols) > 6 && cols[6] != nil {
 			props["is_constructor"] = convertByType(cols[6], "BOOLEAN")
+		}
+		if len(cols) > 7 && cols[7] != nil {
+			props["source_project"] = cols[7]
+		}
+		if len(cols) > 8 && cols[8] != nil {
+			props["source_branch"] = cols[8]
 		}
 		nodes = append(nodes, model.Node{
 			ID:         asString(cols[0]),

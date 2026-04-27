@@ -174,3 +174,50 @@ func TestDetermineRouteRole(t *testing.T) {
 		}
 	}
 }
+
+func TestJSONStore_GetDependencySymbols(t *testing.T) {
+	tempDir := t.TempDir()
+	store := NewJSONStore(filepath.Join(tempDir, "index.json"))
+	ctx := context.Background()
+
+	// Register two projects
+	_ = store.RegisterProject(ctx, ProjectEntry{
+		ProjectPath: "/project-a",
+		Branch:      "master",
+		Symbols: []GlobalSymbol{
+			{QualifiedName: "com.a.Foo", Name: "Foo", Kind: "Class"},
+			{QualifiedName: "com.a.Bar", Name: "Bar", Kind: "Interface"},
+		},
+	})
+	_ = store.RegisterProject(ctx, ProjectEntry{
+		ProjectPath: "/project-b",
+		Branch:      "main",
+		Symbols: []GlobalSymbol{
+			{QualifiedName: "com.b.Baz", Name: "Baz", Kind: "Class"},
+		},
+	})
+
+	// Query only project-a
+	depsA := []Dependency{{Path: "/project-a", Branch: "master"}}
+	symbolsA := store.GetDependencySymbols(ctx, depsA)
+	if len(symbolsA) != 2 {
+		t.Fatalf("expected 2 symbols from project-a, got %d", len(symbolsA))
+	}
+
+	// Query both
+	depsBoth := []Dependency{
+		{Path: "/project-a", Branch: "master"},
+		{Path: "/project-b", Branch: "main"},
+	}
+	symbolsBoth := store.GetDependencySymbols(ctx, depsBoth)
+	if len(symbolsBoth) != 3 {
+		t.Fatalf("expected 3 symbols from both projects, got %d", len(symbolsBoth))
+	}
+
+	// Query non-existent dependency
+	depsNone := []Dependency{{Path: "/no-such-project", Branch: "master"}}
+	symbolsNone := store.GetDependencySymbols(ctx, depsNone)
+	if len(symbolsNone) != 0 {
+		t.Fatalf("expected 0 symbols for non-existent dep, got %d", len(symbolsNone))
+	}
+}

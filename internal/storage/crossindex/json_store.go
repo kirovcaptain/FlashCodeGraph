@@ -165,6 +165,22 @@ func (store *JSONStore) ListProjects(_ context.Context) []ProjectEntry {
 	return entries
 }
 
+// GetDependencySymbols returns all symbols from projects matching the given dependencies.
+func (store *JSONStore) GetDependencySymbols(_ context.Context, dependencies []Dependency) []GlobalSymbol {
+	store.mutex.RLock()
+	defer store.mutex.RUnlock()
+
+	dependencySet := buildDependencySet(dependencies)
+	var symbols []GlobalSymbol
+	for key, entry := range store.data.Projects {
+		if !dependencySet[key] {
+			continue
+		}
+		symbols = append(symbols, entry.Symbols...)
+	}
+	return symbols
+}
+
 // Load reads the index from the JSON file into memory.
 func (store *JSONStore) Load() error {
 	store.mutex.Lock()

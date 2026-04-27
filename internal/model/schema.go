@@ -41,6 +41,8 @@ var NodeColumns = map[string][]ColumnDef{
 		{"annotations", "STRING"},
 		{"entry_point_score", "DOUBLE"},
 		{"entry_type", "STRING"},
+		{"source_project", "STRING"},
+		{"source_branch", "STRING"},
 	},
 	"Class": {
 		{"name", "STRING"},
@@ -57,6 +59,8 @@ var NodeColumns = map[string][]ColumnDef{
 		{"docstring", "STRING"},
 		{"annotations", "STRING"},
 		{"fields", "STRING"},
+		{"source_project", "STRING"},
+		{"source_branch", "STRING"},
 	},
 	"Interface": {
 		{"name", "STRING"},
@@ -68,6 +72,8 @@ var NodeColumns = map[string][]ColumnDef{
 		{"class_type", "STRING"},
 		{"annotations", "STRING"},
 		{"fields", "STRING"},
+		{"source_project", "STRING"},
+		{"source_branch", "STRING"},
 	},
 	"Variable": {
 		{"name", "STRING"},

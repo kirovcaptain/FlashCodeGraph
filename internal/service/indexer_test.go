@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/crossindex"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/kuzu"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/lock"
 )
@@ -1809,4 +1811,191 @@ func TestIsSameLanguageFamily(t *testing.T) {
 			t.Errorf("isSameLanguageFamily(%q, %q) = %v, want %v", test.lang1, test.lang2, result, test.expected)
 		}
 	}
+}
+
+func TestInjectCrossProjectSymbols_Basic(t *testing.T) {
+	indexer, store := setupTestIndexer(t)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Setup cross-project index with test data
+	tempDir := t.TempDir()
+	crossIndex := setupTestCrossIndex(t, tempDir)
+	indexer.crossIndex = crossIndex
+	indexer.config.Dependencies.Projects = []config.DependencyProject{
+		{Path: "/dep-project", Branch: "master"},
+	}
+
+	// Create a scanContext and symbolTable
+	scanCtx := &scanContext{result: &model.IndexResult{}}
+	symbolTable := setupEmptySymbolTable()
+
+	// Verify symbols not present before injection
+	if len(symbolTable.FindByName("SeaPayApi")) != 0 {
+		t.Fatal("SeaPayApi should not exist before injection")
+	}
+	if len(symbolTable.FindByName("queryPayOutOrder")) != 0 {
+		t.Fatal("queryPayOutOrder should not exist before injection")
+	}
+
+	// Inject
+	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+		t.Fatalf("injectCrossProjectSymbols: %v", err)
+	}
+
+	// Verify class-level symbol
+	classSymbols := symbolTable.FindByName("SeaPayApi")
+	if len(classSymbols) != 1 {
+		t.Fatalf("expected 1 SeaPayApi symbol, got %d", len(classSymbols))
+	}
+	if classSymbols[0].Kind != constants.KindInterface {
+		t.Errorf("expected Interface kind, got %s", classSymbols[0].Kind)
+	}
+	if classSymbols[0].FilePath != constants.FilePathCrossProject {
+		t.Errorf("expected [cross-project] file_path, got %s", classSymbols[0].FilePath)
+	}
+
+	// Verify method-level symbol
+	methodSymbols := symbolTable.FindByName("queryPayOutOrder")
+	if len(methodSymbols) != 1 {
+		t.Fatalf("expected 1 queryPayOutOrder symbol, got %d", len(methodSymbols))
+	}
+	if methodSymbols[0].Kind != constants.KindFunction {
+		t.Errorf("expected Function kind, got %s", methodSymbols[0].Kind)
+	}
+	if methodSymbols[0].QualifiedName != "com.dayu.pay.web.SeaPayApi.queryPayOutOrder" {
+		t.Errorf("unexpected QN: %s", methodSymbols[0].QualifiedName)
+	}
+
+	// Verify FindByQualifiedName works (needed for resolveFullQualifiedType)
+	qnMatches := symbolTable.FindByQualifiedName("com.dayu.pay.web.SeaPayApi")
+	if len(qnMatches) != 1 {
+		t.Fatalf("FindByQualifiedName: expected 1, got %d", len(qnMatches))
+	}
+
+	// Verify params format
+	if methodSymbols[0].Params == "" {
+		t.Error("expected non-empty Params")
+	}
+	if !strings.Contains(methodSymbols[0].Params, "SeaPayQueryPayOutOrderRequest") {
+		t.Errorf("Params should contain type name, got: %s", methodSymbols[0].Params)
+	}
+}
+
+func TestInjectCrossProjectSymbols_NoDeps(t *testing.T) {
+	indexer, store := setupTestIndexer(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	scanCtx := &scanContext{result: &model.IndexResult{}}
+	symbolTable := setupEmptySymbolTable()
+
+	// No dependencies configured — should be a no-op
+	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInjectCrossProjectSymbols_NoCrossIndex(t *testing.T) {
+	indexer, store := setupTestIndexer(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	scanCtx := &scanContext{result: &model.IndexResult{}}
+	symbolTable := setupEmptySymbolTable()
+
+	indexer.config.Dependencies.Projects = []config.DependencyProject{
+		{Path: "/dep-project", Branch: "master"},
+	}
+	// crossIndex is nil — should be a no-op
+	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInjectCrossProjectSymbols_MethodOverload(t *testing.T) {
+	indexer, store := setupTestIndexer(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	crossIndex := setupTestCrossIndexWithOverload(t, tempDir)
+	indexer.crossIndex = crossIndex
+	indexer.config.Dependencies.Projects = []config.DependencyProject{
+		{Path: "/dep-project", Branch: "master"},
+	}
+
+	scanCtx := &scanContext{result: &model.IndexResult{}}
+	symbolTable := setupEmptySymbolTable()
+
+	if err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable); err != nil {
+		t.Fatalf("injectCrossProjectSymbols: %v", err)
+	}
+
+	// Two overloaded methods should both be present with unique IDs
+	methods := symbolTable.FindByName("createOrder")
+	if len(methods) != 2 {
+		t.Fatalf("expected 2 createOrder symbols (overloaded), got %d", len(methods))
+	}
+	if methods[0].ID == methods[1].ID {
+		t.Error("overloaded methods should have different IDs")
+	}
+}
+
+func setupEmptySymbolTable() *resolver.SymbolTable {
+	return resolver.NewSymbolTable()
+}
+
+func setupTestCrossIndex(t *testing.T, tempDir string) *crossindex.JSONStore {
+	t.Helper()
+	store := crossindex.NewJSONStore(filepath.Join(tempDir, "cross_index.json"))
+	ctx := context.Background()
+	_ = store.RegisterProject(ctx, crossindex.ProjectEntry{
+		ProjectPath: "/dep-project",
+		Branch:      "master",
+		Symbols: []crossindex.GlobalSymbol{
+			{
+				QualifiedName: "com.dayu.pay.web.SeaPayApi",
+				Name:          "SeaPayApi",
+				Kind:          constants.KindInterface,
+				ClassType:     "interface",
+				NodeID:        "node-sea",
+				Annotations:   []string{"FeignClient"},
+				Methods: []crossindex.GlobalMethod{
+					{
+						Name:       "queryPayOutOrder",
+						NodeID:     "method-query",
+						Params:     []string{"SeaPayQueryPayOutOrderRequest"},
+						ReturnType: "ResponseResult",
+					},
+				},
+			},
+		},
+	})
+	return store
+}
+
+func setupTestCrossIndexWithOverload(t *testing.T, tempDir string) *crossindex.JSONStore {
+	t.Helper()
+	store := crossindex.NewJSONStore(filepath.Join(tempDir, "cross_index.json"))
+	ctx := context.Background()
+	_ = store.RegisterProject(ctx, crossindex.ProjectEntry{
+		ProjectPath: "/dep-project",
+		Branch:      "master",
+		Symbols: []crossindex.GlobalSymbol{
+			{
+				QualifiedName: "com.example.OrderApi",
+				Name:          "OrderApi",
+				Kind:          constants.KindInterface,
+				ClassType:     "interface",
+				Methods: []crossindex.GlobalMethod{
+					{Name: "createOrder", Params: []string{"OrderReqs"}},
+					{Name: "createOrder", Params: []string{"OrderReqs", "String"}},
+				},
+			},
+		},
+	})
+	return store
 }

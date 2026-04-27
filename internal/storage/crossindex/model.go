@@ -54,6 +54,8 @@ type GlobalMethod struct {
 	Annotations []string `json:"annotations,omitempty"`
 	RouteMethod string   `json:"route_method,omitempty"` // e.g. POST
 	RoutePath   string   `json:"route_path,omitempty"`   // e.g. /seaPay/queryPayOutOrder
+	IsGetter    bool     `json:"is_getter,omitempty"`
+	IsSetter    bool     `json:"is_setter,omitempty"`
 }
 
 // GlobalRoute represents a route (HTTP endpoint, gRPC service, etc.) registered in the cross-project index.
