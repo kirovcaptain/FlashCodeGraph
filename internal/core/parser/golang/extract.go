@@ -452,6 +452,66 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 // extractGoCalls walks a function body for calls.
 // extractMultiReturnHints generates TypeHints for multi-return value assignments.
 // Handles: a, b, c := funcName() and a, b = receiver.Method()
+// extractLocalFuncLiteral extracts anonymous functions assigned to local variables.
+// Handles: handler := func(w http.ResponseWriter) { ... }
+func extractLocalFuncLiteral(node *tree_sitter.Node, content []byte, filePath, parentQualifiedName string, result *model.ParseResult) {
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		if child.Kind() != "var_spec" && child.Kind() != "short_var_declaration" {
+			// For short_var_declaration, the node itself is the declaration
+			if node.Kind() == "short_var_declaration" {
+				child = node
+			} else {
+				continue
+			}
+		}
+		nameNode := child.ChildByFieldName("left")
+		if nameNode == nil {
+			nameNode = child.ChildByFieldName("name")
+		}
+		valueNode := child.ChildByFieldName("right")
+		if valueNode == nil {
+			valueNode = child.ChildByFieldName("value")
+		}
+		if nameNode == nil || valueNode == nil {
+			continue
+		}
+		// Handle expression_list wrapper
+		if valueNode.Kind() == "expression_list" && valueNode.NamedChildCount() == 1 {
+			valueNode = valueNode.NamedChild(0)
+		}
+		if nameNode.Kind() == "expression_list" && nameNode.NamedChildCount() == 1 {
+			nameNode = nameNode.NamedChild(0)
+		}
+		if valueNode.Kind() != "func_literal" {
+			continue
+		}
+		funcName := nameNode.Utf8Text(content)
+		if funcName == "" || funcName == "_" {
+			continue
+		}
+		qualifiedName := parentQualifiedName + "." + funcName
+		params := extractParams(valueNode, content)
+		paramsJSON, _ := json.Marshal(params)
+		returnTypes := extractReturnTypes(valueNode, content, "")
+
+		result.Symbols = append(result.Symbols, model.Symbol{
+			ID:            astutil.GenerateSymbolID(filePath, funcName, int(valueNode.StartPosition().Row)+1),
+			Name:          funcName,
+			QualifiedName: qualifiedName,
+			Kind:          constants.KindFunction,
+			FilePath:      filePath,
+			StartLine:     int(valueNode.StartPosition().Row) + 1,
+			EndLine:       int(valueNode.EndPosition().Row) + 1,
+			Params:        string(paramsJSON),
+			ReturnTypes:   returnTypes,
+			IsLambda:      true,
+			LambdaContext: parentQualifiedName,
+		})
+		break // short_var_declaration is the node itself, only process once
+	}
+}
+
 func extractMultiReturnHints(body *tree_sitter.Node, content []byte, filePath, callerName string, result *model.ParseResult) {
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
 		if node.Kind() != "short_var_declaration" && node.Kind() != "assignment_statement" {
@@ -549,6 +609,11 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 	ExtractGoGRPCRegister(body, content, fullCaller, filePath, result)
 
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
+		// Extract local anonymous functions assigned to variables
+		// (e.g. handler := func(w http.ResponseWriter) { ... })
+		if node.Kind() == "short_var_declaration" || node.Kind() == "var_declaration" {
+			extractLocalFuncLiteral(node, content, filePath, fullCaller, result)
+		}
 		if node.Kind() == "call_expression" {
 			ExtractRoutes(node, content, callerName, filePath, groupPrefixes, result)
 			calledName := ""
