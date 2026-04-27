@@ -12,6 +12,8 @@ func BuildManagers(frameworks []string) (orm *Manager, schema *Manager) {
 			orm.Register(&MybatisParser{})
 		case constants.GraphQL:
 			schema.Register(&GraphQLSchemaParser{})
+		case constants.GRPC:
+			schema.Register(&ProtoParser{})
 		}
 	}
 	return orm, schema

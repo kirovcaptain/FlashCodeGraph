@@ -18,6 +18,10 @@ type CrossProjectIndex interface {
 	// Only returns routes with role=provider.
 	MatchRoute(ctx context.Context, method, path string, dependencies []Dependency) []RouteMatch
 
+	// MatchRouteByService finds provider routes matching a service name and framework.
+	// Returns the first route per service (deduped by service name).
+	MatchRouteByService(ctx context.Context, serviceName, framework string, dependencies []Dependency) []RouteMatch
+
 	// ListProjects returns all registered project entries.
 	ListProjects(ctx context.Context) []ProjectEntry
 

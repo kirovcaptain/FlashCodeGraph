@@ -2037,6 +2037,54 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 				}
 			}
 
+			// Try Route matching first (proto Routes or Go RegisterXxxServer Routes)
+			routeMatches := indexer.crossIndex.MatchRouteByService(ctx, targetName, "grpc", dependencies)
+			if len(routeMatches) > 0 {
+				routeMatch := routeMatches[0]
+				placeholderID := routeMatch.Route.HandlerID
+				if placeholderID == "" {
+					placeholderID = "cross:" + routeMatch.Route.HandlerName
+				}
+				callerMethods := symbolTable.FindMethodsByQualifiedName(pending.OwnerClass)
+				for _, callerMethod := range callerMethods {
+					if !seenPlaceholders[placeholderID] {
+						seenPlaceholders[placeholderID] = true
+						newNodes = append(newNodes, model.Node{
+							ID:   placeholderID,
+							Kind: constants.KindFunction,
+							Properties: map[string]any{
+								"name":           routeMatch.Route.HandlerName,
+								"file_path":      "[cross-service]",
+								"qualified_name": routeMatch.Route.HandlerName,
+								"cross_service":  true,
+								"target_project": routeMatch.ProjectPath,
+								"target_branch":  routeMatch.Branch,
+							},
+						})
+					}
+					newEdges = append(newEdges, model.Edge{
+						SourceID:   callerMethod.ID,
+						TargetID:   placeholderID,
+						Kind:       model.RelCalls,
+						SourceKind: constants.KindFunction,
+						Properties: map[string]any{
+							"cross_service":  true,
+							"target_service": targetName,
+							"target_project": routeMatch.ProjectPath,
+							"target_branch":  routeMatch.Branch,
+							"target_handler": routeMatch.Route.HandlerName,
+							"protocol":       pending.Protocol,
+							"via_route":      routeMatch.Route.Path + "/" + routeMatch.Route.Method,
+							"confidence":     constants.ConfidenceCrossService,
+						},
+					})
+					scanCtx.result.RelationsByKind["CALLS_CROSS_SERVICE"]++
+					break
+				}
+				continue
+			}
+
+			// Fallback: LookupSymbol by qualified name
 			symbolMatches := indexer.crossIndex.LookupSymbol(ctx, targetName, dependencies)
 			if len(symbolMatches) == 0 {
 				continue

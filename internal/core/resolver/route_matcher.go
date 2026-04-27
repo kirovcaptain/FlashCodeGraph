@@ -14,8 +14,15 @@ import (
 func MatchRoute(normalizedPath, method, routePath, routeMethod, routeFramework string) bool {
 	switch routeFramework {
 	case "grpc":
-		return strings.EqualFold(normalizedPath, routePath) &&
-			strings.EqualFold(method, routeMethod)
+		// Support both "ServiceName" and "ServiceName/MethodName" formats in normalizedPath
+		normalizedService := normalizedPath
+		normalizedMethod := method
+		if idx := strings.Index(normalizedPath, "/"); idx > 0 {
+			normalizedService = normalizedPath[:idx]
+			normalizedMethod = normalizedPath[idx+1:]
+		}
+		return strings.EqualFold(normalizedService, routePath) &&
+			strings.EqualFold(normalizedMethod, routeMethod)
 	case "graphql":
 		return strings.EqualFold(normalizedPath, routePath) &&
 			strings.EqualFold(method, routeMethod)

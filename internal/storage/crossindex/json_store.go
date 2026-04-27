@@ -117,6 +117,42 @@ func (store *JSONStore) MatchRoute(_ context.Context, method, path string, depen
 	return matches
 }
 
+
+// MatchRouteByService finds provider routes matching a service name and framework.
+// Uses case-insensitive comparison on the route path (service name).
+func (store *JSONStore) MatchRouteByService(_ context.Context, serviceName, framework string, dependencies []Dependency) []RouteMatch {
+	store.mutex.RLock()
+	defer store.mutex.RUnlock()
+
+	depSet := buildDependencySet(dependencies)
+	lowerService := strings.ToLower(serviceName)
+	var matches []RouteMatch
+
+	for key, entry := range store.data.Projects {
+		if !depSet[key] {
+			continue
+		}
+		for _, route := range entry.Routes {
+			if route.Role != RoleProvider {
+				continue
+			}
+			if route.Framework != framework {
+				continue
+			}
+			if strings.ToLower(route.Path) != lowerService {
+				continue
+			}
+			matches = append(matches, RouteMatch{
+				Route:       route,
+				ProjectPath: entry.ProjectPath,
+				Branch:      entry.Branch,
+			})
+			break // one match per project is enough
+		}
+	}
+	return matches
+}
+
 // ListProjects returns all registered project entries.
 func (store *JSONStore) ListProjects(_ context.Context) []ProjectEntry {
 	store.mutex.RLock()

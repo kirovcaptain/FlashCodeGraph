@@ -87,6 +87,16 @@ func TestMatchRoute_gRPC(t *testing.T) {
 	if MatchRoute("OrderService", "GetUser", "UserService", "GetUser", "grpc") {
 		t.Fatal("gRPC different service should not match")
 	}
+	// ServiceName/MethodName format (from RawRemoteCall.TargetURL)
+	if !MatchRoute("UserService/GetUser", "GetUser", "UserService", "GetUser", "grpc") {
+		t.Fatal("gRPC ServiceName/MethodName format should match")
+	}
+	if !MatchRoute("UserService/getUser", "getUser", "UserService", "GetUser", "grpc") {
+		t.Fatal("gRPC ServiceName/MethodName case-insensitive should match")
+	}
+	if MatchRoute("OrderService/GetUser", "GetUser", "UserService", "GetUser", "grpc") {
+		t.Fatal("gRPC ServiceName/MethodName different service should not match")
+	}
 }
 
 func TestMatchRoute_GraphQL(t *testing.T) {
