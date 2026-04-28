@@ -1,6 +1,6 @@
 ---
 name: fcg
-description: Use FlashCodeGraph MCP tools for code navigation, call chain tracing, impact analysis, route tracing, and annotation queries. Prefer FCG tools over grep/read for symbol lookup in indexed projects.
+description: Use FlashCodeGraph MCP tools for code intelligence. Prefer FCG tools over grep/read for symbol lookup in indexed projects. Covers: project path lookup, symbol search, call chain tracing, impact analysis, route tracing, annotation queries.
 ---
 
 # FlashCodeGraph Skill
