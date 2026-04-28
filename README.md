@@ -480,6 +480,367 @@ FCG automatically selects the default backend based on environment:
 
 Override anytime via `storage.database` in config.
 
+> **Recommendation:** FalkorDB is the most thoroughly tested backend and is recommended for production use. KùzuDB works well for quick local experiments but FalkorDB has proven more stable across diverse projects and scales.
+
+## Usage Scenarios
+
+### Cross-Service Call Tracing
+
+A developer needs to understand how order shipment tracking works across two microservices: `mall-admin` (e-commerce backend) and `logistics-server` (shipping infrastructure).
+
+**Step 1 — Find the entry point**
+
+```bash
+$ fcg callchain getShipmentStatus --reverse
+```
+
+```
+SyncShipmentStatusJob.execute()        ← scheduled task
+  └→ OrderService.getShipmentStatus()
+```
+
+The method is called by a scheduled job that periodically syncs shipment status from the logistics provider.
+
+**Step 2 — Trace what it calls**
+
+```bash
+$ fcg callchain getShipmentStatus --depth 2
+```
+
+```
+OrderService.getShipmentStatus()
+  └→ logisticsApi.queryShipment()  [cross-project]
+       hint: query_call_chain(function="queryShipment", path="/path/to/logistics-server")
+```
+
+FCG detects the Feign client call crosses project boundaries and generates a hint to continue tracing.
+
+**Step 3 — Follow the cross-service call**
+
+```bash
+$ fcg callchain LogisticsController.queryShipment --depth 2 --project logistics-server
+```
+
+```
+LogisticsApi (Feign interface)
+  │ DISPATCHES
+  ▼
+LogisticsController.queryShipment()
+  └→ LogisticsService.queryShipment()
+       ├→ SignUtil.generateSign()              // request signing
+       └→ LogisticsService.buildHttpHeaders()  // HTTP headers
+```
+
+**Full picture in 3 queries:**
+
+```
+mall-admin                                     logistics-server
+──────────                                     ────────────────
+
+SyncShipmentStatusJob.execute()
+  └→ OrderService.getShipmentStatus()
+       └→ logisticsApi.queryShipment()  ─Feign─→  LogisticsApi (interface)
+                                                     │ DISPATCHES
+                                                     ▼
+                                                   LogisticsController.queryShipment()
+                                                     └→ LogisticsService.queryShipment()
+                                                          ├→ SignUtil.generateSign()
+                                                          └→ LogisticsService.buildHttpHeaders()
+```
+
+Without FCG, this would require manually searching across two repositories, reading Feign interface definitions, finding the matching controller, and tracing through service layers. With FCG, the full cross-service flow is traced in 3 queries.
+
+<details>
+<summary>💬 Same scenario with AI Agent (MCP)</summary>
+
+> **User:** `getShipmentStatus` — what's the call logic?
+
+**AI:** *(calls `query_call_chain(function="getShipmentStatus", reverse=true)`)*
+
+`getShipmentStatus` is called by `SyncShipmentStatusJob.execute()` — a scheduled task. Let me trace what it does.
+
+*(calls `query_call_chain(function="getShipmentStatus", depth=2)`)*
+
+It calls `logisticsApi.queryShipment()` which is a cross-project Feign call to `logistics-server`.
+
+*(calls `query_call_chain(function="queryShipment", path="/path/to/logistics-server")`)*
+
+The full chain:
+
+```
+SyncShipmentStatusJob → OrderService.getShipmentStatus()
+  → logisticsApi.queryShipment()  ──Feign──→  LogisticsController
+                                                 └→ LogisticsService.queryShipment()
+                                                      ├→ SignUtil.generateSign()
+                                                      └→ LogisticsService.buildHttpHeaders()
+```
+
+*(reads source)* The method builds a signed HTTP request to the third-party logistics provider, queries shipment status by tracking number, and maps external status codes to internal enum values.
+
+</details>
+
+### Refactoring Impact Assessment
+
+Before renaming `UserRepository.findByEmail`, check what breaks:
+
+```bash
+$ fcg impact UserRepository.findByEmail --depth 3
+```
+
+```
+UserRepository.findByEmail
+  ← UserService.getUserByEmail          (UserService.java:45)
+  │   ← UserController.login            (UserController.java:32)    ← 🌐 POST /api/auth/login
+  │   ← UserController.resetPassword    (UserController.java:78)    ← 🌐 POST /api/auth/reset-password
+  ← NotificationService.resolveRecipient (NotificationService.java:112)
+      ← NotificationJob.execute          (NotificationJob.java:28)   ← ⏰ @XxlJob("sendNotification")
+
+Affected entry points:
+  🌐 POST /api/auth/login
+  🌐 POST /api/auth/reset-password
+  ⏰  @XxlJob("sendNotification")
+```
+
+One command shows: 2 API endpoints and 1 scheduled task will be affected. Notify the relevant owners before refactoring.
+
+<details>
+<summary>💬 Same scenario with AI Agent (MCP)</summary>
+
+> **User:** What breaks if I change `UserRepository.findByEmail`?
+
+**AI:** *(calls `impact_analysis(symbol="UserRepository.findByEmail", depth=3)`)*
+
+3 entry points will be affected:
+
+- 🌐 POST /api/auth/login
+- 🌐 POST /api/auth/reset-password
+- ⏰ @XxlJob("sendNotification")
+
+The call paths are: `UserController.login` and `resetPassword` both go through `UserService.getUserByEmail`, and `NotificationJob` goes through `NotificationService.resolveRecipient`. All changes are contained within these 3 callers.
+
+</details>
+
+### Discovering Project Entry Points
+
+Get a bird's-eye view of all entry points in a project:
+
+```bash
+$ fcg list-entries http_endpoint
+```
+
+```
+HTTP Endpoints (12):
+  GET    /api/users              → UserController.list
+  POST   /api/users              → UserController.create
+  GET    /api/users/{id}         → UserController.getById
+  GET    /api/orders             → OrderController.list
+  POST   /api/orders             → OrderController.create
+  POST   /api/orders/{id}/cancel → OrderController.cancel
+  ...
+```
+
+```bash
+$ fcg list-entries scheduled_task
+```
+
+```
+Scheduled Tasks (3):
+  @XxlJob("syncInventory")      → InventoryJob.execute        InventoryJob.java:15
+  @XxlJob("sendNotification")   → NotificationJob.execute     NotificationJob.java:28
+  @Scheduled(cron="0 0 2 * *")  → ReportJob.generateDaily     ReportJob.java:22
+```
+
+```bash
+$ fcg list-entries suspected_dead
+```
+
+```
+Suspected Dead Code (2):
+  Function  MigrationHelper.migrateV1Data    MigrationHelper.java:10
+  Function  DebugUtil.dumpGraph              DebugUtil.java:5
+```
+
+Combine entry types to get a complete picture of how the system is triggered — HTTP requests, scheduled tasks, message listeners, and code that nothing calls.
+
+<details>
+<summary>💬 Same scenario with AI Agent (MCP)</summary>
+
+> **User:** What are the entry points in this project?
+
+**AI:** *(calls `query_entry_points(type="http_endpoint")`)* Found 12 HTTP endpoints.
+
+*(calls `query_entry_points(type="scheduled_task")`)* Found 3 scheduled tasks: `syncInventory`, `sendNotification`, `generateDaily`.
+
+*(calls `query_entry_points(type="suspected_dead")`)* Found 2 functions with no callers: `MigrationHelper.migrateV1Data` and `DebugUtil.dumpGraph` — these might be dead code worth cleaning up.
+
+</details>
+
+### Exploring Architecture Layers
+
+Get a quick overview of a project's structure by architectural layer:
+
+```bash
+$ fcg query --layer controller
+```
+
+```
+  Class  UserController              @RestController  /api/users
+  Class  OrderController             @RestController  /api/orders
+  Class  PaymentController           @RestController  /api/payments
+  ...
+```
+
+```bash
+$ fcg query --layer service
+```
+
+```
+  Class  UserService                 @Service         UserService.java
+  Class  OrderService                @Service         OrderService.java
+  Class  PaymentService              @Service         PaymentService.java
+  ...
+```
+
+```bash
+$ fcg query --layer repository
+```
+
+```
+  Class  UserRepository              @Repository      UserRepository.java
+  Class  OrderRepository             @Repository      OrderRepository.java
+  ...
+```
+
+Useful when onboarding to a new project — see all controllers to understand the API surface, all repositories to understand the data layer, without reading a single file.
+
+<details>
+<summary>💬 Same scenario with AI Agent (MCP)</summary>
+
+> **User:** What's the structure of this project?
+
+**AI:** *(calls `query_by_layer(layer="controller")`)* 12 controllers — the API surface covers users, orders, payments, inventory, and reports.
+
+*(calls `query_by_layer(layer="service")`)* 18 services. Core business logic is in `OrderService` (395 lines) and `PaymentService` (280 lines).
+
+*(calls `query_by_layer(layer="repository")`)* 15 repositories, all using `@Repository`. Data access is in the `dao` package.
+
+The project follows a standard 3-layer architecture: controller → service → repository.
+
+</details>
+
+### Annotation-Driven Query
+
+**Find all scheduled tasks:**
+
+```bash
+$ fcg query --annotation XxlJob
+```
+
+```
+  Function  InventoryJob.execute        @XxlJob("syncInventory")       InventoryJob.java:15
+  Function  NotificationJob.execute     @XxlJob("sendNotification")    NotificationJob.java:28
+  Function  SettlementJob.run           @XxlJob("dailySettlement")     SettlementJob.java:12
+```
+
+Narrow down with params:
+
+```bash
+$ fcg query --annotation XxlJob --params "settlement"
+```
+
+```
+  Function  SettlementJob.run           @XxlJob("dailySettlement")     SettlementJob.java:12
+```
+
+**Find API documentation by description:**
+
+```bash
+$ fcg query --annotation ApiOperation --params "create order"
+```
+
+```
+  Function  OrderController.create      @ApiOperation("create order")  OrderController.java:45
+```
+
+Then trace the full request chain:
+
+```bash
+$ fcg trace /api/orders --method POST
+```
+
+```
+🌐 POST /api/orders
+  → OrderController.create()
+    → OrderService.createOrder()
+      → InventoryService.deductStock()
+      → OrderRepository.save()            ← 💾 INSERT INTO orders
+      → PaymentService.initPayment()
+```
+
+From API doc annotation to database query in 2 commands.
+
+<details>
+<summary>💬 Same scenario with AI Agent (MCP)</summary>
+
+> **User:** Find the "create order" API and trace the full chain.
+
+**AI:** *(calls `query_by_annotation(annotation="ApiOperation", params="create order")`)*
+
+Found `OrderController.create` annotated with `@ApiOperation("create order")`.
+
+*(calls `query_route_chain(route="/api/orders", method="POST")`)*
+
+The full chain:
+
+```
+POST /api/orders → OrderController.create()
+  → OrderService.createOrder()
+    → InventoryService.deductStock()
+    → OrderRepository.save()            ← INSERT INTO orders
+    → PaymentService.initPayment()
+```
+
+The API validates the request, deducts inventory, persists the order, and initiates payment — all in a single transaction.
+
+</details>
+
+### API Route Tracing
+
+Trace a GET request from controller to database:
+
+```bash
+$ fcg trace /api/users/{id} --method GET
+```
+
+```
+🌐 GET /api/users/{id}
+  → UserController.getById()
+    → UserService.findById()
+      → UserRepository.findById()         ← 💾 SELECT * FROM users WHERE id = ?
+      → PermissionService.getUserRoles()
+        → RoleRepository.findByUserId()   ← 💾 SELECT * FROM roles WHERE user_id = ?
+```
+
+See exactly which tables are hit and through what code path — useful for performance debugging and SQL review.
+
+<details>
+<summary>💬 Same scenario with AI Agent (MCP)</summary>
+
+> **User:** `GET /api/users/{id}` is slow. What queries does it hit?
+
+**AI:** *(calls `query_route_chain(route="/api/users/{id}", method="GET")`)*
+
+It hits 2 tables:
+
+1. `UserRepository.findById()` → `SELECT * FROM users WHERE id = ?`
+2. `RoleRepository.findByUserId()` → `SELECT * FROM roles WHERE user_id = ?`
+
+The second query is inside `PermissionService.getUserRoles()`. If the `roles` table lacks an index on `user_id`, that's likely your bottleneck.
+
+</details>
+
+
+
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE)

@@ -30,6 +30,26 @@ When multiple routes match, always present the list and ask user to select.
 3. If no results, try meaningful sub-phrases (not single words).
 4. Extract route from result → `query_route_chain` (if applicable)
 
+### Architecture Layer Exploration
+
+**When**: onboarding to a new project, understanding project structure, or checking layer composition.
+
+```
+# List all controllers (API surface)
+query_by_layer(layer="controller", path=...)
+
+# List all services (business logic)
+query_by_layer(layer="service", path=...)
+
+# List all repositories (data access)
+query_by_layer(layer="repository", path=...)
+
+# List all models (domain entities)
+query_by_layer(layer="model", path=...)
+```
+
+Layers are detected by annotation: `@RestController`/`@Controller` → controller, `@Service` → service, `@Repository` → repository, `@Entity` → model.
+
 ### Field Impact Analysis
 
 **When**: modifying, renaming, or removing a class field; assessing blast radius.
