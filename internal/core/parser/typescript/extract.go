@@ -1,7 +1,6 @@
 package typescript
 
 import (
-	"encoding/json"
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -275,13 +274,12 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, className s
 
 	returnTypes := extractReturnTypes(node, content)
 	paramTypes := extractParams(node, content)
-	paramsJSON, _ := json.Marshal(paramTypes)
 
 	// Add type hints for parameters (TS has type annotations)
 	for _, param := range paramTypes {
-		if param["name"] != "" && param["type"] != "" {
+		if param.Name != "" && param.Type != "" {
 			result.TypeHints = append(result.TypeHints, model.TypeBinding{
-				VarName: param["name"], TypeName: param["type"], Tier: 0, Scope: qualifiedName, FilePath: filePath,
+				VarName: param.Name, TypeName: param.Type, Tier: 0, Scope: qualifiedName, FilePath: filePath,
 			})
 		}
 	}
@@ -323,7 +321,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, className s
 		FilePath:      filePath,
 		StartLine:     int(node.StartPosition().Row) + 1,
 		EndLine:       int(node.EndPosition().Row) + 1,
-		Params:        string(paramsJSON),
+		Params:        paramTypes,
 		ReturnTypes:   returnTypes,
 		IsAsync:       isAsync,
 		IsStatic:      isStatic,
@@ -348,12 +346,11 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 
 	returnTypes := extractReturnTypes(node, content)
 	paramTypes := extractParams(node, content)
-	paramsJSON, _ := json.Marshal(paramTypes)
 
 	for _, param := range paramTypes {
-		if param["name"] != "" && param["type"] != "" {
+		if param.Name != "" && param.Type != "" {
 			result.TypeHints = append(result.TypeHints, model.TypeBinding{
-				VarName: param["name"], TypeName: param["type"], Tier: 0, Scope: qualifiedName, FilePath: filePath,
+				VarName: param.Name, TypeName: param.Type, Tier: 0, Scope: qualifiedName, FilePath: filePath,
 			})
 		}
 	}
@@ -380,7 +377,7 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 		FilePath:      filePath,
 		StartLine:     int(node.StartPosition().Row) + 1,
 		EndLine:       int(node.EndPosition().Row) + 1,
-		Params:        string(paramsJSON),
+		Params:        paramTypes,
 		ReturnTypes:   returnTypes,
 		IsAsync:       isAsync,
 		IsExported:    isExported,
@@ -398,7 +395,6 @@ func extractArrowFunctions(node *tree_sitter.Node, content []byte, filePath stri
 				funcName := nameNode.Utf8Text(content)
 				returnTypes := extractReturnTypes(valueNode, content)
 				paramTypes := extractParams(valueNode, content)
-				paramsJSON, _ := json.Marshal(paramTypes)
 
 				qualifiedName := buildQualifiedName(filePath, funcName)
 				result.Symbols = append(result.Symbols, model.Symbol{
@@ -409,7 +405,7 @@ func extractArrowFunctions(node *tree_sitter.Node, content []byte, filePath stri
 					FilePath:      filePath,
 					StartLine:     int(child.StartPosition().Row) + 1,
 					EndLine:       int(child.EndPosition().Row) + 1,
-					Params:        string(paramsJSON),
+					Params:        paramTypes,
 					ReturnTypes:   returnTypes,
 					IsLambda:      true,
 					LambdaContext: funcName,
@@ -495,12 +491,12 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 
 // Helper functions
 
-func extractParams(node *tree_sitter.Node, content []byte) []map[string]string {
+func extractParams(node *tree_sitter.Node, content []byte) []model.ParamInfo {
 	paramsNode := node.ChildByFieldName("parameters")
 	if paramsNode == nil {
 		return nil
 	}
-	var params []map[string]string
+	var params []model.ParamInfo
 	for i := uint(0); i < paramsNode.ChildCount(); i++ {
 		param := paramsNode.Child(i)
 		if !param.IsNamed() {
@@ -526,12 +522,9 @@ func extractParams(node *tree_sitter.Node, content []byte) []map[string]string {
 		}
 
 		if paramName != "" && paramName != "this" {
-			entry := map[string]string{"name": paramName}
-			if paramType != "" {
-				entry["type"] = paramType
-			}
+			entry := model.ParamInfo{Name: paramName, Type: paramType}
 			if param.Kind() == "optional_parameter" || param.ChildByFieldName("value") != nil {
-				entry["default"] = "true"
+				entry.HasDefault = true
 			}
 			params = append(params, entry)
 		}
@@ -721,7 +714,6 @@ func extractInterface(node *tree_sitter.Node, content []byte, file scanner.Scann
 		methodQualifiedName := ifaceQualifiedName + "." + methodName
 		returnTypes := extractReturnTypes(child, content)
 		paramTypes := extractParams(child, content)
-		paramsJSON, _ := json.Marshal(paramTypes)
 
 		result.Symbols = append(result.Symbols, model.Symbol{
 			ID:            astutil.GenerateSymbolID(file.RelPath, methodQualifiedName, int(child.StartPosition().Row)+1),
@@ -733,7 +725,7 @@ func extractInterface(node *tree_sitter.Node, content []byte, file scanner.Scann
 			EndLine:       int(child.EndPosition().Row) + 1,
 			IsExported:    isExported,
 			IsAbstract:    true,
-			Params:        string(paramsJSON),
+			Params:        paramTypes,
 			ReturnTypes:   returnTypes,
 		})
 	}

@@ -143,7 +143,7 @@ func (resolver *Resolver) DetectOverridesAndDispatches(heritage []model.RawHerit
 						matched = helper.IsOverrideMatch(childMethod, parentMethod)
 					} else {
 						matched = childMethod.Name == parentMethod.Name &&
-							countParams(childMethod.Params) == countParams(parentMethod.Params)
+							len(childMethod.Params) == len(parentMethod.Params)
 					}
 					// Step 5: Emit both OVERRIDES and DISPATCHES edges for each match.
 					if matched {

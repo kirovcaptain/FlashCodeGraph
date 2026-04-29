@@ -218,10 +218,9 @@ type GraphStore interface {
 
 	for _, sym := range result.Symbols {
 		if sym.Name == "QueryEdges" {
-			var params []map[string]string
-			json.Unmarshal([]byte(sym.Params), &params)
-			if len(params) != 4 {
-				t.Fatalf("QueryEdges: expected 4 params, got %d: %s", len(params), sym.Params)
+			if len(sym.Params) != 4 {
+				b, _ := json.Marshal(sym.Params)
+				t.Fatalf("QueryEdges: expected 4 params, got %d: %s", len(sym.Params), b)
 			}
 			t.Log("✅ interface method params: return types not included in params")
 			return

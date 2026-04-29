@@ -2,7 +2,6 @@ package resolver
 
 
 import (
-	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -1058,7 +1057,7 @@ func filterByFile(candidates []model.Symbol, filePath string) []model.Symbol {
 func filterByArgCount(candidates []model.Symbol, argCount int) []model.Symbol {
 	var matched []model.Symbol
 	for _, candidate := range candidates {
-		params := parseParamEntries(candidate.Params)
+		params := candidate.Params
 		paramCount := len(params)
 		if paramCount > 0 && strings.HasSuffix(params[paramCount-1].Type, "...") {
 			// varargs: at least (paramCount - 1) fixed args
@@ -1080,41 +1079,13 @@ func filterByArgCount(candidates []model.Symbol, argCount int) []model.Symbol {
 	return matched
 }
 
-// paramEntry represents a parsed parameter from JSON.
-type paramEntry struct {
-	Type       string
-	HasDefault bool
-}
-
-// parseParamEntries parses a JSON params string into paramEntry slice.
-func parseParamEntries(paramsJSON string) []paramEntry {
-	if paramsJSON == "" || paramsJSON == "null" {
-		return nil
+// paramTypes extracts type strings from a ParamInfo slice.
+func paramTypes(params []model.ParamInfo) []string {
+	types := make([]string, len(params))
+	for i, p := range params {
+		types[i] = p.Type
 	}
-	var rawParams []map[string]string
-	if err := json.Unmarshal([]byte(paramsJSON), &rawParams); err != nil {
-		return nil
-	}
-	entries := make([]paramEntry, len(rawParams))
-	for index, rawParam := range rawParams {
-		entries[index] = paramEntry{
-			Type:       rawParam["type"],
-			HasDefault: rawParam["default"] == "true",
-		}
-	}
-	return entries
-}
-
-// countParams parses a JSON params string and returns the number of parameters.
-func countParams(paramsJSON string) int {
-	if paramsJSON == "" || paramsJSON == "null" {
-		return 0
-	}
-	var params []map[string]any
-	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		return 0
-	}
-	return len(params)
+	return types
 }
 
 
@@ -1264,7 +1235,7 @@ func filterByArgTypes(candidates []model.Symbol, argTypes []string, langHelper L
 	}
 	var remaining []model.Symbol
 	for _, candidate := range candidates {
-		params := parseParamTypes(candidate.Params)
+		params := paramTypes(candidate.Params)
 		isVarargs := len(params) > 0 && strings.HasSuffix(params[len(params)-1], "...")
 		if !isVarargs && len(params) != len(argTypes) {
 			continue
@@ -1330,7 +1301,7 @@ func filterByArgTypes(candidates []model.Symbol, argTypes []string, langHelper L
 	if len(remaining) > 1 {
 		var fixed []model.Symbol
 		for _, candidate := range remaining {
-			params := parseParamTypes(candidate.Params)
+			params := paramTypes(candidate.Params)
 			if len(params) == 0 || !strings.HasSuffix(params[len(params)-1], "...") {
 				fixed = append(fixed, candidate)
 			}
@@ -1340,25 +1311,6 @@ func filterByArgTypes(candidates []model.Symbol, argTypes []string, langHelper L
 		}
 	}
 	return remaining
-}
-
-func parseParamTypes(paramsJSON string) []string {
-	if paramsJSON == "" || paramsJSON == "null" {
-// parseParamTypes extracts type strings from a JSON params array.
-// Returns a slice of type names (e.g. ["String", "int", "Object..."]).
-		return nil
-	}
-	var params []map[string]any
-	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		return nil
-	}
-	types := make([]string, len(params))
-	for i, param := range params {
-		if typeName, ok := param["type"].(string); ok {
-			types[i] = typeName
-		}
-	}
-	return types
 }
 
 func isSingleLetterGeneric(typeName string) bool {

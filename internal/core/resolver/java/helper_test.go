@@ -19,8 +19,8 @@ func TestJavaHelper_LoggerOverload(t *testing.T) {
 	// error(String, Object) vs error(String, Throwable) — should pick Throwable (more specific)
 	table := resolver.NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "err_obj", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"format","type":"String"},{"name":"arg","type":"Object"}]`},
-		{ID: "err_thr", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"msg","type":"String"},{"name":"t","type":"Throwable"}]`},
+		{ID: "err_obj", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: []model.ParamInfo{{Name: "format", Type: "String"}, {Name: "arg", Type: "Object"}}},
+		{ID: "err_thr", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: []model.ParamInfo{{Name: "msg", Type: "String"}, {Name: "t", Type: "Throwable"}}},
 		{ID: "c_log", Name: "LoggerUtil", QualifiedName: "com.example.LoggerUtil", Kind: "Class", FilePath: "LoggerUtil.java"},
 		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
 		{ID: "c_ctrl", Name: "Controller", QualifiedName: "com.example.Controller", Kind: "Class", FilePath: "Controller.java"},
@@ -63,9 +63,9 @@ func TestJavaHelper_CatchChainedExpr(t *testing.T) {
 	// Should resolve to error(String, Throwable) via JDK hierarchy
 	table := resolver.NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "err_obj", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"format","type":"String"},{"name":"arg","type":"Object"}]`},
-		{ID: "err_thr", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"msg","type":"String"},{"name":"t","type":"Throwable"}]`},
-		{ID: "err_var", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: `[{"name":"format","type":"String"},{"name":"arguments","type":"Object..."}]`},
+		{ID: "err_obj", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: []model.ParamInfo{{Name: "format", Type: "String"}, {Name: "arg", Type: "Object"}}},
+		{ID: "err_thr", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: []model.ParamInfo{{Name: "msg", Type: "String"}, {Name: "t", Type: "Throwable"}}},
+		{ID: "err_var", Name: "error", QualifiedName: "com.example.LoggerUtil.error", Kind: "Function", FilePath: "LoggerUtil.java", Params: []model.ParamInfo{{Name: "format", Type: "String"}, {Name: "arguments", Type: "Object..."}}},
 		{ID: "logger_cls", Name: "LoggerUtil", QualifiedName: "com.example.LoggerUtil", Kind: "Class", FilePath: "LoggerUtil.java"},
 		{ID: "caller1", Name: "zCard", QualifiedName: "com.example.RedisUtil.zCard", Kind: "Function", FilePath: "RedisUtil.java"},
 	})
@@ -124,8 +124,8 @@ func TestJavaHelper_IsTypeCompatible(t *testing.T) {
 
 func TestJavaHelper_SelectMostSpecific(t *testing.T) {
 	candidates := []model.Symbol{
-		{ID: "obj", Name: "error", Params: `[{"name":"msg","type":"String"},{"name":"arg","type":"Object"}]`},
-		{ID: "thr", Name: "error", Params: `[{"name":"msg","type":"String"},{"name":"t","type":"Throwable"}]`},
+		{ID: "obj", Name: "error", Params: []model.ParamInfo{{Name: "msg", Type: "String"}, {Name: "arg", Type: "Object"}}},
+		{ID: "thr", Name: "error", Params: []model.ParamInfo{{Name: "msg", Type: "String"}, {Name: "t", Type: "Throwable"}}},
 	}
 	result := java.SelectMostSpecific(candidates, []string{"String", "Exception"})
 	if result == nil {
@@ -139,8 +139,8 @@ func TestJavaHelper_SelectMostSpecific(t *testing.T) {
 
 func TestJavaHelper_FilterByArgTypes_Exclusion(t *testing.T) {
 	candidates := []model.Symbol{
-		{Name: "e", Params: `[{"name":"code","type":"ResponseCode"},{"name":"data","type":"T"}]`},
-		{Name: "e", Params: `[{"name":"status","type":"Integer"},{"name":"msg","type":"String"}]`},
+		{Name: "e", Params: []model.ParamInfo{{Name: "code", Type: "ResponseCode"}, {Name: "data", Type: "T"}}},
+		{Name: "e", Params: []model.ParamInfo{{Name: "status", Type: "Integer"}, {Name: "msg", Type: "String"}}},
 	}
 	helper := java.NewHelper(resolver.NewSymbolTable(), nil)
 

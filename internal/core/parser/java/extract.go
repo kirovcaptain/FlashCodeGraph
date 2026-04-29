@@ -332,7 +332,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 	}
 
 	// Parameters
-	var paramTypes []map[string]string
+	var paramTypes []model.ParamInfo
 	paramsNode := node.ChildByFieldName("parameters")
 	if paramsNode != nil {
 		for j := uint(0); j < paramsNode.ChildCount(); j++ {
@@ -361,7 +361,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 					}
 					paramType += "..."
 				}
-				paramTypes = append(paramTypes, map[string]string{"name": paramName, "type": paramType})
+				paramTypes = append(paramTypes, model.ParamInfo{Name: paramName, Type: paramType})
 				// Add type hint for parameter (enables TypeInfer to resolve receiver types)
 				if paramType != "" && paramName != "" {
 					result.TypeHints = append(result.TypeHints, model.TypeBinding{
@@ -376,8 +376,6 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 			}
 		}
 	}
-	paramsJSON, _ := json.Marshal(paramTypes)
-
 	// Modifiers and annotations
 	isStatic := false
 	isExported := false
@@ -423,7 +421,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 		FilePath:      filePath,
 		StartLine:     int(node.StartPosition().Row) + 1,
 		EndLine:       int(node.EndPosition().Row) + 1,
-		Params:        string(paramsJSON),
+		Params:        paramTypes,
 		ReturnTypes:   returnTypes,
 		IsStatic:      isStatic,
 		IsExported:    isExported,
@@ -526,7 +524,7 @@ func generateLombokAccessors(classAnnotations []model.StructuredAnnotation, fiel
 				FilePath:      filePath,
 				StartLine:     f.line,
 				ReturnTypes:   []string{f.typeName},
-				Params:        "[]",
+				Params:        nil,
 				IsSynthetic:   true,
 				IsGetter:      true,
 				IsExported:    true,
@@ -541,7 +539,7 @@ func generateLombokAccessors(classAnnotations []model.StructuredAnnotation, fiel
 				Kind:          constants.KindFunction,
 				FilePath:      filePath,
 				StartLine:     f.line,
-				Params:        `[{"name":"` + f.name + `","type":"` + f.typeName + `"}]`,
+				Params:        []model.ParamInfo{{Name: f.name, Type: f.typeName}},
 				IsSynthetic:   true,
 				IsSetter:      true,
 				IsExported:    true,

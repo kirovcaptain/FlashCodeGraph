@@ -1875,11 +1875,18 @@ func TestInjectCrossProjectSymbols_Basic(t *testing.T) {
 	}
 
 	// Verify params format
-	if methodSymbols[0].Params == "" {
+	if len(methodSymbols[0].Params) == 0 {
 		t.Error("expected non-empty Params")
 	}
-	if !strings.Contains(methodSymbols[0].Params, "SeaPayQueryPayOutOrderRequest") {
-		t.Errorf("Params should contain type name, got: %s", methodSymbols[0].Params)
+	hasType := false
+	for _, p := range methodSymbols[0].Params {
+		if p.Type == "SeaPayQueryPayOutOrderRequest" {
+			hasType = true
+			break
+		}
+	}
+	if !hasType {
+		t.Errorf("Params should contain type SeaPayQueryPayOutOrderRequest, got: %v", methodSymbols[0].Params)
 	}
 }
 

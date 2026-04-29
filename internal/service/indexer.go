@@ -1064,7 +1064,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"file_path":      symbol.FilePath,
 					"start_line":     symbol.StartLine,
 					"end_line":       symbol.EndLine,
-					"params":         symbol.Params,
+					"params":         marshalParams(symbol.Params),
 					"return_types":   symbol.ReturnTypes,
 					"annotations":    symbol.Annotations,
 					"is_exported":    symbol.IsExported,
@@ -1090,7 +1090,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"is_exported":    symbol.IsExported,
 					"annotations":    symbol.Annotations,
 					"complexity":     symbol.Complexity,
-					"params":         symbol.Params,
+					"params":         marshalParams(symbol.Params),
 					"fields":         string(fieldsJSON),
 				}
 			case constants.KindInterface:
@@ -1269,7 +1269,7 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 			if name == "" {
 				continue
 			}
-			params, _ := node.Properties["params"].(string)
+			paramsStr, _ := node.Properties["params"].(string)
 			isExported, _ := node.Properties["is_exported"].(bool)
 			classType, _ := node.Properties["class_type"].(string)
 			annotations, _ := node.Properties["annotations"].(string)
@@ -1282,7 +1282,7 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 				QualifiedName: qualifiedName,
 				Kind:          kind,
 				FilePath:      filePath,
-				Params:        params,
+				Params:        unmarshalParams(paramsStr),
 				IsExported:    isExported,
 				ClassType:     classType,
 				Annotations:   annotations,
@@ -2095,12 +2095,11 @@ func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *
 				methodID = "cross-project:" + methodQualifiedName + "(" + strings.Join(method.Params, ",") + ")"
 			}
 
-			// Build params JSON matching parser format: [{"name":"p0","type":"TypeName"}]
-			paramEntries := make([]map[string]string, len(method.Params))
+			// Build params from GlobalMethod.Params (type names only)
+			paramInfos := make([]model.ParamInfo, len(method.Params))
 			for index, paramType := range method.Params {
-				paramEntries[index] = map[string]string{"name": fmt.Sprintf("p%d", index), "type": paramType}
+				paramInfos[index] = model.ParamInfo{Name: fmt.Sprintf("p%d", index), Type: paramType}
 			}
-			paramsJSON, _ := json.Marshal(paramEntries)
 
 			symbols = append(symbols, model.Symbol{
 				ID:            methodID,
@@ -2108,7 +2107,7 @@ func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *
 				QualifiedName: methodQualifiedName,
 				Kind:          constants.KindFunction,
 				FilePath:      constants.FilePathCrossProject,
-				Params:        string(paramsJSON),
+				Params:        paramInfos,
 			})
 			preparedNodes[methodID] = model.Node{
 				ID:   methodID,
@@ -2117,7 +2116,7 @@ func (indexer *Indexer) injectCrossProjectSymbols(ctx context.Context, scanCtx *
 					"name":           method.Name,
 					"qualified_name": methodQualifiedName,
 					"file_path":      constants.FilePathCrossProject,
-					"params":         string(paramsJSON),
+					"params":         marshalParams(paramInfos),
 					"source_project": sourceProject,
 					"source_branch":  sourceBranch,
 					"is_getter":      method.IsGetter,
@@ -2424,7 +2423,7 @@ func (indexer *Indexer) writeCrossProjectIndex(ctx context.Context, scanCtx *sca
 			globalMethod := crossindex.GlobalMethod{
 				Name:        method.Name,
 				NodeID:      method.ID,
-				Params:      parseParamTypes(method.Params),
+				Params:      extractParamTypeNames(method.Params),
 				ReturnType:  firstReturnType(method.ReturnTypes),
 				Annotations: parseAnnotationNames(method.Annotations),
 				IsGetter:    method.IsGetter,
@@ -2489,22 +2488,42 @@ func parseAnnotationNames(annotationsJSON string) []string {
 	return names
 }
 
-// parseParamTypes extracts parameter type names from JSON params string.
-func parseParamTypes(paramsJSON string) []string {
-	if paramsJSON == "" {
-		return nil
-	}
-	var params []struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		return nil
-	}
+// extractParamTypeNames extracts type names from a ParamInfo slice.
+func extractParamTypeNames(params []model.ParamInfo) []string {
 	types := make([]string, 0, len(params))
-	for _, param := range params {
-		types = append(types, param.Type)
+	for _, p := range params {
+		types = append(types, p.Type)
 	}
 	return types
+}
+
+// marshalParams serializes ParamInfo slice to JSON string for storage.
+func marshalParams(params []model.ParamInfo) string {
+	if len(params) == 0 {
+		return "[]"
+	}
+	data, _ := json.Marshal(params)
+	return string(data)
+}
+
+// unmarshalParams deserializes a JSON params string to ParamInfo slice.
+// Handles legacy format where "default" is a string "true" instead of bool.
+func unmarshalParams(s string) []model.ParamInfo {
+	if s == "" || s == "null" || s == "[]" {
+		return nil
+	}
+	var raw []map[string]any
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil
+	}
+	params := make([]model.ParamInfo, 0, len(raw))
+	for _, r := range raw {
+		name, _ := r["name"].(string)
+		typ, _ := r["type"].(string)
+		hasDefault := r["default"] == "true" || r["default"] == true
+		params = append(params, model.ParamInfo{Name: name, Type: typ, HasDefault: hasDefault})
+	}
+	return params
 }
 
 // firstReturnType returns the first return type or empty string.

@@ -1,7 +1,6 @@
 package python
 
 import (
-	"encoding/json"
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -201,7 +200,7 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 	}
 
 	// Parameters
-	var paramTypes []map[string]string
+	var paramTypes []model.ParamInfo
 	paramsNode := node.ChildByFieldName("parameters")
 	if paramsNode != nil {
 		for j := uint(0); j < paramsNode.ChildCount(); j++ {
@@ -249,13 +248,7 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 			}
 
 			if paramName != "" {
-				entry := map[string]string{"name": paramName}
-				if paramType != "" {
-					entry["type"] = paramType
-				}
-				if hasDefault {
-					entry["default"] = "true"
-				}
+				entry := model.ParamInfo{Name: paramName, Type: paramType, HasDefault: hasDefault}
 				paramTypes = append(paramTypes, entry)
 				// Type hint
 				if paramType != "" {
@@ -270,7 +263,6 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 			}
 		}
 	}
-	paramsJSON, _ := json.Marshal(paramTypes)
 
 	isStatic := false
 	isExported := !strings.HasPrefix(funcName, "_") || funcName == "__init__"
@@ -314,7 +306,7 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 		FilePath:      filePath,
 		StartLine:     int(node.StartPosition().Row) + 1,
 		EndLine:       int(node.EndPosition().Row) + 1,
-		Params:        string(paramsJSON),
+		Params:        paramTypes,
 		ReturnTypes:   returnTypes,
 		IsStatic:      isStatic,
 		IsExported:    isExported,

@@ -1,7 +1,6 @@
 package java
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
@@ -43,7 +42,7 @@ func SelectMostSpecific(candidates []model.Symbol, argTypes []string) *model.Sym
 	bestIsVarargs := true
 
 	for i, candidate := range candidates {
-		params := parseParamTypes(candidate.Params)
+		params := extractParamTypes(candidate.Params)
 		if len(params) == 0 && len(argTypes) > 0 {
 			continue
 		}
@@ -96,19 +95,10 @@ func isSingleLetterGeneric(typeName string) bool {
 	return len(typeName) == 1 && typeName[0] >= 'A' && typeName[0] <= 'Z'
 }
 
-func parseParamTypes(paramsJSON string) []string {
-	if paramsJSON == "" || paramsJSON == "null" {
-		return nil
-	}
-	var params []struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		return nil
-	}
+func extractParamTypes(params []model.ParamInfo) []string {
 	types := make([]string, len(params))
-	for i, param := range params {
-		types[i] = param.Type
+	for i, p := range params {
+		types[i] = p.Type
 	}
 	return types
 }

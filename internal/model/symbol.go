@@ -1,5 +1,12 @@
 package model
 
+// ParamInfo describes a function/method parameter.
+type ParamInfo struct {
+	Name       string `json:"name"`
+	Type       string `json:"type,omitempty"`
+	HasDefault bool   `json:"default,omitempty"`
+}
+
 // Symbol represents a code symbol extracted from source.
 type Symbol struct {
 	ID              string `json:"id"`
@@ -9,7 +16,7 @@ type Symbol struct {
 	FilePath        string `json:"file_path"`
 	StartLine       int    `json:"start_line"`
 	EndLine         int    `json:"end_line"`
-	Params          string `json:"params,omitempty"`          // JSON
+	Params          []ParamInfo `json:"params,omitempty"`
 	ReturnTypes     []string `json:"return_types,omitempty"`
 	Visibility      string `json:"visibility,omitempty"`
 	ClassType       string   `json:"class_type,omitempty"`      // class/abstract_class/interface/enum/struct

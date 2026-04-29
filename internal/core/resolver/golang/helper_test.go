@@ -166,15 +166,15 @@ func TestInferImplements(t *testing.T) {
 	table.AddBatch([]model.Symbol{
 		// Interface with 2 methods
 		{ID: "iface", Name: "Store", QualifiedName: "storage.Store", Kind: "Interface", FilePath: "storage.go"},
-		{ID: "iface_write", Name: "Write", QualifiedName: "storage.Store.Write", Kind: "Function", FilePath: "storage.go", Params: `[{"name":"ctx"},{"name":"data"}]`},
-		{ID: "iface_close", Name: "Close", QualifiedName: "storage.Store.Close", Kind: "Function", FilePath: "storage.go", Params: `[]`},
+		{ID: "iface_write", Name: "Write", QualifiedName: "storage.Store.Write", Kind: "Function", FilePath: "storage.go", Params: []model.ParamInfo{{Name: "ctx"}, {Name: "data"}}},
+		{ID: "iface_close", Name: "Close", QualifiedName: "storage.Store.Close", Kind: "Function", FilePath: "storage.go", Params: nil},
 		// Struct implementing both methods
 		{ID: "impl_class", Name: "FileStore", QualifiedName: "file.FileStore", Kind: "Class", ClassType: "struct", FilePath: "file.go"},
-		{ID: "impl_write", Name: "Write", QualifiedName: "file.FileStore.Write", Kind: "Function", FilePath: "file.go", Params: `[{"name":"ctx"},{"name":"data"}]`},
-		{ID: "impl_close", Name: "Close", QualifiedName: "file.FileStore.Close", Kind: "Function", FilePath: "file.go", Params: `[]`},
+		{ID: "impl_write", Name: "Write", QualifiedName: "file.FileStore.Write", Kind: "Function", FilePath: "file.go", Params: []model.ParamInfo{{Name: "ctx"}, {Name: "data"}}},
+		{ID: "impl_close", Name: "Close", QualifiedName: "file.FileStore.Close", Kind: "Function", FilePath: "file.go", Params: nil},
 		// Struct missing one method — should NOT match
 		{ID: "partial_class", Name: "PartialStore", QualifiedName: "partial.PartialStore", Kind: "Class", ClassType: "struct", FilePath: "partial.go"},
-		{ID: "partial_write", Name: "Write", QualifiedName: "partial.PartialStore.Write", Kind: "Function", FilePath: "partial.go", Params: `[{"name":"ctx"},{"name":"data"}]`},
+		{ID: "partial_write", Name: "Write", QualifiedName: "partial.PartialStore.Write", Kind: "Function", FilePath: "partial.go", Params: []model.ParamInfo{{Name: "ctx"}, {Name: "data"}}},
 	})
 
 	helper := gohelper.NewHelper(table)
