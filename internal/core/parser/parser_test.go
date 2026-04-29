@@ -166,7 +166,7 @@ func world() {}
 }
 
 func TestSupportedLanguage(t *testing.T) {
-	supported := []string{"java", "python", "go", "typescript", "javascript", "rust", "c", "cpp", "csharp", "ruby", "php"}
+	supported := []string{"java", "python", "go", "typescript", "javascript"}
 	for _, language := range supported {
 		if !SupportedLanguage(language) {
 			t.Errorf("expected %s to be supported", language)

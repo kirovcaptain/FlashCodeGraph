@@ -10,19 +10,11 @@ import (
 	"unsafe"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
-	tree_sitter_c "github.com/tree-sitter/tree-sitter-c/bindings/go"
-	tree_sitter_cpp "github.com/tree-sitter/tree-sitter-cpp/bindings/go"
-	tree_sitter_csharp "github.com/tree-sitter/tree-sitter-c-sharp/bindings/go"
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
 	tree_sitter_javascript "github.com/tree-sitter/tree-sitter-javascript/bindings/go"
-	tree_sitter_php "github.com/tree-sitter/tree-sitter-php/bindings/go"
 	tree_sitter_python "github.com/tree-sitter/tree-sitter-python/bindings/go"
-	tree_sitter_ruby "github.com/tree-sitter/tree-sitter-ruby/bindings/go"
-	tree_sitter_rust "github.com/tree-sitter/tree-sitter-rust/bindings/go"
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
-
-	// Languages without official Go bindings use smacker's
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
@@ -46,12 +38,6 @@ var languages = map[string]*tree_sitter.Language{
 	"go":         newLanguage(tree_sitter_go.Language()),
 	"javascript": newLanguage(tree_sitter_javascript.Language()),
 	"typescript": newLanguage(unsafe.Pointer(tree_sitter_typescript.LanguageTypescript())),
-	"rust":       newLanguage(tree_sitter_rust.Language()),
-	"c":          newLanguage(tree_sitter_c.Language()),
-	"cpp":        newLanguage(tree_sitter_cpp.Language()),
-	"csharp":     newLanguage(tree_sitter_csharp.Language()),
-	"ruby":       newLanguage(tree_sitter_ruby.Language()),
-	"php":        newLanguage(unsafe.Pointer(tree_sitter_php.LanguagePHP())),
 }
 
 // Parser parses source files into ParseResult using tree-sitter.
@@ -145,8 +131,6 @@ func extractFromAST(rootNode *tree_sitter.Node, content []byte, file scanner.Sca
 		golang.Extract(rootNode, content, file, result)
 	case "typescript", "javascript":
 		typescript.Extract(rootNode, content, file, result)
-	default:
-		extractGeneric(rootNode, content, file, result)
 	}
 }
 
