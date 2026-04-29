@@ -220,9 +220,12 @@ func (indexer *Indexer) scanProject(ctx context.Context, repoPath string, branch
 func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*model.IndexResult, error) {
 	// Clean entire graph + parse cache
 	indexer.progress.EmitSub(PhaseWriting, SubCleanGraph, "")
-	indexer.graphStore.ClearAll(ctx)
+	// ClearAll may fail on empty/nonexistent graphs (e.g., first index) — safe to ignore.
+	_ = indexer.graphStore.ClearAll(ctx)
 	// Recreate indexes after graph deletion
-	indexer.graphStore.Migrate(ctx)
+	if err := indexer.graphStore.Migrate(ctx); err != nil {
+		return nil, fmt.Errorf("indexer: migrate schema: %w", err)
+	}
 	os.RemoveAll(filepath.Join(scanCtx.absPath, ".fcg", "cache"))
 	indexer.progress.EmitSub(PhaseWriting, SubCleanGraph, "done")
 
@@ -399,6 +402,7 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	// Resolve and write relationships
 	callRelations, err := indexer.resolveAndWriteRelations(ctx, scanCtx, parseResults, symbolTable, crossProjectNodes)
 	if err != nil {
+		return nil, err
 	}
 
 	// Preload Route nodes and HANDLES edges once for Step 8 + Step 9
@@ -458,7 +462,7 @@ func (indexer *Indexer) parseAllFiles(ctx context.Context, scanCtx *scanContext,
 	defFiles := filterNonSource(filesToParse)
 	if len(defFiles) > 0 {
 		indexer.progress.EmitSub(PhaseParsing, SubParseDefFiles, "")
-		defResults := indexer.parseDefFiles(scanCtx, filesToParse)
+		defResults := indexer.parseDefFiles(scanCtx, defFiles)
 		parseResults = append(parseResults, defResults...)
 		indexer.progress.EmitSub(PhaseParsing, SubParseDefFiles, fmt.Sprintf("%d files", len(defResults)))
 	}

@@ -84,6 +84,7 @@ func (srv *Server) createIndexer(repoPath string) (*service.Indexer, storage.Gra
 	crossIndexPath := filepath.Join(config.GlobalDir(), "cross_project_index.json")
 	crossIndex := crossindex.NewJSONStore(crossIndexPath)
 	if err := crossIndex.Load(); err != nil {
+		store.Close()
 		return nil, nil, fmt.Errorf("load cross-project index: %w", err)
 	}
 
@@ -101,7 +102,10 @@ func (srv *Server) createQuerier(path, branchName string) (*service.Querier, sto
 	if !filepath.IsAbs(path) {
 		return nil, nil, fmt.Errorf("path must be absolute, got: %s", path)
 	}
-	cfg, _ := config.Load(path)
+	cfg, err := config.Load(path)
+	if err != nil {
+		cfg = config.DefaultConfig()
+	}
 	if branchName != "" {
 		cfg.Storage.Branch = branchName
 	}

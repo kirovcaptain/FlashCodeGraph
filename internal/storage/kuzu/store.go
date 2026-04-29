@@ -349,6 +349,8 @@ var allRelTypes = []struct {
 	{"HAS_ANNOTATION_FUNC", constants.KindFunction, constants.KindAnnotation},
 	{"HAS_ANNOTATION_CLASS", constants.KindClass, constants.KindAnnotation},
 	{"HAS_ANNOTATION_IFACE", constants.KindInterface, constants.KindAnnotation},
+	{"DISPATCHES", constants.KindFunction, constants.KindFunction},
+	{"UNRESOLVED_CALL", constants.KindFunction, constants.KindFunction},
 }
 
 // DeleteNodesByFile removes all nodes associated with a file path.
@@ -641,40 +643,8 @@ func (store *Store) TraverseCallChain(_ context.Context, nodeID string, depth in
 
 // traverseRecursive uses KùzuDB recursive path query (fast, no confidence filtering).
 func (store *Store) traverseRecursive(nodeID string, depth int, direction model.Direction) (*model.Subgraph, error) {
-	var query string
-	switch direction {
-	case model.Outgoing:
-		query = fmt.Sprintf(
-			"MATCH (a:Function)-[r:CALLS*1..%d]->(b:Function) WHERE a.id = $id RETURN DISTINCT b.id, b.name, b.file_path, b.is_getter, b.is_setter", depth)
-	case model.Incoming:
-		query = fmt.Sprintf(
-			"MATCH (a:Function)-[r:CALLS*1..%d]->(b:Function) WHERE b.id = $id RETURN DISTINCT a.id, a.name, a.file_path, a.is_getter, a.is_setter", depth)
-	default:
-		query = fmt.Sprintf(
-			"MATCH (a:Function)-[r:CALLS*1..%d]-(b:Function) WHERE a.id = $id RETURN DISTINCT b.id, b.name, b.file_path, b.is_getter, b.is_setter", depth)
-	}
-
-	result, err := store.exec(query, map[string]any{"id": nodeID})
-	if err != nil {
-		return &model.Subgraph{}, nil
-	}
-	defer result.Close()
-
-	subgraph := &model.Subgraph{}
-	for result.HasNext() {
-		row, _ := result.Next()
-		id, _ := row.GetValue(0)
-		name, _ := row.GetValue(1)
-		filePath, _ := row.GetValue(2)
-		isGetter, _ := row.GetValue(3)
-		isSetter, _ := row.GetValue(4)
-		subgraph.Nodes = append(subgraph.Nodes, model.Node{
-			ID:         fmt.Sprint(id),
-			Kind:       constants.KindFunction,
-			Properties: map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter},
-		})
-	}
-	return subgraph, nil
+	// Use BFS to collect both nodes and edges (recursive Cypher can't return per-hop edges easily)
+	return store.traverseBFS(nodeID, depth, direction, 0)
 }
 
 // traverseBFS uses application-level BFS with per-hop confidence filtering.
@@ -684,40 +654,77 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 	visited := map[string]bool{nodeID: true}
 	queue := []string{nodeID}
 
-	var queryTpl string
+	var queryTemplate string
+	confFilter := "AND (r.confidence IS NULL OR r.confidence >= $minConf)"
 	switch direction {
 	case model.Outgoing:
-		queryTpl = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id AND r.confidence >= $minConf RETURN b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter"
+		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch", confFilter)
 	case model.Incoming:
-		queryTpl = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id AND r.confidence >= $minConf RETURN a.id, a.name, a.file_path, r.confidence, a.is_getter, a.is_setter"
+		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, r.line, r.declared_type, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch", confFilter)
 	default:
-		queryTpl = "MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id AND r.confidence >= $minConf RETURN b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter"
+		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch", confFilter)
 	}
 
 	for level := 0; level < depth && len(queue) > 0; level++ {
 		var nextQueue []string
 		for _, currentID := range queue {
-			result, err := store.exec(queryTpl, map[string]any{"id": currentID, "minConf": minConfidence})
+			result, err := store.exec(queryTemplate, map[string]any{"id": currentID, "minConf": minConfidence})
 			if err != nil {
 				continue
 			}
 			for result.HasNext() {
 				row, _ := result.Next()
-				id, _ := row.GetValue(0)
-				name, _ := row.GetValue(1)
-				filePath, _ := row.GetValue(2)
-				isGetter, _ := row.GetValue(4)
-				isSetter, _ := row.GetValue(5)
-				targetID := fmt.Sprint(id)
-				if visited[targetID] {
+				sourceID, _ := row.GetValue(0)
+				targetID, _ := row.GetValue(1)
+				name, _ := row.GetValue(2)
+				filePath, _ := row.GetValue(3)
+				confidence, _ := row.GetValue(4)
+				line, _ := row.GetValue(5)
+				declaredType, _ := row.GetValue(6)
+				isGetter, _ := row.GetValue(7)
+				isSetter, _ := row.GetValue(8)
+				qualifiedName, _ := row.GetValue(9)
+				isCtor, _ := row.GetValue(10)
+				sourceProject, _ := row.GetValue(11)
+				sourceBranch, _ := row.GetValue(12)
+
+				neighborID := fmt.Sprint(targetID)
+				edgeProps := map[string]any{"confidence": confidence}
+				if line != nil {
+					edgeProps["line"] = line
+				}
+				if declType, ok := declaredType.(string); ok && declType != "" {
+					edgeProps["declared_type"] = declType
+				}
+				subgraph.Edges = append(subgraph.Edges, model.Edge{
+					SourceID: fmt.Sprint(sourceID),
+					TargetID: neighborID,
+					Kind:     model.RelCalls,
+					Properties: edgeProps,
+				})
+
+				if visited[neighborID] {
 					continue
 				}
-				visited[targetID] = true
-				nextQueue = append(nextQueue, targetID)
+				visited[neighborID] = true
+				nextQueue = append(nextQueue, neighborID)
+				nodeProps := map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter}
+				if qualName, ok := qualifiedName.(string); ok && qualName != "" {
+					nodeProps["qualified_name"] = qualName
+				}
+				if isConstructor, ok := isCtor.(bool); ok {
+					nodeProps["is_constructor"] = isConstructor
+				}
+				if srcProject, ok := sourceProject.(string); ok && srcProject != "" {
+					nodeProps["source_project"] = srcProject
+				}
+				if srcBranch, ok := sourceBranch.(string); ok && srcBranch != "" {
+					nodeProps["source_branch"] = srcBranch
+				}
 				subgraph.Nodes = append(subgraph.Nodes, model.Node{
-					ID:         targetID,
+					ID:         neighborID,
 					Kind:       constants.KindFunction,
-					Properties: map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter},
+					Properties: nodeProps,
 				})
 			}
 			result.Close()
@@ -738,23 +745,21 @@ func (store *Store) BatchUpdateNodeProperties(_ context.Context, kind string, up
 		return nil
 	}
 	for _, u := range updates {
+		params := map[string]any{"nodeID": u.NodeID}
 		var setClauses []string
+		i := 0
 		for k, v := range u.Props {
-			switch val := v.(type) {
-			case string:
-				setClauses = append(setClauses, fmt.Sprintf("n.%s = '%s'", k, strings.ReplaceAll(val, "'", "\\'")))
-			case float64:
-				setClauses = append(setClauses, fmt.Sprintf("n.%s = %f", k, val))
-			default:
-				setClauses = append(setClauses, fmt.Sprintf("n.%s = '%v'", k, strings.ReplaceAll(fmt.Sprintf("%v", val), "'", "\\'")))
-			}
+			paramName := fmt.Sprintf("v%d", i)
+			setClauses = append(setClauses, fmt.Sprintf("n.%s = $%s", k, paramName))
+			params[paramName] = v
+			i++
 		}
-		escapedID := strings.ReplaceAll(u.NodeID, "'", "\\'")
-		cypher := fmt.Sprintf("MATCH (n:%s) WHERE n.id = '%s' SET %s", kind, escapedID, strings.Join(setClauses, ", "))
-		_, err := store.conn.Query(cypher)
+		cypher := fmt.Sprintf("MATCH (n:%s) WHERE n.id = $nodeID SET %s", kind, strings.Join(setClauses, ", "))
+		result, err := store.exec(cypher, params)
 		if err != nil {
 			return err
 		}
+		result.Close()
 	}
 	return nil
 }
@@ -833,22 +838,19 @@ func (store *Store) QueryNodesByProperty(_ context.Context, kind string, key str
 	returnClause := model.QueryReturnClause(kind)
 	colNames := append([]string{"id"}, model.ColumnNames(kind)...)
 
-	escapedValue := strings.ReplaceAll(value, "\\", "\\\\")
-	escapedValue = strings.ReplaceAll(escapedValue, "'", "\\'")
-
 	var whereClause string
 	switch matchMode {
 	case "contains":
-		whereClause = fmt.Sprintf("WHERE n.%s CONTAINS '%s'", key, escapedValue)
+		whereClause = fmt.Sprintf("WHERE n.%s CONTAINS $propertyValue", key)
 	default: // exact
-		whereClause = fmt.Sprintf("WHERE n.%s = '%s'", key, escapedValue)
+		whereClause = fmt.Sprintf("WHERE n.%s = $propertyValue", key)
 	}
 	limitClause := ""
 	if limit > 0 {
 		limitClause = fmt.Sprintf(" LIMIT %d", limit)
 	}
 	query := fmt.Sprintf("MATCH (n:%s) %s RETURN %s%s", kind, whereClause, returnClause, limitClause)
-	result, err := store.conn.Query(query)
+	result, err := store.exec(query, map[string]any{"propertyValue": value})
 	if err != nil {
 		return nil, err
 	}
