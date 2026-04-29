@@ -180,14 +180,14 @@ func (srv *Server) registerTools() {
 
 	srv.mcpServer.AddTool(mcp.NewTool("search",
 		mcp.WithDescription("Search symbols by partial or fuzzy name match. Use this when you don't know the exact name — e.g. 'find anything related to order processing'."),
-		mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Symbol name or keyword to search for (e.g. 'OrderService', 'createUser'). NOT a file path.")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
-		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project root directory")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected from current branch if omitted)")),
 	), srv.handleSearch)
 
-	srv.mcpServer.AddTool(mcp.NewTool("query_class_methods",
-		mcp.WithDescription("List all methods of a class. Use this to understand class structure and responsibilities."),
+	srv.mcpServer.AddTool(mcp.NewTool("query_class_members",
+		mcp.WithDescription("List all fields and methods of a class. Use this to understand class structure, dependencies, and responsibilities."),
 		mcp.WithString("class_name", mcp.Required(), mcp.Description("Class name to query")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),

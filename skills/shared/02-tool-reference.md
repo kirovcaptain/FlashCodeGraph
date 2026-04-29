@@ -7,7 +7,7 @@
 | Find who calls a function | `query_call_chain` (reverse=true) | grep for function name |
 | Find what a function calls | `query_call_chain` | read entire function |
 | Assess refactoring impact | `impact_analysis` | manual grep + trace |
-| List class methods | `query_class_methods` | grep + read file |
+| List class fields and methods | `query_class_members` | grep + read file |
 | Find interface implementations | `query_dependencies` (kind=IMPLEMENTS, reverse=true) | grep |
 | Find by annotation | `query_by_annotation` | grep for annotation |
 | Find by architectural layer | `query_by_layer` | grep for package names |

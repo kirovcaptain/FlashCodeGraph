@@ -28,7 +28,7 @@ var (
 	queryLayer      string
 	queryCategory   string
 	listCategories  bool
-	queryMethods    bool
+	queryMembers    bool
 	callchainDepth   int
 	callchainMinConf float64
 	callchainReverse bool
@@ -57,7 +57,7 @@ func init() {
 	queryCmd.Flags().StringVar(&queryLayer, "layer", "", "Filter by layer (controller/service/repository/model)")
 	queryCmd.Flags().StringVar(&queryCategory, "category", "", "Filter by annotation category (use --list-categories to see values)")
 	queryCmd.Flags().BoolVar(&listCategories, "list-categories", false, "List all available annotation categories")
-	queryCmd.Flags().BoolVar(&queryMethods, "methods", false, "List methods of a class")
+	queryCmd.Flags().BoolVar(&queryMembers, "members", false, "List fields and methods of a class")
 	rootCmd.AddCommand(queryCmd)
 
 	// fcg routes
@@ -257,8 +257,8 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("provide a symbol name or use --annotation/--layer/--category")
 	}
 
-	// --methods: list methods of a class
-	if queryMethods {
+	// --members: list fields and methods of a class
+	if queryMembers {
 		methods, candidates, _, err := querier.QueryClassMembers(ctx, args[0], queryLimit)
 		if err != nil {
 			return err

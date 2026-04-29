@@ -306,7 +306,7 @@ The MCP Server exposes the following tools for AI agent integration:
 | `query_symbol` | Find symbol by exact name, returns file path, kind, and properties |
 | `query_call_chain` | Traverse call chain — callees or callers with depth/confidence/mode control |
 | `query_cross_chain` | Query cross-service call relationships — aggregated by target project, protocol, and routes |
-| `query_class_methods` | List all methods of a class |
+| `query_class_members` | List all fields and methods of a class |
 | `query_dependencies` | Query IMPORTS/EXTENDS/IMPLEMENTS/CALLS edges for a symbol |
 | `query_by_annotation` | Find symbols by annotation name and optional params filter |
 | `query_by_layer` | Find symbols by architectural layer (controller/service/repository/model) |
