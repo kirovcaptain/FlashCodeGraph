@@ -664,7 +664,7 @@ func (store *Store) QueryAllEdges(ctx context.Context, relKind model.RelationKin
 	}
 	rows, err := store.query(ctx, cypher)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
 	if len(rows) < 2 {
@@ -724,7 +724,7 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 
 	rows, err := store.queryWithParams(ctx, nodeCypher, []cypherParam{{"nodeID", nodeID}})
 	if err != nil {
-		return subgraph, nil
+		return subgraph, err
 	}
 	subgraph.Nodes = parseCallChainResults(rows)
 

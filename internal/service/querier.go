@@ -51,11 +51,13 @@ func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string
 	}
 	// Find source nodes via HAS_ANNOTATION edges
 	var results []model.Node
+	var firstErr error
 	seen := map[string]bool{}
 	for _, annotationID := range matchedAnnotationIDs {
 		for _, sourceKind := range []string{constants.KindClass, constants.KindInterface, constants.KindFunction} {
 			edges, err := querier.graphStore.QueryEdges(ctx, annotationID, sourceKind, model.RelHasAnnotation, model.Incoming)
 			if err != nil {
+				if firstErr == nil { firstErr = err }
 				continue
 			}
 			for _, edge := range edges {
@@ -76,6 +78,9 @@ func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string
 				}
 			}
 		}
+	}
+	if len(results) == 0 && firstErr != nil {
+		return nil, firstErr
 	}
 	return results, nil
 }
@@ -107,12 +112,14 @@ func (querier *Querier) QueryByAnnotationCategory(ctx context.Context, category 
 }
 
 func (querier *Querier) resolveAnnotatedNodes(ctx context.Context, annIDs []string, limit int) ([]model.Node, error) {
+	var firstErr error
 	var results []model.Node
 	seen := map[string]bool{}
 	for _, annID := range annIDs {
 		for _, srcKind := range []string{constants.KindClass, constants.KindInterface, constants.KindFunction} {
 			edges, err := querier.graphStore.QueryEdges(ctx, annID, srcKind, model.RelHasAnnotation, model.Incoming)
 			if err != nil {
+				if firstErr == nil { firstErr = err }
 				continue
 			}
 			for _, e := range edges {
@@ -130,6 +137,9 @@ func (querier *Querier) resolveAnnotatedNodes(ctx context.Context, annIDs []stri
 				}
 			}
 		}
+	}
+	if len(results) == 0 && firstErr != nil {
+		return nil, firstErr
 	}
 	return results, nil
 }

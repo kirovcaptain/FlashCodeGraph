@@ -34,7 +34,6 @@ type Resolver struct {
 	chainedReceiverCache map[string]string             // expr:callerName:filePath → resolved type
 }
 
-// NewResolver creates a Resolver with the given SymbolTable and language helpers.
 // NewResolver creates a Resolver with the given SymbolTable and optional language-specific helpers.
 func NewResolver(symbolTable *SymbolTable, helpers ...map[string]LanguageHelper) *Resolver {
 	r := &Resolver{
@@ -1178,10 +1177,6 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 			methodName := methodPart[:parenIdx]
 			// Resolve obj type — strip trailing () if obj is also a call
 			objType := resolver.inferExprType(objPart, call, env, envs, langHelper)
-			if objType == "" && !strings.Contains(objPart, ".") && !strings.Contains(objPart, "(") {
-				// Simple variable
-				objType = resolver.inferExprType(objPart, call, env, envs, langHelper)
-			}
 			if objType != "" {
 				// Lookup method return type on objType
 				candidates := resolver.symbolTable.FindByName(methodName)
