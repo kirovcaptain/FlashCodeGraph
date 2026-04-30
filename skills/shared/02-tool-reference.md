@@ -12,6 +12,7 @@
 | Find by annotation | `query_by_annotation` | grep for annotation |
 | Find by architectural layer | `query_by_layer` | grep for package names |
 | List HTTP endpoints | `query_entry_points` (type="http_endpoint") | grep for route annotations |
+| List all HTTP routes | `query_routes` | grep for route annotations |
 | Trace API request chain | `query_route_chain` | manual read through layers |
 | Trace cross-service calls | `query_cross_chain` | manual grep + read across repos |
 | View full call trees from entries | `query_call_forest` | manual trace |

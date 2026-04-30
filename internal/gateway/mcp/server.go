@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -230,6 +231,13 @@ func (srv *Server) registerTools() {
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
 	), srv.handleQueryByLayer)
+
+	srv.mcpServer.AddTool(mcp.NewTool("query_routes",
+		mcp.WithDescription("List all HTTP routes in a project. Returns method, path, handler function, and framework for each route."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project root directory")),
+		mcp.WithString("method", mcp.Description("Filter by HTTP method (GET/POST/PUT/DELETE)")),
+		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
+	), srv.handleQueryRoutes)
 
 	srv.mcpServer.AddTool(mcp.NewTool("query_route_chain",
 		mcp.WithDescription("Trace an HTTP route through its full processing chain — from controller to service to repository. Use this to understand API request handling flow."),
@@ -781,6 +789,40 @@ func (srv *Server) handleQueryByLayer(ctx context.Context, request mcp.CallToolR
 	return mcp.NewToolResultText(string(data)), nil
 }
 
+
+func (srv *Server) handleQueryRoutes(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	path, _ := request.GetArguments()["path"].(string)
+	methodFilter, _ := request.GetArguments()["method"].(string)
+	branchName, _ := request.GetArguments()["branch"].(string)
+
+	_, store, err := srv.createQuerier(path, branchName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("create store: %v", err)), nil
+	}
+	defer store.Close()
+
+	routes, err := store.QueryAllByKind(ctx, constants.KindRoute, 0)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	var results []map[string]any
+	for _, r := range routes {
+		method, _ := r.Properties["method"].(string)
+		if methodFilter != "" && !strings.EqualFold(method, methodFilter) {
+			continue
+		}
+		results = append(results, map[string]any{
+			"method":    method,
+			"path":      r.Properties["path_pattern"],
+			"handler":   r.Properties["handler_method"],
+			"framework": r.Properties["framework"],
+		})
+	}
+
+	data, _ := json.Marshal(results)
+	return mcp.NewToolResultText(string(data)), nil
+}
 func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	route, _ := request.GetArguments()["route"].(string)
 	if route == "" {

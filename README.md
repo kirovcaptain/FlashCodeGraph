@@ -311,6 +311,7 @@ The MCP Server exposes the following tools for AI agent integration:
 | `query_dependencies` | Query IMPORTS/EXTENDS/IMPLEMENTS/CALLS edges for a symbol |
 | `query_by_annotation` | Find symbols by annotation name and optional params filter |
 | `query_by_layer` | Find symbols by architectural layer (controller/service/repository/model) |
+| `query_routes` | List all HTTP routes in a project |
 | `query_route_chain` | Trace HTTP route from controller through service to repository |
 | `query_entry_points` | List detected entry points (HTTP endpoints, CLI commands, dead code) |
 | `query_call_forest` | Query call forest from entry points with tree structure |
