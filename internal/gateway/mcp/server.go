@@ -432,7 +432,18 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	}
 
 	warning := checkStalenessWarning(ctx, path, branchName)
-	resultJSON, _ := json.Marshal(subgraph)
+	var resultJSON []byte
+	if mode == "compact" {
+		resultJSON, _ = json.Marshal(struct {
+			Nodes []model.Node             `json:"nodes"`
+			Edges []model.CompactChainEdge `json:"edges"`
+		}{Nodes: subgraph.Nodes, Edges: model.EdgesToCompactChainEdges(subgraph.Edges)})
+	} else {
+		resultJSON, _ = json.Marshal(struct {
+			Nodes []model.Node      `json:"nodes"`
+			Edges []model.ChainEdge `json:"edges"`
+		}{Nodes: subgraph.Nodes, Edges: model.EdgesToChainEdges(subgraph.Edges)})
+	}
 	result := injectWarning(resultJSON, warning)
 	var hint string
 	switch mode {
@@ -559,7 +570,7 @@ func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToo
 
 	result := map[string]any{
 		"nodes": subgraph.Nodes,
-		"edges": subgraph.Edges,
+		"edges": model.EdgesToChainEdges(subgraph.Edges),
 	}
 	if len(affectedRoutes) > 0 {
 		result["affected_routes"] = affectedRoutes

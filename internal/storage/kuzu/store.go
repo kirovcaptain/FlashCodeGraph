@@ -739,11 +739,11 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 	confFilter := "AND (r.confidence IS NULL OR r.confidence >= $minConf)"
 	switch direction {
 	case model.Outgoing:
-		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch", confFilter)
+		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confFilter)
 	case model.Incoming:
-		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, r.line, r.declared_type, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch", confFilter)
+		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, r.line, r.declared_type, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line", confFilter)
 	default:
-		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch", confFilter)
+		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confFilter)
 	}
 
 	for level := 0; level < depth && len(queue) > 0; level++ {
@@ -768,6 +768,8 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				isCtor, _ := row.GetValue(10)
 				sourceProject, _ := row.GetValue(11)
 				sourceBranch, _ := row.GetValue(12)
+				startLine, _ := row.GetValue(13)
+				endLine, _ := row.GetValue(14)
 
 				neighborID := fmt.Sprint(targetID)
 				edgeProps := map[string]any{"confidence": confidence}
@@ -801,6 +803,12 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				}
 				if srcBranch, ok := sourceBranch.(string); ok && srcBranch != "" {
 					nodeProps["source_branch"] = srcBranch
+				}
+				if startLine != nil {
+					nodeProps["start_line"] = startLine
+				}
+				if endLine != nil {
+					nodeProps["end_line"] = endLine
 				}
 				subgraph.Nodes = append(subgraph.Nodes, model.Node{
 					ID:         neighborID,
@@ -963,7 +971,7 @@ func (store *Store) QueryNodesByProperty(_ context.Context, kind string, key str
 func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]storage.SearchResult, error) {
 	var results []storage.SearchResult
 	for _, table := range constants.BaseSymbolKinds {
-		cypherQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.name CONTAINS $query RETURN n.id, n.name, n.file_path, n.qualified_name LIMIT %d", table, limit)
+		cypherQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.name CONTAINS $query RETURN n.id, n.name, n.file_path, n.qualified_name, n.start_line, n.end_line LIMIT %d", table, limit)
 		result, err := store.exec(cypherQuery, map[string]any{"query": query})
 		if err != nil {
 			continue
@@ -974,13 +982,22 @@ func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]sto
 			nodeName, _ := row.GetValue(1)
 			filePath, _ := row.GetValue(2)
 			qualifiedName, _ := row.GetValue(3)
-			results = append(results, storage.SearchResult{
+			startLine, _ := row.GetValue(4)
+			endLine, _ := row.GetValue(5)
+			searchResult := storage.SearchResult{
 				NodeID:        fmt.Sprint(nodeID),
 				Name:          fmt.Sprint(nodeName),
 				Kind:          table,
 				Path:          fmt.Sprint(filePath),
 				QualifiedName: fmt.Sprint(qualifiedName),
-			})
+			}
+			if startLineInt, ok := startLine.(int64); ok {
+				searchResult.StartLine = int(startLineInt)
+			}
+			if endLineInt, ok := endLine.(int64); ok {
+				searchResult.EndLine = int(endLineInt)
+			}
+			results = append(results, searchResult)
 		}
 		result.Close()
 	}

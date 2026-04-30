@@ -87,6 +87,8 @@ type SearchResult struct {
 	Kind          string  `json:"kind"`
 	Path          string  `json:"path"`
 	Score         float64 `json:"score"`
+	StartLine     int     `json:"start_line,omitempty"`
+	EndLine       int     `json:"end_line,omitempty"`
 }
 
 // FingerprintMeta holds metadata about the last indexing run.

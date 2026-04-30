@@ -149,8 +149,32 @@ type ChainNode struct {
 	Kind          string `json:"kind"`
 	FilePath      string `json:"file_path"`
 	Layer         string `json:"layer,omitempty"`
-	IsGetter      bool   `json:"is_getter,omitempty"`  // accessor getter (for core mode filtering)
-	IsSetter      bool   `json:"is_setter,omitempty"`  // accessor setter (for core mode filtering)
+	StartLine     int    `json:"start_line,omitempty"`
+	EndLine       int    `json:"end_line,omitempty"`
+	IsGetter      bool   `json:"is_getter,omitempty"`
+	IsSetter      bool   `json:"is_setter,omitempty"`
+}
+
+// ChainEdge is a structured edge for MCP call chain output.
+type ChainEdge struct {
+	SourceID     string       `json:"source_id"`
+	TargetID     string       `json:"target_id"`
+	Kind         RelationKind `json:"kind"`
+	Line         int          `json:"line,omitempty"`
+	Confidence   float64      `json:"confidence,omitempty"`
+	DeclaredType string       `json:"declared_type,omitempty"`
+	FlowContext  string       `json:"flow_context,omitempty"`
+	FlowLine     int          `json:"flow_line,omitempty"`
+}
+
+// CompactChainEdge is a ChainEdge with merged lines for compact mode.
+type CompactChainEdge struct {
+	SourceID     string       `json:"source_id"`
+	TargetID     string       `json:"target_id"`
+	Kind         RelationKind `json:"kind"`
+	Lines        []int        `json:"lines,omitempty"`
+	Confidence   float64      `json:"confidence,omitempty"`
+	DeclaredType string       `json:"declared_type,omitempty"`
 }
 
 // RouteChain represents the full call chain from a route entry point.
@@ -175,4 +199,74 @@ type LocateResult struct {
 	Kind      string `json:"kind"`
 	StartLine int    `json:"start_line"`
 	EndLine   int    `json:"end_line"`
+}
+
+// ToInt converts a numeric value to int, handling float64 (from JSON) and int64 (from DB drivers).
+func ToInt(value any) (int, bool) {
+	switch number := value.(type) {
+	case int:
+		return number, true
+	case float64:
+		return int(number), true
+	case int64:
+		return int(number), true
+	}
+	return 0, false
+}
+
+// EdgesToChainEdges converts storage Edge slice to structured ChainEdge slice for MCP output.
+func EdgesToChainEdges(edges []Edge) []ChainEdge {
+	chainEdges := make([]ChainEdge, 0, len(edges))
+	for _, edge := range edges {
+		chainEdge := ChainEdge{
+			SourceID: edge.SourceID,
+			TargetID: edge.TargetID,
+			Kind:     edge.Kind,
+		}
+		if value, exists := edge.Properties["line"]; exists {
+			if lineNumber, ok := ToInt(value); ok {
+				chainEdge.Line = lineNumber
+			}
+		}
+		if value, ok := edge.Properties["confidence"].(float64); ok {
+			chainEdge.Confidence = value
+		}
+		if value, ok := edge.Properties["declared_type"].(string); ok {
+			chainEdge.DeclaredType = value
+		}
+		if value, ok := edge.Properties["flow_context"].(string); ok {
+			chainEdge.FlowContext = value
+		}
+		if value, exists := edge.Properties["flow_line"]; exists {
+			if lineNumber, ok := ToInt(value); ok {
+				chainEdge.FlowLine = lineNumber
+			}
+		}
+		chainEdges = append(chainEdges, chainEdge)
+	}
+	return chainEdges
+}
+
+// EdgesToCompactChainEdges converts storage Edge slice (after CompactSubgraphEdges) to CompactChainEdge slice.
+func EdgesToCompactChainEdges(edges []Edge) []CompactChainEdge {
+	compactEdges := make([]CompactChainEdge, 0, len(edges))
+	for _, edge := range edges {
+		compactEdge := CompactChainEdge{
+			SourceID: edge.SourceID,
+			TargetID: edge.TargetID,
+			Kind:     edge.Kind,
+		}
+		if value, ok := edge.Properties["confidence"].(float64); ok {
+			compactEdge.Confidence = value
+		}
+		if value, ok := edge.Properties["declared_type"].(string); ok {
+			compactEdge.DeclaredType = value
+		}
+		// CompactSubgraphEdges stores merged lines as []int in Properties["lines"]
+		if value, ok := edge.Properties["lines"].([]int); ok {
+			compactEdge.Lines = value
+		}
+		compactEdges = append(compactEdges, compactEdge)
+	}
+	return compactEdges
 }

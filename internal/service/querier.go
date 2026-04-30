@@ -1270,6 +1270,8 @@ func (querier *Querier) traceCallChainMem(nodeID string, maxDepth int, funcMap m
 		Kind:          node.Kind,
 		FilePath:      propString(node.Properties, "file_path"),
 		Layer:         layerMap[node.ID],
+		StartLine:     propInt(node.Properties, "start_line"),
+		EndLine:       propInt(node.Properties, "end_line"),
 		IsGetter:      propBool(node.Properties, "is_getter"),
 		IsSetter:      propBool(node.Properties, "is_setter"),
 	})

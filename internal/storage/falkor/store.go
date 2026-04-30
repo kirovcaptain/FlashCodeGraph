@@ -807,15 +807,15 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 	switch direction {
 	case model.Outgoing:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch",
+			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line",
 			depth)
 	case model.Incoming:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: $nodeID}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch",
+			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: $nodeID}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line",
 			depth)
 	default:
 		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch",
+			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line",
 			depth)
 	}
 
@@ -1114,7 +1114,7 @@ func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) 
 	var parts []string
 	for _, label := range constants.BaseSymbolKinds {
 		parts = append(parts,
-			"MATCH (n:"+label+") WHERE n.name CONTAINS $searchText RETURN n.id AS id, '"+label+"' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name")
+			"MATCH (n:"+label+") WHERE n.name CONTAINS $searchText RETURN n.id AS id, '"+label+"' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name, n.start_line AS start_line, n.end_line AS end_line")
 	}
 	cypher := strings.Join(parts, " UNION ") + fmt.Sprintf(" LIMIT %d", limit)
 
@@ -1274,6 +1274,12 @@ func parseCallChainResults(rows []interface{}) []model.Node {
 		}
 		if len(cols) > 8 && cols[8] != nil {
 			props["source_branch"] = cols[8]
+		}
+		if len(cols) > 9 && cols[9] != nil {
+			props["start_line"] = cols[9]
+		}
+		if len(cols) > 10 && cols[10] != nil {
+			props["end_line"] = cols[10]
 		}
 		nodes = append(nodes, model.Node{
 			ID:         asString(cols[0]),
@@ -1497,13 +1503,24 @@ func parseSearchResults(rows []interface{}) []storage.SearchResult {
 		if !ok || len(cols) < 4 {
 			continue
 		}
-		results = append(results, storage.SearchResult{
+		result := storage.SearchResult{
 			NodeID:        asString(cols[0]),
 			Kind:          asString(cols[1]),
 			Name:          asString(cols[2]),
 			Path:          asString(safeIndex(cols, 3)),
 			QualifiedName: asString(safeIndex(cols, 4)),
-		})
+		}
+		if len(cols) > 5 && cols[5] != nil {
+			if startLine, ok := asInt(cols[5]); ok {
+				result.StartLine = startLine
+			}
+		}
+		if len(cols) > 6 && cols[6] != nil {
+			if endLine, ok := asInt(cols[6]); ok {
+				result.EndLine = endLine
+			}
+		}
+		results = append(results, result)
 	}
 	return results
 }
