@@ -38,6 +38,11 @@ type GraphStore interface {
 	QueryEdges(ctx context.Context, nodeID string, nodeKind string, relKind model.RelationKind, dir model.Direction) ([]model.Edge, error)
 	QueryAllEdges(ctx context.Context, relKind model.RelationKind, limit int) ([]model.Edge, error)
 
+	// QueryNodesByIDs returns nodes matching any of the given IDs.
+	QueryNodesByIDs(ctx context.Context, ids []string) ([]model.Node, error)
+	// QueryEdgesByNodeIDs returns edges where source (Outgoing) or target (Incoming) is in nodeIDs.
+	QueryEdgesByNodeIDs(ctx context.Context, nodeIDs []string, relKind model.RelationKind, dir model.Direction) ([]model.Edge, error)
+
 	// Graph traversal
 	TraverseCallChain(ctx context.Context, nodeID string, depth int, dir model.Direction, minConfidence float64) (*model.Subgraph, error)
 	TraverseImpact(ctx context.Context, nodeID string, depth int) (*model.Subgraph, error)

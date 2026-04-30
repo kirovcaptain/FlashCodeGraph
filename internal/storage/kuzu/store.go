@@ -634,6 +634,83 @@ func (store *Store) QueryAllEdges(_ context.Context, relKind model.RelationKind,
 	return edges, nil
 }
 
+
+// QueryNodesByIDs returns nodes matching any of the given IDs.
+func (store *Store) QueryNodesByIDs(_ context.Context, ids []string) ([]model.Node, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var nodes []model.Node
+	for _, kind := range []string{constants.KindFunction, constants.KindClass, constants.KindInterface, constants.KindRoute, constants.KindQueryNode, constants.KindAnnotation} {
+		returnClause := model.QueryReturnClause(kind)
+		query := fmt.Sprintf("MATCH (n:%s) WHERE n.id IN $ids RETURN %s", kind, returnClause)
+		result, err := store.exec(query, map[string]any{"ids": ids})
+		if err != nil {
+			continue
+		}
+		colNames := append([]string{"id"}, model.ColumnNames(kind)...)
+		for result.HasNext() {
+			row, _ := result.Next()
+			props := make(map[string]any)
+			for i, col := range colNames {
+				val, _ := row.GetValue(uint64(i))
+				if val != nil {
+					props[col] = val
+				}
+			}
+			id, _ := props["id"].(string)
+			if id == "" {
+				continue
+			}
+			delete(props, "id")
+			nodes = append(nodes, model.Node{ID: id, Kind: kind, Properties: props})
+		}
+		result.Close()
+	}
+	return nodes, nil
+}
+
+// QueryEdgesByNodeIDs returns edges where source (Outgoing) or target (Incoming) is in nodeIDs.
+func (store *Store) QueryEdgesByNodeIDs(_ context.Context, nodeIDs []string, relKind model.RelationKind, dir model.Direction) ([]model.Edge, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	relTable, sourceLabel, targetLabel := mapRelation(relKind, "")
+	if relTable == "" {
+		return nil, fmt.Errorf("kuzu: unknown relation kind: %s", relKind)
+	}
+	var query string
+	switch dir {
+	case model.Outgoing:
+		query = fmt.Sprintf("MATCH (a:%s)-[r:%s]->(b:%s) WHERE a.id IN $nodeIDs RETURN a.id, b.id, r.confidence, r.line", sourceLabel, relTable, targetLabel)
+	case model.Incoming:
+		query = fmt.Sprintf("MATCH (a:%s)-[r:%s]->(b:%s) WHERE b.id IN $nodeIDs RETURN a.id, b.id, r.confidence, r.line", sourceLabel, relTable, targetLabel)
+	default:
+		query = fmt.Sprintf("MATCH (a:%s)-[r:%s]-(b:%s) WHERE a.id IN $nodeIDs RETURN a.id, b.id, r.confidence, r.line", sourceLabel, relTable, targetLabel)
+	}
+	result, err := store.exec(query, map[string]any{"nodeIDs": nodeIDs})
+	if err != nil {
+		return nil, err
+	}
+	defer result.Close()
+	var edges []model.Edge
+	for result.HasNext() {
+		row, _ := result.Next()
+		sourceID, _ := row.GetValue(0)
+		targetID, _ := row.GetValue(1)
+		confidence, _ := row.GetValue(2)
+		line, _ := row.GetValue(3)
+		props := map[string]any{}
+		if confidence != nil {
+			props["confidence"] = confidence
+		}
+		if line != nil {
+			props["line"] = line
+		}
+		edges = append(edges, model.Edge{SourceID: fmt.Sprint(sourceID), TargetID: fmt.Sprint(targetID), Kind: relKind, Properties: props})
+	}
+	return edges, nil
+}
 // TraverseCallChain traverses CALLS relationships up to depth.
 // When minConfidence == 0, uses KùzuDB recursive query for best performance.
 // When minConfidence > 0, uses application-level BFS with per-hop confidence filtering

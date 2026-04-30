@@ -1198,33 +1198,51 @@ func (querier *Querier) QueryRouteChain(ctx context.Context, routePath string, m
 		return chain, nil
 	}
 
-	// Batch-load all data into memory for fast traversal
-	funcs, _ := querier.graphStore.QueryAllByKind(ctx, constants.KindFunction, 0)
-	funcMap := make(map[string]*model.Node, len(funcs))
-	for i := range funcs {
-		funcMap[funcs[i].ID] = &funcs[i]
+	// Load only reachable data via BFS from handler
+	handlerID := handles[0].SourceID
+	subgraph, _ := querier.graphStore.TraverseCallChain(ctx, handlerID, maxDepth, model.Outgoing, 0)
+
+	// Build funcMap from subgraph nodes + handler itself
+	funcMap := make(map[string]*model.Node, len(subgraph.Nodes)+1)
+	nodeIDs := make([]string, 0, len(subgraph.Nodes)+1)
+	nodeIDs = append(nodeIDs, handlerID)
+	for i := range subgraph.Nodes {
+		funcMap[subgraph.Nodes[i].ID] = &subgraph.Nodes[i]
+		nodeIDs = append(nodeIDs, subgraph.Nodes[i].ID)
+	}
+	if funcMap[handlerID] == nil {
+		handlerNode, _ := querier.graphStore.QueryNodeByID(ctx, handlerID)
+		if handlerNode != nil {
+			funcMap[handlerID] = handlerNode
+		}
 	}
 
-	callEdges, _ := querier.graphStore.QueryAllEdges(ctx, model.RelCalls, 0)
+	// Build childrenMap from subgraph edges
 	childrenMap := make(map[string][]string)
-	for _, edge := range callEdges {
+	for _, edge := range subgraph.Edges {
 		childrenMap[edge.SourceID] = append(childrenMap[edge.SourceID], edge.TargetID)
 	}
 
-	execEdges, _ := querier.graphStore.QueryAllEdges(ctx, model.RelExecutes, 0)
+	// Batch query EXECUTES edges for reachable nodes
+	execEdges, _ := querier.graphStore.QueryEdgesByNodeIDs(ctx, nodeIDs, model.RelExecutes, model.Outgoing)
 	execMap := make(map[string][]string)
+	var queryNodeIDs []string
 	for _, edge := range execEdges {
 		execMap[edge.SourceID] = append(execMap[edge.SourceID], edge.TargetID)
+		queryNodeIDs = append(queryNodeIDs, edge.TargetID)
 	}
 
-	queryNodes, _ := querier.graphStore.QueryAllByKind(ctx, constants.KindQueryNode, 0)
-	queryMap := make(map[string]*model.Node, len(queryNodes))
-	for i := range queryNodes {
-		queryMap[queryNodes[i].ID] = &queryNodes[i]
+	// Batch query QueryNode properties
+	queryMap := make(map[string]*model.Node)
+	if len(queryNodeIDs) > 0 {
+		queryNodes, _ := querier.graphStore.QueryNodesByIDs(ctx, queryNodeIDs)
+		for i := range queryNodes {
+			queryMap[queryNodes[i].ID] = &queryNodes[i]
+		}
 	}
 
-	// Build layer map using batch-loaded data
-	layerMap := querier.buildLayerMapBatch(ctx, funcs)
+	// Build layer map for reachable nodes only
+	layerMap := querier.buildLayerMapForNodes(ctx, funcMap)
 
 	// DFS traversal in memory
 	visited := map[string]bool{}
@@ -1335,6 +1353,53 @@ func (querier *Querier) buildLayerMapBatch(ctx context.Context, funcs []model.No
 	return m
 }
 
+
+// buildLayerMapForNodes builds a layer map for a specific set of function nodes.
+func (querier *Querier) buildLayerMapForNodes(ctx context.Context, funcMap map[string]*model.Node) map[string]string {
+	layerMap := map[string]string{}
+	fileNodes := map[string][]string{} // filePath → []nodeID
+	for id, node := range funcMap {
+		filePath := propString(node.Properties, "file_path")
+		if filePath != "" {
+			fileNodes[filePath] = append(fileNodes[filePath], id)
+		}
+		edges, err := querier.graphStore.QueryEdges(ctx, id, constants.KindFunction, model.RelHasAnnotation, model.Outgoing)
+		if err != nil {
+			continue
+		}
+		for _, edge := range edges {
+			ann, err := querier.graphStore.QueryNodeByID(ctx, edge.TargetID)
+			if err != nil || ann == nil {
+				continue
+			}
+			if layer := propString(ann.Properties, "layer"); layer != "" {
+				layerMap[id] = layer
+				break
+			}
+		}
+	}
+	for filePath, nodeIDs := range fileNodes {
+		fileClasses, _ := querier.graphStore.QueryNodesByProperty(ctx, constants.KindClass, "file_path", filePath, storage.MatchExact, 0)
+		for _, cls := range fileClasses {
+			edges, _ := querier.graphStore.QueryEdges(ctx, cls.ID, constants.KindClass, model.RelHasAnnotation, model.Outgoing)
+			for _, edge := range edges {
+				ann, _ := querier.graphStore.QueryNodeByID(ctx, edge.TargetID)
+				if ann == nil {
+					continue
+				}
+				if layer := propString(ann.Properties, "layer"); layer != "" {
+					for _, nodeID := range nodeIDs {
+						if _, exists := layerMap[nodeID]; !exists {
+							layerMap[nodeID] = layer
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+	return layerMap
+}
 // AffectedRoute represents an entry point affected by a code change.
 type AffectedRoute struct {
 	Method        string `json:"method,omitempty"`

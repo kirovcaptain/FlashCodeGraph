@@ -697,6 +697,103 @@ func (store *Store) QueryAllEdges(ctx context.Context, relKind model.RelationKin
 	return edges, nil
 }
 
+// QueryNodesByIDs returns nodes matching any of the given IDs.
+func (store *Store) QueryNodesByIDs(ctx context.Context, ids []string) ([]model.Node, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	cypher := "MATCH (n) WHERE n.id IN $ids RETURN n.id, labels(n)[0], properties(n)"
+	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"ids", ids}})
+	if err != nil {
+		return nil, err
+	}
+	return parseGenericNodeResults(rows), nil
+}
+
+// QueryEdgesByNodeIDs returns edges where source (Outgoing) or target (Incoming) is in nodeIDs.
+func (store *Store) QueryEdgesByNodeIDs(ctx context.Context, nodeIDs []string, relKind model.RelationKind, dir model.Direction) ([]model.Edge, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	relType := mapRelationType(relKind)
+	var cypher string
+	switch dir {
+	case model.Outgoing:
+		cypher = fmt.Sprintf("MATCH (a)-[r:%s]->(b) WHERE a.id IN $nodeIDs RETURN a.id, b.id, type(r), properties(r)", relType)
+	case model.Incoming:
+		cypher = fmt.Sprintf("MATCH (a)-[r:%s]->(b) WHERE b.id IN $nodeIDs RETURN a.id, b.id, type(r), properties(r)", relType)
+	default:
+		cypher = fmt.Sprintf("MATCH (a)-[r:%s]-(b) WHERE a.id IN $nodeIDs RETURN a.id, b.id, type(r), properties(r)", relType)
+	}
+	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeIDs", nodeIDs}})
+	if err != nil {
+		return nil, err
+	}
+	return parseBatchEdgeResults(rows, relKind), nil
+}
+
+// parseGenericNodeResults parses node query results into model.Node slice.
+func parseGenericNodeResults(rows []interface{}) []model.Node {
+	if len(rows) < 2 {
+		return nil
+	}
+	dataRows, ok := rows[1].([]interface{})
+	if !ok {
+		return nil
+	}
+	var nodes []model.Node
+	for _, row := range dataRows {
+		rowSlice, ok := row.([]interface{})
+		if !ok || len(rowSlice) < 3 {
+			continue
+		}
+		id, _ := rowSlice[0].(string)
+		kind, _ := rowSlice[1].(string)
+		props, _ := rowSlice[2].(map[string]interface{})
+		if id == "" {
+			continue
+		}
+		node := model.Node{ID: id, Kind: kind, Properties: make(map[string]any)}
+		for k, v := range props {
+			node.Properties[k] = v
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+// parseBatchEdgeResults parses edge query results into model.Edge slice.
+func parseBatchEdgeResults(rows []interface{}, defaultKind model.RelationKind) []model.Edge {
+	if len(rows) < 2 {
+		return nil
+	}
+	dataRows, ok := rows[1].([]interface{})
+	if !ok {
+		return nil
+	}
+	var edges []model.Edge
+	for _, row := range dataRows {
+		rowSlice, ok := row.([]interface{})
+		if !ok || len(rowSlice) < 4 {
+			continue
+		}
+		sourceID, _ := rowSlice[0].(string)
+		targetID, _ := rowSlice[1].(string)
+		relType, _ := rowSlice[2].(string)
+		props, _ := rowSlice[3].(map[string]interface{})
+		kind := defaultKind
+		if relType != "" {
+			kind = model.RelationKind(relType)
+		}
+		edge := model.Edge{SourceID: sourceID, TargetID: targetID, Kind: kind, Properties: make(map[string]any)}
+		for k, v := range props {
+			edge.Properties[k] = v
+		}
+		edges = append(edges, edge)
+	}
+	return edges
+}
+
 // TraverseCallChain traverses the call graph from nodeID up to the given depth.
 // Note: the returned Nodes contain only reachable neighbors (callees/callers),
 // NOT the root node itself. The root nodeID is included in the edge query so
