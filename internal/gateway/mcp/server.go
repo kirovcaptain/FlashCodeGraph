@@ -156,7 +156,7 @@ func (srv *Server) registerTools() {
 	), srv.handleQuerySymbol)
 
 	srv.mcpServer.AddTool(mcp.NewTool("query_call_chain",
-		mcp.WithDescription("Query the call chain of a function — what it calls (callees) or who calls it (callers with reverse=true). Use this to understand code flow, trace execution paths, or find dependencies."),
+		mcp.WithDescription("Query the call chain of a function — what it calls (callees) or who calls it (callers with reverse=true). Use this to understand code flow, trace execution paths, or find dependencies. When depth truncates the traversal, the response includes 'truncated_nodes' listing boundary nodes with their unexpanded callee count — use this to decide whether to query deeper."),
 		mcp.WithString("function", mcp.Required(), mcp.Description("Function name")),
 		mcp.WithNumber("depth", mcp.Description("Max traversal depth (default 3)")),
 		mcp.WithNumber("min_confidence", mcp.Description("Min confidence filter (default 0)")),
