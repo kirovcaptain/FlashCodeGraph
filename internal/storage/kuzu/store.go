@@ -148,6 +148,8 @@ func (store *Store) mergeNode(label, id string, props map[string]any) error {
 	result.Close()
 
 	// Build a single SET statement with all properties
+	// JSON round-trip normalizes Go types for kuzu driver parameter binding
+	// (e.g. int→float64, []string→[]any). Do NOT remove without verifying driver type support.
 	propsJSON, _ := json.Marshal(props)
 	var propsMap map[string]any
 	json.Unmarshal(propsJSON, &propsMap)
@@ -197,6 +199,8 @@ func (store *Store) createNode(label, id string, props map[string]any) error {
 		validCols[col.Name] = true
 	}
 
+	// JSON round-trip normalizes Go types for kuzu driver parameter binding
+	// (e.g. int→float64, []string→[]any). Do NOT remove without verifying driver type support.
 	propsJSON, _ := json.Marshal(props)
 	var propsMap map[string]any
 	json.Unmarshal(propsJSON, &propsMap)
