@@ -4,10 +4,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is set at build time via -ldflags.
+var version = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:     "fcg",
 	Short:   "FlashCodeGraph — code knowledge graph",
-	Version: "0.1.0",
+	Version: version,
 }
 
 func init() {
