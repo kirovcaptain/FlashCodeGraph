@@ -206,7 +206,7 @@ func (srv *Server) registerTools() {
 	), srv.handleOverview)
 
 	srv.mcpServer.AddTool(mcp.NewTool("query_dependencies",
-		mcp.WithDescription("Query inheritance and dependency relationships for a symbol — IMPORTS, EXTENDS, IMPLEMENTS edges. Use this to understand class hierarchy and module dependencies."),
+		mcp.WithDescription("Query relationships for a symbol — CALLS, IMPORTS, EXTENDS, IMPLEMENTS edges. Use this to understand class hierarchy, module dependencies, and direct call relationships."),
 		mcp.WithString("symbol", mcp.Required(), mcp.Description("Symbol name")),
 		mcp.WithString("kind", mcp.Description("Relation kind: IMPORTS, EXTENDS, IMPLEMENTS, CALLS (default CALLS)")),
 		mcp.WithBoolean("reverse", mcp.Description("Show incoming instead of outgoing")),
@@ -264,7 +264,7 @@ func (srv *Server) registerTools() {
 	), srv.handleQueryEntryPoints)
 
 	srv.mcpServer.AddTool(mcp.NewTool("query_call_forest",
-		mcp.WithDescription("Query call forest from entry points with tree structure"),
+		mcp.WithDescription("Query call forest from entry points with tree structure. Use this to visualize full call trees rooted at HTTP endpoints, CLI commands, or other entry points detected by analyze_repository."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the repository")),
 		mcp.WithString("type", mcp.Description("Filter entry type")),
 		mcp.WithNumber("depth", mcp.Description("Max tree depth (default: 5)")),
