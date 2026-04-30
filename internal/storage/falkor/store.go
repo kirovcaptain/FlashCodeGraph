@@ -855,7 +855,12 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 	// How: BFS computes each node's shortest distance from root. An edge is kept only if its
 	// upstream node (source for outgoing, target for incoming) is within depth-1 hops,
 	// ensuring it represents a valid parent→child relationship within the requested depth.
-	subgraph.Edges = filterEdgesByDepth(nodeID, subgraph.Edges, depth, direction)
+	var boundaryIDs []string
+	subgraph.Edges, boundaryIDs = filterEdgesByDepth(nodeID, subgraph.Edges, depth, direction)
+
+	if len(boundaryIDs) > 0 {
+		subgraph.TruncatedNodes = store.queryTruncatedNodes(ctx, boundaryIDs, idList, direction)
+	}
 
 	return subgraph, nil
 }
@@ -865,13 +870,54 @@ func (store *Store) TraverseImpact(ctx context.Context, nodeID string, depth int
 	return store.TraverseCallChain(ctx, nodeID, depth, model.Incoming, 0)
 }
 
+// queryTruncatedNodes queries boundary nodes to find how many callees are not expanded.
+func (store *Store) queryTruncatedNodes(ctx context.Context, boundaryIDs []string, existingIDs []string, direction model.Direction) []string {
+	var cypher string
+	switch direction {
+	case model.Incoming:
+		cypher = "MATCH (a:Function)-[:CALLS|DISPATCHES]->(b:Function) WHERE b.id IN $boundaryIDs AND NOT a.id IN $existingIDs RETURN b.id, b.qualified_name, count(a)"
+	default:
+		cypher = "MATCH (a:Function)-[:CALLS|DISPATCHES]->(b:Function) WHERE a.id IN $boundaryIDs AND NOT b.id IN $existingIDs RETURN a.id, a.qualified_name, count(b)"
+	}
+	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{
+		{"boundaryIDs", boundaryIDs},
+		{"existingIDs", existingIDs},
+	})
+	if err != nil {
+		return nil
+	}
+	var truncated []string
+	if len(rows) < 2 {
+		return nil
+	}
+	dataRows, ok := rows[1].([]interface{})
+	if !ok {
+		return nil
+	}
+	for _, row := range dataRows {
+		cols, ok := row.([]interface{})
+		if !ok || len(cols) < 3 {
+			continue
+		}
+		qualifiedName, _ := cols[1].(string)
+		count := 0
+		if n, ok := model.ToInt(cols[2]); ok {
+			count = n
+		}
+		if count > 0 && qualifiedName != "" {
+			truncated = append(truncated, fmt.Sprintf("%s (%d direct callees not expanded)", qualifiedName, count))
+		}
+	}
+	return truncated
+}
+
 // filterEdgesByDepth uses BFS from rootID to compute each node's shortest distance,
 // then keeps only edges where the source (for outgoing) or target (for incoming) is
 // within depth-1 hops from root. This prevents returning edges between nodes at the
 // same depth level (which would represent deeper relationships).
-func filterEdgesByDepth(rootID string, edges []model.Edge, depth int, direction model.Direction) []model.Edge {
+func filterEdgesByDepth(rootID string, edges []model.Edge, depth int, direction model.Direction) ([]model.Edge, []string) {
 	if len(edges) == 0 {
-		return edges
+		return edges, nil
 	}
 
 	// Build adjacency list from edges
@@ -906,6 +952,14 @@ func filterEdgesByDepth(rootID string, edges []model.Edge, depth int, direction 
 		}
 	}
 
+	// Collect boundary node IDs (nodes at exactly max depth)
+	var boundaryIDs []string
+	for id, level := range nodeLevel {
+		if id != rootID && level == depth {
+			boundaryIDs = append(boundaryIDs, id)
+		}
+	}
+
 	// Filter: keep edges where the "upstream" node is within depth-1
 	var filtered []model.Edge
 	for _, edge := range edges {
@@ -926,7 +980,7 @@ func filterEdgesByDepth(rootID string, edges []model.Edge, depth int, direction 
 			}
 		}
 	}
-	return filtered
+	return filtered, boundaryIDs
 }
 
 // BatchUpdateNodeProperties updates properties on multiple nodes using UNWIND.

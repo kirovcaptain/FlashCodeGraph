@@ -366,7 +366,14 @@ func FilterSubgraphByDeclaredType(sg *model.Subgraph, rootNodeID string, classNa
 			filteredNodes = append(filteredNodes, n)
 		}
 	}
-	return &model.Subgraph{Nodes: filteredNodes, Edges: filteredEdges}
+	// Build excluded set for truncated nodes filtering
+	excludedByDeclType := map[string]bool{}
+	for _, n := range sg.Nodes {
+		if !reachable[n.ID] {
+			excludedByDeclType[n.ID] = true
+		}
+	}
+	return &model.Subgraph{Nodes: filteredNodes, Edges: filteredEdges, TruncatedNodes: filterTruncatedNodes(sg.TruncatedNodes, excludedByDeclType, sg.Nodes)}
 }
 
 func (querier *Querier) QueryCallChain(ctx context.Context, symbolName string, direction model.Direction, depth int, minConfidence float64) (*model.Subgraph, error) {
@@ -445,6 +452,31 @@ func (querier *Querier) QueryCallChainByNodeID(ctx context.Context, nodeID strin
 	return querier.graphStore.TraverseCallChain(ctx, nodeID, depth, direction, minConfidence)
 }
 
+// filterTruncatedNodes removes truncated entries whose qualified_name matches any excluded node.
+func filterTruncatedNodes(truncated []string, excluded map[string]bool, nodes []model.Node) []string {
+	if len(truncated) == 0 || len(excluded) == 0 {
+		return truncated
+	}
+	excludedQN := map[string]bool{}
+	for _, n := range nodes {
+		if excluded[n.ID] {
+			if qn, _ := n.Properties["qualified_name"].(string); qn != "" {
+				excludedQN[qn] = true
+			}
+		}
+	}
+	var filtered []string
+	for _, entry := range truncated {
+		if idx := strings.Index(entry, " ("); idx > 0 {
+			if excludedQN[entry[:idx]] {
+				continue
+			}
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
 // FilterCoreSubgraph removes accessor (is_getter/is_setter) and external (file_path=="[external]") nodes
 // and their associated edges from a subgraph, returning a simplified core call chain.
 func FilterCoreSubgraph(sg *model.Subgraph) *model.Subgraph {
@@ -471,7 +503,7 @@ func FilterCoreSubgraph(sg *model.Subgraph) *model.Subgraph {
 			edges = append(edges, e)
 		}
 	}
-	return &model.Subgraph{Nodes: nodes, Edges: edges}
+	return &model.Subgraph{Nodes: nodes, Edges: edges, TruncatedNodes: filterTruncatedNodes(sg.TruncatedNodes, excluded, sg.Nodes)}
 }
 
 // FilterCoreRouteChain removes accessor and external nodes from a route chain.
@@ -620,7 +652,7 @@ func PruneDeclaredTypeDispatches(sg *model.Subgraph) *model.Subgraph {
 			nodes = append(nodes, n)
 		}
 	}
-	return &model.Subgraph{Nodes: nodes, Edges: edges}
+	return &model.Subgraph{Nodes: nodes, Edges: edges, TruncatedNodes: filterTruncatedNodes(sg.TruncatedNodes, excludedNodes, sg.Nodes)}
 }
 // logMethodNames is the set of method names considered as logging calls for dry mode filtering.
 var logMethodNames = map[string]bool{
@@ -736,6 +768,7 @@ func FilterDrySubgraph(sg *model.Subgraph) *model.Subgraph {
 		}
 		// Orphan check: node must be referenced by an edge OR be the only node (root)
 		if len(edges) > 0 && !referenced[n.ID] {
+			excluded[n.ID] = true
 			continue
 		}
 		// Trim node properties
@@ -745,7 +778,7 @@ func FilterDrySubgraph(sg *model.Subgraph) *model.Subgraph {
 		}
 		nodes = append(nodes, n)
 	}
-	return &model.Subgraph{Nodes: nodes, Edges: edges}
+	return &model.Subgraph{Nodes: nodes, Edges: edges, TruncatedNodes: filterTruncatedNodes(sg.TruncatedNodes, excluded, sg.Nodes)}
 }
 
 // CompactSubgraphEdges merges duplicate edges (same source_id + target_id + kind) into
@@ -819,7 +852,7 @@ func CompactSubgraphEdges(sg *model.Subgraph) *model.Subgraph {
 		edges = append(edges, merged)
 	}
 
-	return &model.Subgraph{Nodes: sg.Nodes, Edges: edges}
+	return &model.Subgraph{Nodes: sg.Nodes, Edges: edges, TruncatedNodes: sg.TruncatedNodes}
 }
 
 // toInt converts a numeric value to int, handling float64 (from JSON) and int.

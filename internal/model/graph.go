@@ -63,8 +63,9 @@ type QueryOpts struct {
 
 // Subgraph is a partial graph result.
 type Subgraph struct {
-	Nodes []Node `json:"nodes"`
-	Edges []Edge `json:"edges"`
+	Nodes          []Node   `json:"nodes"`
+	Edges          []Edge   `json:"edges"`
+	TruncatedNodes []string `json:"truncated_nodes,omitempty"`
 }
 
 // GraphStats holds aggregate statistics.

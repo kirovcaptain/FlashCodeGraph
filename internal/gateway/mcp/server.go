@@ -435,14 +435,16 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	var resultJSON []byte
 	if mode == "compact" {
 		resultJSON, _ = json.Marshal(struct {
-			Nodes []model.Node             `json:"nodes"`
-			Edges []model.CompactChainEdge `json:"edges"`
-		}{Nodes: subgraph.Nodes, Edges: model.EdgesToCompactChainEdges(subgraph.Edges)})
+			Nodes          []model.Node             `json:"nodes"`
+			Edges          []model.CompactChainEdge `json:"edges"`
+			TruncatedNodes []string                 `json:"truncated_nodes,omitempty"`
+		}{Nodes: subgraph.Nodes, Edges: model.EdgesToCompactChainEdges(subgraph.Edges), TruncatedNodes: subgraph.TruncatedNodes})
 	} else {
 		resultJSON, _ = json.Marshal(struct {
-			Nodes []model.Node      `json:"nodes"`
-			Edges []model.ChainEdge `json:"edges"`
-		}{Nodes: subgraph.Nodes, Edges: model.EdgesToChainEdges(subgraph.Edges)})
+			Nodes          []model.Node      `json:"nodes"`
+			Edges          []model.ChainEdge `json:"edges"`
+			TruncatedNodes []string          `json:"truncated_nodes,omitempty"`
+		}{Nodes: subgraph.Nodes, Edges: model.EdgesToChainEdges(subgraph.Edges), TruncatedNodes: subgraph.TruncatedNodes})
 	}
 	result := injectWarning(resultJSON, warning)
 	var hint string

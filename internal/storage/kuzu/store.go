@@ -820,6 +820,38 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 		}
 		queue = nextQueue
 	}
+
+	// Detect truncated nodes: queue now contains depth-layer nodes whose callees were not explored
+	if len(queue) > 0 {
+		qnByID := map[string]string{}
+		for _, n := range subgraph.Nodes {
+			if qn, _ := n.Properties["qualified_name"].(string); qn != "" {
+				qnByID[n.ID] = qn
+			}
+		}
+		for _, boundaryID := range queue {
+			result, err := store.exec(queryTemplate, map[string]any{"id": boundaryID, "minConf": minConfidence})
+			if err != nil {
+				continue
+			}
+			remainingCount := 0
+			for result.HasNext() {
+				row, _ := result.Next()
+				neighborID, _ := row.GetValue(1)
+				if !visited[fmt.Sprint(neighborID)] {
+					remainingCount++
+				}
+			}
+			result.Close()
+			if remainingCount > 0 {
+				if qn := qnByID[boundaryID]; qn != "" {
+					subgraph.TruncatedNodes = append(subgraph.TruncatedNodes,
+						fmt.Sprintf("%s (%d direct callees not expanded)", qn, remainingCount))
+				}
+			}
+		}
+	}
+
 	return subgraph, nil
 }
 
