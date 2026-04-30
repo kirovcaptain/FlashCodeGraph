@@ -87,7 +87,7 @@ func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string
 
 // QueryByLayer returns symbols annotated with a specific layer (controller/service/repository/model).
 func (querier *Querier) QueryByLayer(ctx context.Context, layer string, limit int) ([]model.Node, error) {
-	annotations, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindAnnotation, "layer", layer, "exact", 0)
+	annotations, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindAnnotation, "layer", layer, storage.MatchExact, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (querier *Querier) QueryByLayer(ctx context.Context, layer string, limit in
 
 // QueryByAnnotationCategory returns symbols annotated with a specific category (security/behavior/etc).
 func (querier *Querier) QueryByAnnotationCategory(ctx context.Context, category string, limit int) ([]model.Node, error) {
-	annotations, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindAnnotation, "category", category, "exact", 0)
+	annotations, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindAnnotation, "category", category, storage.MatchExact, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -536,6 +536,11 @@ func PruneDeclaredTypeDispatches(sg *model.Subgraph) *model.Subgraph {
 		declaredTypePrefixes[e.TargetID][declaredType+"."] = true
 	}
 
+	nodeByID := make(map[string]*model.Node, len(sg.Nodes))
+	for i := range sg.Nodes {
+		nodeByID[sg.Nodes[i].ID] = &sg.Nodes[i]
+	}
+
 	prunedDispatchEdges := map[string]bool{} // "sourceID→targetID" of pruned DISPATCHES edges
 	for _, e := range sg.Edges {
 		if e.Kind != model.RelDispatches {
@@ -546,11 +551,8 @@ func PruneDeclaredTypeDispatches(sg *model.Subgraph) *model.Subgraph {
 			continue
 		}
 		targetQN := ""
-		for _, n := range sg.Nodes {
-			if n.ID == e.TargetID {
-				targetQN, _ = n.Properties["qualified_name"].(string)
-				break
-			}
+		if n, ok := nodeByID[e.TargetID]; ok {
+			targetQN, _ = n.Properties["qualified_name"].(string)
 		}
 		matched := false
 		for prefix := range prefixes {
@@ -1121,7 +1123,7 @@ func (querier *Querier) Report(ctx context.Context) (*model.GraphReport, error) 
 // Returns error with candidate list if multiple routes match via contains.
 func (querier *Querier) findRouteNode(ctx context.Context, routePath string, method string) (*model.Node, error) {
 	// 1. Exact match
-	exactMatches, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindRoute, "path_pattern", routePath, "exact", 0)
+	exactMatches, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindRoute, "path_pattern", routePath, storage.MatchExact, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -1130,7 +1132,7 @@ func (querier *Querier) findRouteNode(ctx context.Context, routePath string, met
 	}
 
 	// 2. Contains fallback
-	containsMatches, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindRoute, "path_pattern", routePath, "contains", 0)
+	containsMatches, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindRoute, "path_pattern", routePath, storage.MatchContains, 0)
 	if err != nil {
 		return nil, err
 	}

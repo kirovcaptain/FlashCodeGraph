@@ -839,9 +839,13 @@ func (store *Store) QueryNodesByProperty(_ context.Context, kind string, key str
 	colNames := append([]string{"id"}, model.ColumnNames(kind)...)
 
 	var whereClause string
+	params := map[string]any{"propertyValue": value}
 	switch matchMode {
-	case "contains":
+	case storage.MatchContains:
 		whereClause = fmt.Sprintf("WHERE n.%s CONTAINS $propertyValue", key)
+	case storage.MatchNotEmpty:
+		whereClause = fmt.Sprintf("WHERE n.%s IS NOT NULL AND n.%s <> ''", key, key)
+		params = map[string]any{}
 	default: // exact
 		whereClause = fmt.Sprintf("WHERE n.%s = $propertyValue", key)
 	}
@@ -850,7 +854,7 @@ func (store *Store) QueryNodesByProperty(_ context.Context, kind string, key str
 		limitClause = fmt.Sprintf(" LIMIT %d", limit)
 	}
 	query := fmt.Sprintf("MATCH (n:%s) %s RETURN %s%s", kind, whereClause, returnClause, limitClause)
-	result, err := store.exec(query, map[string]any{"propertyValue": value})
+	result, err := store.exec(query, params)
 	if err != nil {
 		return nil, err
 	}

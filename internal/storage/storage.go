@@ -8,6 +8,13 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
+// Match modes for QueryNodesByProperty.
+const (
+	MatchExact    = "exact"
+	MatchContains = "contains"
+	MatchNotEmpty = "not_empty"
+)
+
 // GraphStore is the interface for graph data persistence.
 type GraphStore interface {
 	// Write
@@ -41,7 +48,7 @@ type GraphStore interface {
 	QueryAllByKind(ctx context.Context, kind string, limit int) ([]model.Node, error)
 
 	// QueryNodesByProperty returns nodes of a specific kind where the given property matches the value.
-	// matchMode controls matching: "exact" for equality, "contains" for substring match.
+	// matchMode: MatchExact, MatchContains, or MatchNotEmpty.
 	QueryNodesByProperty(ctx context.Context, kind string, key string, value string, matchMode string, limit int) ([]model.Node, error)
 
 	// QueryNodesByFile returns Function, Class, and Interface nodes in a file (for locate_function).

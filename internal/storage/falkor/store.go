@@ -946,18 +946,23 @@ func (store *Store) QueryAllByKind(ctx context.Context, kind string, limit int) 
 func (store *Store) QueryNodesByProperty(ctx context.Context, kind string, key string, value string, matchMode string, limit int) ([]model.Node, error) {
 	returnClause := model.QueryReturnClause(kind)
 	var whereClause string
+	var params []cypherParam
 	switch matchMode {
-	case "contains":
+	case storage.MatchContains:
 		whereClause = fmt.Sprintf("WHERE n.%s CONTAINS $propertyValue", key)
+		params = []cypherParam{{"propertyValue", value}}
+	case storage.MatchNotEmpty:
+		whereClause = fmt.Sprintf("WHERE n.%s IS NOT NULL AND n.%s <> ''", key, key)
 	default: // exact
 		whereClause = fmt.Sprintf("WHERE n.%s = $propertyValue", key)
+		params = []cypherParam{{"propertyValue", value}}
 	}
 	limitClause := ""
 	if limit > 0 {
 		limitClause = fmt.Sprintf(" LIMIT %d", limit)
 	}
 	cypher := "MATCH (n:" + kind + ") " + whereClause + " RETURN " + returnClause + limitClause
-	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"propertyValue", value}})
+	rows, err := store.queryWithParams(ctx, cypher, params)
 	if err != nil {
 		return nil, err
 	}

@@ -897,31 +897,26 @@ func (srv *Server) handleQueryEntryPoints(ctx context.Context, request mcp.CallT
 	}
 	defer store.Close()
 
-	nodes, err := store.QueryAllByKind(ctx, constants.KindFunction, 0)
+	var nodes []model.Node
+	if entryType != "" {
+		nodes, err = store.QueryNodesByProperty(ctx, constants.KindFunction, "entry_type", entryType, storage.MatchExact, limit)
+	} else {
+		nodes, err = store.QueryNodesByProperty(ctx, constants.KindFunction, "entry_type", "", storage.MatchNotEmpty, limit)
+	}
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	var results []map[string]any
+	results := make([]map[string]any, 0, len(nodes))
 	for _, n := range nodes {
-		et, _ := n.Properties["entry_type"].(string)
-		if et == "" {
-			continue
-		}
-		if entryType != "" && et != entryType {
-			continue
-		}
 		results = append(results, map[string]any{
 			"id":             n.ID,
 			"name":           n.Properties["name"],
 			"qualified_name": n.Properties["qualified_name"],
 			"file_path":      n.Properties["file_path"],
-			"entry_type":     et,
+			"entry_type":     n.Properties["entry_type"],
 			"score":          n.Properties["entry_point_score"],
 		})
-		if limit > 0 && len(results) >= limit {
-			break
-		}
 	}
 
 	data, _ := json.Marshal(results)
@@ -951,7 +946,12 @@ func (srv *Server) handleQueryCallForest(ctx context.Context, request mcp.CallTo
 	}
 
 	// Read persisted entry points instead of re-classifying
-	funcs, err := store.QueryAllByKind(ctx, constants.KindFunction, 0)
+	var funcs []model.Node
+	if entryType != "" {
+		funcs, err = store.QueryNodesByProperty(ctx, constants.KindFunction, "entry_type", entryType, storage.MatchExact, 0)
+	} else {
+		funcs, err = store.QueryNodesByProperty(ctx, constants.KindFunction, "entry_type", "", storage.MatchNotEmpty, 0)
+	}
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -960,10 +960,7 @@ func (srv *Server) handleQueryCallForest(ctx context.Context, request mcp.CallTo
 	var trees []map[string]any
 	for _, f := range funcs {
 		et, _ := f.Properties["entry_type"].(string)
-		if et == "" || et == "suspected_dead" {
-			continue
-		}
-		if entryType != "" && et != entryType {
+		if et == "suspected_dead" {
 			continue
 		}
 		name, _ := f.Properties["name"].(string)
