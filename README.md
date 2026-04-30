@@ -31,8 +31,8 @@ Code understanding should be as fast as a database query. FCG aims to be the **s
 ## Quick Start
 
 ```bash
-# Interactive project setup (generates .fcg/config.toml)
-fcg setup
+# Initialize global config (storage backend selection)
+fcg init
 
 # Index a project
 fcg index /path/to/project
@@ -86,6 +86,7 @@ Rust, C, C++, C#, Ruby, PHP
 | Querying | `fcg routes` | List all HTTP routes |
 | Querying | `fcg analyze [scope]` | Detect entry points and trace processes |
 | Querying | `fcg list-entries [type]` | List detected entry points |
+| Management | `fcg init` | Initialize global configuration (~/.fcg/config.toml) |
 | Management | `fcg setup [path]` | Interactive project setup — generates `.fcg/config.toml` |
 | Management | `fcg overview` | Show project statistics |
 | Management | `fcg status` | Show index status for current project |
