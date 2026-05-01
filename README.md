@@ -305,10 +305,10 @@ The MCP Server exposes the following tools for AI agent integration:
 | `index_repository` | Index a code repository to build the knowledge graph |
 | `check_index_status` | Check if index is up-to-date, returns added/modified/deleted file counts |
 | `query_symbol` | Find symbol by exact name, returns file path, kind, and properties |
-| `query_call_chain` | Traverse call chain — callees or callers with depth/confidence/mode control |
+| `query_call_chain` | Traverse call chain — callees or callers with depth/confidence/mode control. Returns `truncated_nodes` when depth truncates traversal |
 | `query_cross_chain` | Query cross-service call relationships — aggregated by target project, protocol, and routes |
-| `query_class_members` | List all fields and methods of a class |
-| `query_dependencies` | Query IMPORTS/EXTENDS/IMPLEMENTS/CALLS edges for a symbol |
+| `query_class_members` | List all fields and methods of a class or interface |
+| `query_dependencies` | Query IMPORTS/EXTENDS/IMPLEMENTS/CALLS edges for a symbol, returns edges with node info |
 | `query_by_annotation` | Find symbols by annotation name and optional params filter |
 | `query_by_layer` | Find symbols by architectural layer (controller/service/repository/model) |
 | `query_routes` | List all HTTP routes in a project |
@@ -334,6 +334,9 @@ type = "maven"          # maven | gradle | npm | go | cargo | dotnet
 
 [storage]
 database = "falkordb"   # falkordb | kuzu
+
+[cross_project_index]
+backend = "json"        # json (default) | sqlite
 
 [index]
 max_file_size = 524288  # skip files > 512KB
@@ -378,6 +381,7 @@ See [docs/architecture.md](docs/architecture.md) for detailed architecture docum
 CGO dependencies (linked automatically via Go modules):
 - **tree-sitter** + language grammars (C) — AST parsing
 - **go-kuzu** (C++) — KùzuDB embedded storage backend
+- **go-sqlite3** (C) — SQLite cross-project index backend
 
 ### Build
 
