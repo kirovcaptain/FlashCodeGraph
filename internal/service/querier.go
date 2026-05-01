@@ -226,7 +226,7 @@ func (querier *Querier) ResolveFunctionWithInheritance(ctx context.Context, name
 	}
 
 	// Find the child class node
-	classNodes, err := querier.graphStore.QueryNodesByName(ctx, childClassShortName, model.QueryOpts{Kinds: []string{constants.KindClass}, Limit: 10})
+	classNodes, err := querier.graphStore.QueryNodesByName(ctx, childClassShortName, model.QueryOpts{Kinds: []string{constants.KindClass, constants.KindInterface}, Limit: 10})
 	if err != nil || len(classNodes) == 0 {
 		return nil, nil, "", err
 	}
@@ -901,18 +901,18 @@ func (querier *Querier) ImpactAnalysis(ctx context.Context, symbolName string, d
 // Supports short name ("Store") and qualified name ("falkor.Store").
 // Returns (methods, nil, nil) on unique match.
 // Returns (nil, candidates, nil) when multiple classes match.
-func (querier *Querier) QueryClassMembers(ctx context.Context, className string, limit int) ([]model.Node, []model.Node, []model.FieldInfo, error) {
+func (querier *Querier) QueryClassMembers(ctx context.Context, className string, limit int) ([]model.Node, []model.Node, []model.FieldInfo, string, error) {
 	searchName := className
 	if strings.Contains(className, ".") {
 		searchName = className[strings.LastIndex(className, ".")+1:]
 	}
 
 	classNodes, err := querier.graphStore.QueryNodesByName(ctx, searchName, model.QueryOpts{
-		Kinds: []string{constants.KindClass},
+		Kinds: []string{constants.KindClass, constants.KindInterface},
 		Limit: 20,
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 
 	if strings.Contains(className, ".") {
@@ -927,15 +927,15 @@ func (querier *Querier) QueryClassMembers(ctx context.Context, className string,
 	}
 
 	if len(classNodes) == 0 {
-		return nil, nil, nil, nil
+		return nil, nil, nil, "", nil
 	}
 	if len(classNodes) > 1 {
-		return nil, classNodes, nil, nil
+		return nil, classNodes, nil, "", nil
 	}
 
 	edges, err := querier.graphStore.QueryEdges(ctx, classNodes[0].ID, classNodes[0].Kind, model.RelContains, model.Outgoing)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	var methods []model.Node
 	for _, edge := range edges {
@@ -954,7 +954,8 @@ func (querier *Querier) QueryClassMembers(ctx context.Context, className string,
 	if fieldsJSON, ok := classNodes[0].Properties["fields"].(string); ok && fieldsJSON != "" && fieldsJSON != "null" {
 		_ = json.Unmarshal([]byte(fieldsJSON), &fields)
 	}
-	return methods, nil, fields, nil}
+	return methods, nil, fields, classNodes[0].Kind, nil
+}
 
 // SearchFTS performs full-text search.
 func (querier *Querier) SearchFTS(ctx context.Context, query string, limit int) ([]storage.SearchResult, error) {

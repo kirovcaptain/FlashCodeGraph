@@ -259,7 +259,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 
 	// --members: list fields and methods of a class
 	if queryMembers {
-		methods, candidates, _, err := querier.QueryClassMembers(ctx, args[0], queryLimit)
+		methods, candidates, _, _, err := querier.QueryClassMembers(ctx, args[0], queryLimit)
 		if err != nil {
 			return err
 		}

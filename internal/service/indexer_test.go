@@ -1638,7 +1638,7 @@ public class UserService {
 	indexer.Index(ctx, projectDir, "main", true, nil)
 	querier := NewQuerier(store)
 
-	methods, candidates, _, err := querier.QueryClassMembers(ctx, "UserService", 50)
+	methods, candidates, _, _, err := querier.QueryClassMembers(ctx, "UserService", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1669,7 +1669,7 @@ public class Store { public void put() {} }
 	indexer.Index(ctx, projectDir, "main", true, nil)
 	querier := NewQuerier(store)
 
-	methods, candidates, _, _ := querier.QueryClassMembers(ctx, "Store", 50)
+	methods, candidates, _, _, _ := querier.QueryClassMembers(ctx, "Store", 50)
 	if methods != nil {
 		t.Fatal("expected ambiguous, got methods")
 	}
@@ -1677,7 +1677,7 @@ public class Store { public void put() {} }
 		t.Fatalf("expected 2 candidates, got %d", len(candidates))
 	}
 
-	methods, candidates, _, _ = querier.QueryClassMembers(ctx, "com.a.Store", 50)
+	methods, candidates, _, _, _ = querier.QueryClassMembers(ctx, "com.a.Store", 50)
 	if candidates != nil {
 		t.Fatal("expected unique match with qualified name")
 	}
@@ -1699,7 +1699,7 @@ func main() {}
 	indexer.Index(ctx, projectDir, "main", true, nil)
 	querier := NewQuerier(store)
 
-	methods, candidates, _, err := querier.QueryClassMembers(ctx, "NonExistent", 50)
+	methods, candidates, _, _, err := querier.QueryClassMembers(ctx, "NonExistent", 50)
 	if err != nil {
 		t.Fatal(err)
 	}

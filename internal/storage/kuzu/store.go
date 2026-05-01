@@ -76,13 +76,14 @@ func (store *Store) Migrate(_ context.Context) error {
 		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS_IFACE (FROM File TO Interface, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS_VAR (FROM File TO Variable, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_FUNC (FROM Class TO Function, MANY_MANY)`,
+		`CREATE REL TABLE IF NOT EXISTS IFACE_CONTAINS_FUNC (FROM Interface TO Function, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_VAR (FROM Class TO Variable, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS CALLS (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, line INT32, declared_type STRING, polymorphic BOOLEAN, MANY_MANY)`,
+		`CREATE REL TABLE IF NOT EXISTS CALLS (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, line INT32, declared_type STRING, polymorphic BOOLEAN, flow_context STRING, flow_line INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS EXTENDS (FROM Class TO Class, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS IMPLEMENTS (FROM Class TO Interface, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, symbol_name STRING, alias STRING, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS OVERRIDES (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS DISPATCHES (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
+		`CREATE REL TABLE IF NOT EXISTS DISPATCHES (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, flow_context STRING, flow_line INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS MEMBER_OF_FUNC (FROM Function TO Community, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS MEMBER_OF_CLASS (FROM Class TO Community, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS HANDLES (FROM Function TO Route, MANY_MANY)`,
@@ -339,8 +340,11 @@ var allRelTypes = []struct {
 	{"FILE_CONTAINS", constants.KindFile, constants.KindFunction},
 	{"FILE_CONTAINS_CLASS", constants.KindFile, constants.KindClass},
 	{"FILE_CONTAINS_IFACE", constants.KindFile, constants.KindInterface},
+			{"CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction},
+			{"IFACE_CONTAINS_FUNC", constants.KindInterface, constants.KindFunction},
 	{"FILE_CONTAINS_VAR", constants.KindFile, constants.KindVariable},
 	{"CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction},
+	{"IFACE_CONTAINS_FUNC", constants.KindInterface, constants.KindFunction},
 	{"CLASS_CONTAINS_VAR", constants.KindClass, constants.KindVariable},
 	{"MEMBER_OF_FUNC", constants.KindFunction, constants.KindCommunity},
 	{"MEMBER_OF_CLASS", constants.KindClass, constants.KindCommunity},
@@ -595,6 +599,8 @@ func (store *Store) QueryAllEdges(_ context.Context, relKind model.RelationKind,
 			{"FILE_CONTAINS", constants.KindFile, constants.KindFunction},
 			{"FILE_CONTAINS_CLASS", constants.KindFile, constants.KindClass},
 			{"FILE_CONTAINS_IFACE", constants.KindFile, constants.KindInterface},
+			{"CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction},
+			{"IFACE_CONTAINS_FUNC", constants.KindInterface, constants.KindFunction},
 		},
 		model.RelRemoteCallsRoute: {{"REMOTE_CALLS_ROUTE", constants.KindFunction, constants.KindRoute}},
 		model.RelRemoteCallsExt:   {{"REMOTE_CALLS_EXT", constants.KindFunction, constants.KindExternalService}},
@@ -1143,6 +1149,8 @@ func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLa
 			return "DIR_CONTAINS", constants.KindDirectory, constants.KindFile
 		case constants.SourceKindClassFunc, constants.KindClass:
 			return "CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction
+		case constants.SourceKindInterfaceFunc, constants.KindInterface:
+			return "IFACE_CONTAINS_FUNC", constants.KindInterface, constants.KindFunction
 		case constants.SourceKindFile:
 			return "FILE_CONTAINS", constants.KindFile, constants.KindFunction
 		case constants.SourceKindFileClass:

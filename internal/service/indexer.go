@@ -1395,12 +1395,14 @@ func (indexer *Indexer) writeIncrementalFileSystemNodes(ctx context.Context, abs
 
 	// Incremental: build class map from parseResults, then supplement with existing classes from graph
 	classIDByQualifiedName := buildClassMap(parseResults)
-	existingClasses, _ := indexer.graphStore.QueryAllByKind(ctx, constants.KindClass, 0)
-	for _, classNode := range existingClasses {
-		qualifiedName, _ := classNode.Properties["qualified_name"].(string)
-		if qualifiedName != "" {
-			if _, exists := classIDByQualifiedName[qualifiedName]; !exists {
-				classIDByQualifiedName[qualifiedName] = classNode.ID
+	for _, kind := range []string{constants.KindClass, constants.KindInterface} {
+		existing, _ := indexer.graphStore.QueryAllByKind(ctx, kind, 0)
+		for _, node := range existing {
+			qualifiedName, _ := node.Properties["qualified_name"].(string)
+			if qualifiedName != "" {
+				if _, exists := classIDByQualifiedName[qualifiedName]; !exists {
+					classIDByQualifiedName[qualifiedName] = classInfo{ID: node.ID, Kind: kind}
+				}
 			}
 		}
 	}
@@ -1433,7 +1435,7 @@ func (indexer *Indexer) writeIncrementalFileSystemNodes(ctx context.Context, abs
 	return symbolEdges, nil
 }
 
-func buildStructuralData(repoID, repoName, absPath string, frameworks []string, files []scanner.ScannedFile, parseResults []model.ParseResult, classIDByQualifiedName map[string]string) ([]model.Node, []model.Edge, []model.Edge) {
+func buildStructuralData(repoID, repoName, absPath string, frameworks []string, files []scanner.ScannedFile, parseResults []model.ParseResult, classIDByQualifiedName map[string]classInfo) ([]model.Node, []model.Edge, []model.Edge) {
 	var nodes []model.Node
 	var edges []model.Edge
 
@@ -1509,12 +1511,16 @@ func buildStructuralData(repoID, repoName, absPath string, frameworks []string, 
 				continue
 			}
 			classQualifiedName := symbol.QualifiedName[:lastDot]
-			if classID, exists := classIDByQualifiedName[classQualifiedName]; exists {
+			if info, exists := classIDByQualifiedName[classQualifiedName]; exists {
+				sourceKind := constants.SourceKindClassFunc
+				if info.Kind == constants.KindInterface {
+					sourceKind = constants.SourceKindInterfaceFunc
+				}
 				symbolEdges = append(symbolEdges, model.Edge{
-					SourceID:   classID,
+					SourceID:   info.ID,
 					TargetID:   symbol.ID,
 					Kind:       model.RelContains,
-					SourceKind: constants.SourceKindClassFunc,
+					SourceKind: sourceKind,
 				})
 			}
 		}
@@ -1524,13 +1530,18 @@ func buildStructuralData(repoID, repoName, absPath string, frameworks []string, 
 }
 
 // buildClassMap collects qualifiedName → ID mapping for all Class nodes from parseResults.
-func buildClassMap(parseResults []model.ParseResult) map[string]string {
-	classIDByQualifiedName := make(map[string]string)
+type classInfo struct {
+	ID   string
+	Kind string
+}
+
+func buildClassMap(parseResults []model.ParseResult) map[string]classInfo {
+	classIDByQualifiedName := make(map[string]classInfo)
 	for _, parseResult := range parseResults {
 		for _, symbol := range parseResult.Symbols {
 			switch symbol.Kind {
 			case constants.KindClass, constants.KindInterface:
-				classIDByQualifiedName[symbol.QualifiedName] = symbol.ID
+				classIDByQualifiedName[symbol.QualifiedName] = classInfo{ID: symbol.ID, Kind: symbol.Kind}
 			}
 		}
 	}

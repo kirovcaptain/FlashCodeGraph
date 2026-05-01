@@ -431,6 +431,8 @@ func edgeLabels(kind model.RelationKind, sourceKind string) (string, string) {
 			return constants.KindDirectory, constants.KindFile
 		case constants.SourceKindClassFunc:
 			return constants.KindClass, constants.KindFunction
+		case constants.SourceKindInterfaceFunc:
+			return constants.KindInterface, constants.KindFunction
 		case constants.SourceKindFile, constants.SourceKindFileClass, constants.SourceKindFileInterface:
 			return constants.KindFile, constants.KindFunction // FalkorDB doesn't need exact target label
 		default:

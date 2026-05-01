@@ -52,7 +52,8 @@ const (
 	SourceKindFile          = "File"
 	SourceKindFileClass     = "FileClass"
 	SourceKindFileInterface = "FileInterface"
-	SourceKindClassFunc     = "ClassFunc"
+	SourceKindClassFunc      = "ClassFunc"
+	SourceKindInterfaceFunc = "InterfaceFunc"
 )
 
 // FilePath special markers — used to distinguish non-source nodes in the graph.

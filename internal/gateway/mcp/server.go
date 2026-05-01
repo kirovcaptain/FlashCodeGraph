@@ -304,10 +304,10 @@ func (srv *Server) handleListProjects(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultText("[]"), nil
 	}
 	type projectInfo struct {
-		Name     string `json:"name"`
-		Path     string `json:"path"`
-		Database string `json:"database"`
-		Branch   string `json:"branch,omitempty"`
+		Name     string         `json:"name"`
+		Path     string         `json:"path"`
+		Database string         `json:"database"`
+		Branch   string         `json:"branch,omitempty"`
 		Status   *status.Status `json:"status,omitempty"`
 	}
 	results := make([]projectInfo, 0, len(entries))
@@ -516,7 +516,6 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	return mcp.NewToolResultText(result), nil
 }
 
-
 func (srv *Server) handleQueryCrossChain(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	functionName, _ := request.GetArguments()["function"].(string)
 	if functionName == "" {
@@ -640,7 +639,7 @@ func (srv *Server) handleQueryClassMembers(ctx context.Context, request mcp.Call
 	}
 	defer store.Close()
 
-	methods, candidates, fields, err := querier.QueryClassMembers(ctx, className, limit)
+	methods, candidates, fields, kind, err := querier.QueryClassMembers(ctx, className, limit)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -658,6 +657,7 @@ func (srv *Server) handleQueryClassMembers(ctx context.Context, request mcp.Call
 	}
 
 	result := map[string]any{
+		"kind":    kind,
 		"methods": methods,
 		"fields":  fields,
 	}
@@ -739,7 +739,30 @@ func (srv *Server) handleQueryDependencies(ctx context.Context, request mcp.Call
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	resultJSON, _ := json.Marshal(edges)
+	// Enrich edges with node info
+	nodeIDs := map[string]bool{}
+	for _, e := range edges {
+		nodeIDs[e.SourceID] = true
+		nodeIDs[e.TargetID] = true
+	}
+	nodeMap := map[string]map[string]string{}
+	for id := range nodeIDs {
+		node, err := store.QueryNodeByID(ctx, id)
+		if err == nil && node != nil {
+			info := map[string]string{"kind": node.Kind}
+			if qn, ok := node.Properties["qualified_name"].(string); ok {
+				info["qualified_name"] = qn
+			}
+			if fp, ok := node.Properties["file_path"].(string); ok {
+				info["file_path"] = fp
+			}
+			nodeMap[id] = info
+		}
+	}
+	resultJSON, _ := json.Marshal(struct {
+		Edges []model.Edge                 `json:"edges"`
+		Nodes map[string]map[string]string `json:"nodes"`
+	}{Edges: edges, Nodes: nodeMap})
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
@@ -800,7 +823,6 @@ func (srv *Server) handleQueryByLayer(ctx context.Context, request mcp.CallToolR
 	data, _ := json.Marshal(nodes)
 	return mcp.NewToolResultText(string(data)), nil
 }
-
 
 func (srv *Server) handleQueryRoutes(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	path, _ := request.GetArguments()["path"].(string)
