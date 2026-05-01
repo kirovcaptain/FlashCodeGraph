@@ -90,7 +90,7 @@ func DefaultConfig() *Config {
 		Storage:           StorageConfig{Database: DetectDefaultDatabase()},
 		System:            SystemConfig{Goroutines: 0, MemoryLimit: "1GB", LogLevel: "info"},
 		Index:             IndexConfig{MaxFileSize: 512 * 1024, ExcludeTests: true},
-		CrossProjectIndex: CrossProjectIndexConfig{Backend: "json"},
+		CrossProjectIndex: CrossProjectIndexConfig{Backend: "sqlite"},
 	}
 }
 
@@ -243,6 +243,10 @@ max_file_size = 524288          # Skip files larger than this (bytes), default 5
 # Sub-module config (auto-detected, can override manually)
 # [modules.api]
 # src_dir = "api/src/main/java"
+
+[cross_project_index]
+backend = "sqlite"    # Cross-project index backend: sqlite (recommended) | json
+# sqlite_path = ""    # SQLite file path, default: ~/.fcg/cross_project_index.db
 `, projectName, projectType, defaultDB, formatStringSlice(languages))
 
 	return os.WriteFile(path, []byte(content), model.FilePermission)

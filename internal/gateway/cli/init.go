@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/crossindex"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/falkor"
 )
 
@@ -95,12 +97,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Step 3: Write config
+	// Step 3: Cross-project index backend
+	crossBackend, crossSQLitePath := selectCrossProjectIndex(reader)
+
+	// Step 4: Write config
 	cfg := config.DefaultConfig()
 	cfg.Storage.Database = database
 	if falkordbURI != "" {
 		cfg.Storage.FalkorDBURI = falkordbURI
 	}
+	cfg.CrossProjectIndex.Backend = crossBackend
+	cfg.CrossProjectIndex.SQLitePath = crossSQLitePath
 
 	if err := config.WriteConfig(globalPath, cfg); err != nil {
 		return fmt.Errorf("write config: %w", err)
@@ -113,6 +120,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Printf(" (%s)", falkordbURI)
 	}
 	fmt.Println()
+	crossDisplay := crossBackend
+	if crossBackend == "sqlite" {
+		p := crossSQLitePath
+		if p == "" {
+			p = crossindex.DefaultSQLitePath(config.GlobalDir())
+		}
+		crossDisplay += " (" + p + ")"
+	}
+	fmt.Printf("  Cross-project index: %s\n", crossDisplay)
 	fmt.Println()
 	fmt.Println("  Next: run `fcg index <project-path>` to index your first project.")
 	fmt.Println()
@@ -164,4 +180,44 @@ func selectInitFalkorDBConnection(reader *bufio.Reader) string {
 	default:
 		return "localhost:6379"
 	}
+}
+
+// selectCrossProjectIndex lets user choose cross-project index backend.
+func selectCrossProjectIndex(reader *bufio.Reader) (backend, sqlitePath string) {
+	fmt.Println()
+	fmt.Println("  Cross-project index backend:")
+	fmt.Println("    [1] SQLite  (recommended — concurrent, incremental)")
+	fmt.Println("    [2] JSON    (simple file)")
+	fmt.Print("  Select [1]: ")
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+
+	switch line {
+	case "2", "json":
+		return "json", ""
+	default:
+		backend = "sqlite"
+	}
+
+	defaultPath := crossindex.DefaultSQLitePath(config.GlobalDir())
+	fmt.Printf("  SQLite path [%s]: ", defaultPath)
+	line, _ = reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line != "" {
+		sqlitePath = line
+	}
+
+	// Validate path writable
+	targetPath := sqlitePath
+	if targetPath == "" {
+		targetPath = defaultPath
+	}
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Printf("  ⚠️  Cannot create directory %s: %v\n", dir, err)
+	} else {
+		fmt.Println("  ✅ Path OK")
+	}
+
+	return backend, sqlitePath
 }

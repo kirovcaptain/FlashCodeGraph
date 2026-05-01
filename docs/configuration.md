@@ -60,9 +60,11 @@ Global config only (`~/.fcg/config.toml`). Controls the cross-project symbol and
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| backend | string | "json" | Index backend: `json` (default). `sqlite` is reserved for future use |
+| backend | string | "sqlite" | Index backend: `sqlite` (default, concurrent, incremental) or `json` (simple file) |
 
-The index file is stored at `~/.fcg/cross_project_index.json`. It is automatically updated when a project is indexed (Step 9: writeCrossProjectIndex) and consumed by dependent projects during their indexing.
+The index file is stored at `~/.fcg/cross_project_index.db` (sqlite) or `~/.fcg/cross_project_index.json` (json). It is automatically updated when a project is indexed (Step 9: writeCrossProjectIndex) and consumed by dependent projects during their indexing.
+
+Backend selection is configured interactively via `fcg init` (global) or `fcg setup` (project override).
 
 ### [dependencies]
 

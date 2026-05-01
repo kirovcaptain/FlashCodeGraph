@@ -336,7 +336,7 @@ type = "maven"          # maven | gradle | npm | go | cargo | dotnet
 database = "falkordb"   # falkordb | kuzu
 
 [cross_project_index]
-backend = "json"        # json (default) | sqlite
+backend = "sqlite"      # sqlite (default) | json
 
 [index]
 max_file_size = 524288  # skip files > 512KB

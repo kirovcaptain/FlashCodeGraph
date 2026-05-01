@@ -66,14 +66,17 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	// Step 4: Exclude tests
 	excludeTests := promptYesNo(reader, "Exclude test files?", true)
 
-	// Step 4.5: Select dependent projects (toggle mode)
+	// Step 4.5: Cross-project index backend (inherit global)
+	crossBackend, crossSQLitePath := selectSetupCrossProjectIndex(reader)
+
+	// Step 5: Select dependent projects (toggle mode)
 	existingConfig, _ := config.Load(absPath)
 	dependencies, properties := selectDependencies(reader, absPath, existingConfig)
 
 	// Step 5: Generate config
 	fmt.Println()
 	configPath := config.ProjectConfigPath(absPath)
-	cfg := buildSetupConfig(projectName, projectType, database, falkordbURI, ignore, excludeTests, dependencies, properties)
+	cfg := buildSetupConfig(projectName, projectType, database, falkordbURI, ignore, excludeTests, crossBackend, crossSQLitePath, dependencies, properties)
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		return err
 	}
@@ -285,7 +288,7 @@ func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) bool {
 	return line == "y" || line == "yes"
 }
 
-func buildSetupConfig(projectName, projectType, database, falkordbURI string, ignore []string, excludeTests bool, dependencies []config.DependencyProject, properties map[string]string) string {
+func buildSetupConfig(projectName, projectType, database, falkordbURI string, ignore []string, excludeTests bool, crossBackend, crossSQLitePath string, dependencies []config.DependencyProject, properties map[string]string) string {
 	var setupBuilder strings.Builder
 	setupBuilder.WriteString(fmt.Sprintf("[project]\nname = %q\ntype = %q\n\n", projectName, projectType))
 	setupBuilder.WriteString(fmt.Sprintf("[storage]\ndatabase = %q\n", database))
@@ -298,6 +301,10 @@ func buildSetupConfig(projectName, projectType, database, falkordbURI string, ig
 	}
 	if excludeTests {
 		setupBuilder.WriteString("exclude_tests = true\n")
+	}
+	setupBuilder.WriteString(fmt.Sprintf("\n[cross_project_index]\nbackend = %q\n", crossBackend))
+	if crossSQLitePath != "" {
+		setupBuilder.WriteString(fmt.Sprintf("sqlite_path = %q\n", crossSQLitePath))
 	}
 	if len(dependencies) > 0 {
 		setupBuilder.WriteString("\n")
@@ -544,4 +551,20 @@ func editProperties(reader *bufio.Reader, existingConfig *config.Config) map[str
 	}
 
 	return properties
+}
+
+// selectSetupCrossProjectIndex inherits global cross-project index config or lets user override.
+func selectSetupCrossProjectIndex(reader *bufio.Reader) (backend, sqlitePath string) {
+	globalConfig, _ := config.Load("")
+	if globalConfig != nil && globalConfig.CrossProjectIndex.Backend != "" {
+		display := globalConfig.CrossProjectIndex.Backend
+		if globalConfig.CrossProjectIndex.SQLitePath != "" {
+			display += " (" + globalConfig.CrossProjectIndex.SQLitePath + ")"
+		}
+		fmt.Printf("  Cross-project index: %s\n", display)
+		if promptYesNo(reader, "Use same?", true) {
+			return globalConfig.CrossProjectIndex.Backend, globalConfig.CrossProjectIndex.SQLitePath
+		}
+	}
+	return selectCrossProjectIndex(reader)
 }
