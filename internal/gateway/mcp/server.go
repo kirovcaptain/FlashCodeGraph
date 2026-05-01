@@ -82,9 +82,8 @@ func (srv *Server) createIndexer(repoPath string) (*service.Indexer, storage.Gra
 	indexLock := lock.NewNoopLock()
 
 	// Create cross-project index
-	crossIndexPath := filepath.Join(config.GlobalDir(), "cross_project_index.json")
-	crossIndex := crossindex.NewJSONStore(crossIndexPath)
-	if err := crossIndex.Load(); err != nil {
+	crossIndex, err := crossindex.New(cfg.CrossProjectIndex.Backend, cfg.CrossProjectIndex.SQLitePath, config.GlobalDir())
+	if err != nil {
 		store.Close()
 		return nil, nil, fmt.Errorf("load cross-project index: %w", err)
 	}

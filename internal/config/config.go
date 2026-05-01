@@ -87,9 +87,10 @@ type EmbeddingConfig struct {
 // DefaultConfig returns a config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		Storage: StorageConfig{Database: DetectDefaultDatabase()},
-		System:  SystemConfig{Goroutines: 0, MemoryLimit: "1GB", LogLevel: "info"},
-		Index:   IndexConfig{MaxFileSize: 512 * 1024, ExcludeTests: true},
+		Storage:           StorageConfig{Database: DetectDefaultDatabase()},
+		System:            SystemConfig{Goroutines: 0, MemoryLimit: "1GB", LogLevel: "info"},
+		Index:             IndexConfig{MaxFileSize: 512 * 1024, ExcludeTests: true},
+		CrossProjectIndex: CrossProjectIndexConfig{Backend: "json"},
 	}
 }
 

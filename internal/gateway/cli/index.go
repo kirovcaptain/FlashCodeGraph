@@ -93,10 +93,9 @@ func runIndex(cmd *cobra.Command, args []string) error {
 		dump = service.NewFileDumpManager(repoPath)
 	}
 	// Create cross-project index
-	crossIndexPath := filepath.Join(config.GlobalDir(), "cross_project_index.json")
-	crossIndex := crossindex.NewJSONStore(crossIndexPath)
-	if err := crossIndex.Load(); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Failed to load cross-project index: %v\n", err)
+	crossIndex, err := crossindex.New(cfg.CrossProjectIndex.Backend, cfg.CrossProjectIndex.SQLitePath, config.GlobalDir())
+	if err != nil {
+		return fmt.Errorf("load cross-project index: %w", err)
 	}
 
 	indexer := service.NewIndexer(store, fingerprintStore, indexLock, cfg, dump, crossIndex)
