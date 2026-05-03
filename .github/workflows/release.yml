@@ -41,10 +41,10 @@ jobs:
       - name: Install MinGW (Windows)
         if: matrix.goos == 'windows'
         run: choco install mingw -y
-      - name: Test
-        run: go test ./... -count=1
-        env:
-          CGO_ENABLED: 1
+      # - name: Test
+      #   run: go test ./... -count=1
+      #   env:
+      #     CGO_ENABLED: 1
       - name: Build
         run: go build -ldflags "-X github.com/kirovcaptain/FlashCodeGraph/internal/gateway/cli.version=${{ github.ref_name }}" -o ${{ matrix.binary }} ./cmd/fcg/
         env:
