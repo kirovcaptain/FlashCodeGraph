@@ -12,6 +12,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/falkor"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/kuzu"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/ladybug"
 )
 
 // openGraphStore creates a GraphStore based on config and project path.
@@ -57,6 +58,33 @@ func openGraphStore(cfg *config.Config, repoPath string) (storage.GraphStore, er
 			return nil, fmt.Errorf("migrate KùzuDB: %w", err)
 		}
 		return store, nil
+
+	case "ladybug":
+		dbPath := cfg.Storage.LadybugPath
+		if dbPath == "" && repoPath != "" {
+			absPath, _ := filepath.Abs(repoPath)
+			fcgDir := config.GlobalDir()
+			dataDir := storage.DataDir(fcgDir, absPath)
+			branchName := cfg.Storage.Branch
+			if branchName == "" {
+				branchName = branch.DetectBranch(absPath)
+			}
+			dbPath = filepath.Join(dataDir, branchName, "graph.ladybug")
+			os.MkdirAll(filepath.Dir(dbPath), model.DirectoryPermission)
+		}
+
+		lbStore, err := ladybug.New(dbPath)
+		if err != nil {
+			lbStore, err = ladybug.New("")
+			if err != nil {
+				return nil, fmt.Errorf("open LadybugDB: %w", err)
+			}
+		}
+		if err := lbStore.Migrate(context.Background()); err != nil {
+			lbStore.Close()
+			return nil, fmt.Errorf("migrate LadybugDB: %w", err)
+		}
+		return lbStore, nil
 
 	default:
 		return nil, fmt.Errorf("unsupported database: %s", database)

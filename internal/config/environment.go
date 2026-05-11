@@ -7,13 +7,13 @@ import (
 )
 
 // DetectDefaultDatabase returns the best storage backend for the current environment.
-// WSL and environments where KùzuDB disk mode is unreliable default to FalkorDB.
-// Native Linux/macOS/Windows default to KùzuDB.
+// WSL and environments where embedded disk mode is unreliable default to FalkorDB.
+// Native Linux/macOS/Windows default to LadybugDB.
 func DetectDefaultDatabase() string {
 	if IsWSL() {
 		return "falkordb"
 	}
-	return "kuzu"
+	return "ladybug"
 }
 
 // IsWSL detects if running inside Windows Subsystem for Linux.

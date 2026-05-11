@@ -49,12 +49,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("  Storage backend:")
 	if recommended == "falkordb" {
 		fmt.Println("    [1] FalkorDB  (recommended — WSL detected)")
-		fmt.Println("    [2] KùzuDB   (embedded, no external service)")
+		fmt.Println("    [2] LadybugDB (embedded, no external service)")
+		fmt.Println("    [3] KùzuDB   (embedded, legacy)")
 	} else {
 		fmt.Println("    [1] FalkorDB  (requires running FalkorDB/Redis)")
-		fmt.Println("    [2] KùzuDB   (recommended — embedded, no setup)")
+		fmt.Println("    [2] LadybugDB (recommended — embedded, no setup)")
+		fmt.Println("    [3] KùzuDB   (embedded, legacy)")
 	}
-	fmt.Printf("  Select [%s]: ", map[string]string{"falkordb": "1", "kuzu": "2"}[recommended])
+	fmt.Printf("  Select [%s]: ", map[string]string{"falkordb": "1", "ladybug": "2", "kuzu": "3"}[recommended])
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
 
@@ -62,7 +64,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	switch line {
 	case "1", "falkordb":
 		database = "falkordb"
-	case "2", "kuzu":
+	case "2", "ladybug":
+		database = "ladybug"
+	case "3", "kuzu":
 		database = "kuzu"
 	case "":
 		database = recommended

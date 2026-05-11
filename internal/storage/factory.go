@@ -38,6 +38,8 @@ func ResolveStorageAddress(cfg *config.Config) (database string, address string,
 		}
 	case "neo4j":
 		address = cfg.Storage.Neo4jURI
+	case "ladybug":
+		address = cfg.Storage.LadybugPath
 	default:
 		// kuzu — address is the data directory path
 		database = "kuzu"
@@ -54,6 +56,11 @@ func FormatStorageInfo(database, address string) string {
 		return fmt.Sprintf("FalkorDB (%s)", address)
 	case "neo4j":
 		return fmt.Sprintf("Neo4j (%s)", address)
+	case "ladybug":
+		if address == "" {
+			return "LadybugDB (in-memory)"
+		}
+		return fmt.Sprintf("LadybugDB (%s)", address)
 	default:
 		return "KùzuDB (in-memory)"
 	}

@@ -26,7 +26,7 @@ Code understanding should be as fast as a database query. FCG aims to be the **s
 - **Incremental indexing** — fingerprint-based change detection, only re-parses modified files
 - **Confidence-scored resolution** — multi-strategy call resolution with 6-level confidence scoring
 - **Dual interface** — CLI for interactive use, MCP Server for AI agent integration
-- **Pluggable storage** — FalkorDB (remote) or KùzuDB (local embedded)
+- **Pluggable storage** — FalkorDB (remote) or KùzuDB / LadybugDB (local embedded)
 
 ## Quick Start
 
@@ -333,7 +333,7 @@ name = "my-project"
 type = "maven"          # maven | gradle | npm | go | cargo | dotnet
 
 [storage]
-database = "falkordb"   # falkordb | kuzu
+database = "falkordb"   # falkordb | kuzu | ladybug
 
 [cross_project_index]
 backend = "sqlite"      # sqlite (default) | json
@@ -361,7 +361,8 @@ See [docs/configuration.md](docs/configuration.md) ([example](docs/config.exampl
 | Backend | Type | Status | Use Case |
 |---------|------|--------|----------|
 | FalkorDB | Remote (Redis protocol) | ✅ Implemented | Default, team sharing |
-| KùzuDB | Local embedded | ✅ Implemented | No external dependencies, single machine |
+| LadybugDB | Local embedded | ✅ Implemented | Recommended embedded, no external dependencies |
+| KùzuDB | Local embedded | ✅ Implemented | Legacy embedded backend |
 | Neo4j | Remote | 🚧 Planned | Existing Neo4j infrastructure |
 
 ## Architecture
@@ -381,6 +382,7 @@ See [docs/architecture.md](docs/architecture.md) for detailed architecture docum
 CGO dependencies (linked automatically via Go modules):
 - **tree-sitter** + language grammars (C) — AST parsing
 - **go-kuzu** (C++) — KùzuDB embedded storage backend
+- **go-ladybug** (C++) — LadybugDB embedded storage backend
 - **go-sqlite3** (C) — SQLite cross-project index backend
 
 ### Build

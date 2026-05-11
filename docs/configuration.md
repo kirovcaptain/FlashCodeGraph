@@ -18,10 +18,11 @@ FCG uses TOML configuration files at two levels:
 
 | Key | Type | Description |
 |-----|------|-------------|
-| database | string | Storage backend: `falkordb` (default if available), `kuzu` |
+| database | string | Storage backend: `falkordb` (default if available), `ladybug`, `kuzu` |
 | falkordb_uri | string | FalkorDB address (default: `localhost:6379`) |
 | falkordb_graph | string | Graph name prefix (default: `fcg`) |
 | kuzu_path | string | KùzuDB data directory |
+| ladybug_path | string | LadybugDB data directory |
 
 ### [index]
 

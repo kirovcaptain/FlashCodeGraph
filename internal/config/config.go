@@ -55,11 +55,12 @@ type AnnotationsConfig struct {
 
 // StorageConfig holds storage backend settings.
 type StorageConfig struct {
-	Database      string `toml:"database"`        // kuzu, falkordb, neo4j
+	Database      string `toml:"database"`        // kuzu, falkordb, ladybug, neo4j
 	Neo4jURI      string `toml:"neo4j_uri,omitempty"`
 	FalkorDBURI   string `toml:"falkordb_uri,omitempty"`
 	FalkorDBGraph string `toml:"falkordb_graph,omitempty"`
 	KuzuPath      string `toml:"kuzu_path,omitempty"`
+	LadybugPath   string `toml:"ladybug_path,omitempty"`
 	Branch        string `toml:"-"` // runtime override, not persisted
 }
 
@@ -223,7 +224,7 @@ name = %q       # Project name (auto-detected)
 type = %q       # Project type: maven | gradle | npm | go | cargo | dotnet | unknown
 
 [storage]
-database = "%s"     # Storage backend: kuzu (local embedded) | falkordb | neo4j (remote)
+database = "%s"     # Storage backend: kuzu | ladybug (local embedded) | falkordb | neo4j (remote)
 # neo4j_uri = "bolt://team-server:7687"  # Remote mode connection
 
 [system]

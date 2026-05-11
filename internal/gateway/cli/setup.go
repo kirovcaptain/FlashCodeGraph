@@ -141,9 +141,10 @@ func selectStorage(reader *bufio.Reader, projectPath string) (database string, f
 	// Manual selection
 	fmt.Println("  Select storage:")
 	fmt.Println("    [1] falkordb (recommended if FalkorDB is running)")
-	fmt.Println("    [2] kuzu (embedded, no external dependency)")
+	fmt.Println("    [2] ladybug (recommended — embedded, no external dependency)")
+	fmt.Println("    [3] kuzu (embedded, legacy)")
 	if config.IsWSL() {
-		fmt.Println("    ⚠️  WSL detected — falkordb recommended (kuzu disk mode may be unreliable)")
+		fmt.Println("    ⚠️  WSL detected — falkordb recommended (embedded disk mode may be unreliable)")
 	}
 	fmt.Print("  Storage: ")
 	line, _ := reader.ReadString('\n')
@@ -153,7 +154,9 @@ func selectStorage(reader *bufio.Reader, projectPath string) (database string, f
 	case "1", "falkordb":
 		falkordbURI = selectFalkorDBConnection(reader)
 		return "falkordb", falkordbURI
-	case "2", "kuzu":
+	case "2", "ladybug":
+		return "ladybug", ""
+	case "3", "kuzu":
 		return "kuzu", ""
 	default:
 		// Auto-detect fallback
@@ -168,7 +171,7 @@ func detectStorage() string {
 	if _, err := os.Stat(socketPath); err == nil {
 		return "falkordb"
 	}
-	return "kuzu"
+	return config.DetectDefaultDatabase()
 }
 // selectFalkorDBConnection lets user choose FalkorDB connection method.
 func selectFalkorDBConnection(reader *bufio.Reader) string {

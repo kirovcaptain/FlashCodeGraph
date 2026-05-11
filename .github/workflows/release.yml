@@ -17,31 +17,53 @@ jobs:
             goos: linux
             goarch: amd64
             binary: fcg-linux-amd64
+            lbug_asset: liblbug-linux-x86_64.tar.gz
+            lbug_lib_dir: lib/dynamic/linux-amd64
           - os: ubuntu-24.04-arm
             goos: linux
             goarch: arm64
             binary: fcg-linux-arm64
+            lbug_asset: liblbug-linux-aarch64.tar.gz
+            lbug_lib_dir: lib/dynamic/linux-arm64
           - os: macos-latest
             goos: darwin
             goarch: arm64
             binary: fcg-darwin-arm64
+            lbug_asset: liblbug-osx-universal.tar.gz
+            lbug_lib_dir: lib/dynamic/darwin
           # - os: macos-13
           #   goos: darwin
           #   goarch: amd64
           #   binary: fcg-darwin-amd64
+          #   lbug_asset: liblbug-osx-universal.tar.gz
+          #   lbug_lib_dir: lib/dynamic/darwin
           - os: windows-latest
             goos: windows
             goarch: amd64
             binary: fcg-windows-amd64.exe
+            lbug_asset: liblbug-windows-x86_64.zip
+            lbug_lib_dir: lib/dynamic/windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25'
       - name: Install MinGW (Windows)
         if: matrix.goos == 'windows'
         run: choco install mingw -y
+      - name: Download LadybugDB native library
+        shell: bash
+        run: |
+          LIB_DIR="${{ github.workspace }}/.lbug/${{ matrix.lbug_lib_dir }}"
+          mkdir -p "$LIB_DIR"
+          ASSET_URL="https://github.com/LadybugDB/ladybug/releases/latest/download/${{ matrix.lbug_asset }}"
+          if [[ "${{ matrix.lbug_asset }}" == *.zip ]]; then
+            curl -fsSL "$ASSET_URL" -o /tmp/liblbug.zip
+            unzip -o /tmp/liblbug.zip -d "$LIB_DIR"
+          else
+            curl -fsSL "$ASSET_URL" | tar -xz -C "$LIB_DIR"
+          fi
       # - name: Test
       #   run: go test ./... -count=1
       #   env:
@@ -50,6 +72,7 @@ jobs:
         run: go build -ldflags "-X github.com/kirovcaptain/FlashCodeGraph/internal/gateway/cli.version=${{ github.ref_name }}" -o ${{ matrix.binary }} ./cmd/fcg/
         env:
           CGO_ENABLED: 1
+          CGO_LDFLAGS: "-L${{ github.workspace }}/.lbug/${{ matrix.lbug_lib_dir }}"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}
