@@ -503,27 +503,27 @@ func generateLombokAccessors(classAnnotations []model.StructuredAnnotation, fiel
 		return
 	}
 
-	for _, f := range fields {
+	for _, field := range fields {
 		prefix := "get"
-		if f.typeName == "boolean" {
+		if field.typeName == "boolean" {
 			prefix = "is"
 		}
-		capName := strings.ToUpper(f.name[:1]) + f.name[1:]
-		qnBase := className + "." 
+		capName := strings.ToUpper(field.name[:1]) + field.name[1:]
+		qualifiedNameBase := className + "."
 		if packageName != "" {
-			qnBase = packageName + "." + qnBase
+			qualifiedNameBase = packageName + "." + qualifiedNameBase
 		}
 
 		if hasGetter {
 			getterName := prefix + capName
 			result.Symbols = append(result.Symbols, model.Symbol{
-				ID:            filePath + ":" + className + "." + getterName,
+				ID:            astutil.GenerateSymbolID(filePath, qualifiedNameBase+getterName, field.line),
 				Name:          getterName,
-				QualifiedName: qnBase + getterName,
+				QualifiedName: qualifiedNameBase + getterName,
 				Kind:          constants.KindFunction,
 				FilePath:      filePath,
-				StartLine:     f.line,
-				ReturnTypes:   []string{f.typeName},
+				StartLine:     field.line,
+				ReturnTypes:   []string{field.typeName},
 				Params:        nil,
 				IsSynthetic:   true,
 				IsGetter:      true,
@@ -533,13 +533,13 @@ func generateLombokAccessors(classAnnotations []model.StructuredAnnotation, fiel
 		if hasSetter {
 			setterName := "set" + capName
 			result.Symbols = append(result.Symbols, model.Symbol{
-				ID:            filePath + ":" + className + "." + setterName,
+				ID:            astutil.GenerateSymbolID(filePath, qualifiedNameBase+setterName, field.line),
 				Name:          setterName,
-				QualifiedName: qnBase + setterName,
+				QualifiedName: qualifiedNameBase + setterName,
 				Kind:          constants.KindFunction,
 				FilePath:      filePath,
-				StartLine:     f.line,
-				Params:        []model.ParamInfo{{Name: f.name, Type: f.typeName}},
+				StartLine:     field.line,
+				Params:        []model.ParamInfo{{Name: field.name, Type: field.typeName}},
 				IsSynthetic:   true,
 				IsSetter:      true,
 				IsExported:    true,

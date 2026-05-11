@@ -621,3 +621,60 @@ public enum CodeType {
 		}
 	}
 }
+
+func TestExtract_LombokAccessorInnerClassIDUnique(t *testing.T) {
+	code := []byte(`package com.example;
+import lombok.Data;
+
+@Data
+public class Outer {
+    @Data
+    public static class GroupA {
+        @Data
+        public static class Item {
+            private double score;
+        }
+    }
+    @Data
+    public static class GroupB {
+        @Data
+        public static class Item {
+            private double score;
+        }
+    }
+}
+`)
+	result := parseJavaFile(t, string(code), "Outer.java")
+
+	seenIDs := map[string]string{} // id -> qualifiedName
+	for _, sym := range result.Symbols {
+		if sym.Kind != "Function" || !sym.IsSynthetic {
+			continue
+		}
+		if existingQualifiedName, exists := seenIDs[sym.ID]; exists {
+			t.Errorf("duplicate synthetic accessor ID %q: %q and %q", sym.ID, existingQualifiedName, sym.QualifiedName)
+		}
+		seenIDs[sym.ID] = sym.QualifiedName
+	}
+
+	foundGroupAItemGetter := false
+	foundGroupBItemGetter := false
+	for _, sym := range result.Symbols {
+		if sym.Name != "getScore" || !sym.IsSynthetic {
+			continue
+		}
+		if sym.QualifiedName == "com.example.Outer.GroupA.Item.getScore" {
+			foundGroupAItemGetter = true
+		}
+		if sym.QualifiedName == "com.example.Outer.GroupB.Item.getScore" {
+			foundGroupBItemGetter = true
+		}
+	}
+	if !foundGroupAItemGetter {
+		t.Error("missing GroupA.Item.getScore")
+	}
+	if !foundGroupBItemGetter {
+		t.Error("missing GroupB.Item.getScore")
+	}
+	t.Log("✅ 同名内部类合成 accessor ID 唯一性验证通过")
+}

@@ -212,6 +212,7 @@ func (store *Store) queryWithParams(ctx context.Context, cypher string, params [
 }
 
 // Migrate creates indexes on node ID properties for fast MATCH lookups.
+// Called only during full index (after ClearAll), not during incremental index.
 func (store *Store) Migrate(ctx context.Context) error {
 	// Safe: label names are from hardcoded constants, not user input.
 	for _, label := range constants.AllNodeKinds {
@@ -225,6 +226,11 @@ func (store *Store) Migrate(ctx context.Context) error {
 	}
 	for _, label := range constants.BaseSymbolKinds {
 		store.query(ctx, "CREATE INDEX ON :"+label+"(qualified_name)")
+	}
+	for _, label := range constants.AllNodeKinds {
+		// GRAPH.CONSTRAINT CREATE is a Redis command, not Cypher.
+		// Errors are discarded: constraint already exists is a normal idempotent case.
+		store.client.Do(ctx, "GRAPH.CONSTRAINT", "CREATE", store.graphName, "UNIQUE", "NODES", label, "PROPERTIES", "1", "id")
 	}
 	return nil
 }
