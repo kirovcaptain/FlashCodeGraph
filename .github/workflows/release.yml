@@ -29,13 +29,13 @@ jobs:
             goos: darwin
             goarch: arm64
             binary: fcg-darwin-arm64
-            lbug_asset: liblbug-osx-universal.tar.gz
+            lbug_asset: liblbug-osx-arm64.tar.gz
             lbug_lib_dir: lib/dynamic/darwin
           # - os: macos-13
           #   goos: darwin
           #   goarch: amd64
           #   binary: fcg-darwin-amd64
-          #   lbug_asset: liblbug-osx-universal.tar.gz
+          #   lbug_asset: liblbug-osx-x86_64.tar.gz
           #   lbug_lib_dir: lib/dynamic/darwin
           - os: windows-latest
             goos: windows
