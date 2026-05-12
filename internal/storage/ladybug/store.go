@@ -118,7 +118,7 @@ func (store *Store) Migrate(_ context.Context) error {
 	}
 
 	// Upgrade CALLS rel table with cross-service columns added after initial schema.
-	for _, col := range []struct{ name, colType string }{
+	for _, column := range []struct{ name, colType string }{
 		{"via_route", "STRING"},
 		{"cross_service", "BOOLEAN"},
 		{"consumer_interface", "STRING"},
@@ -128,7 +128,7 @@ func (store *Store) Migrate(_ context.Context) error {
 		{"target_handler", "STRING"},
 		{"protocol", "STRING"},
 	} {
-		store.execNoParams(fmt.Sprintf("ALTER TABLE CALLS ADD %s %s", col.name, col.colType))
+		store.execNoParams(fmt.Sprintf("ALTER TABLE CALLS ADD %s %s", column.name, column.colType))
 	}
 
 	return nil
