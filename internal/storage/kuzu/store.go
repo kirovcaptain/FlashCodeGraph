@@ -118,7 +118,7 @@ func (store *Store) Migrate(_ context.Context) error {
 	}
 
 	// Upgrade CALLS rel table with cross-service columns added after initial schema.
-	for _, col := range []struct{ name, typ string }{
+	for _, col := range []struct{ name, colType string }{
 		{"via_route", "STRING"},
 		{"cross_service", "BOOLEAN"},
 		{"consumer_interface", "STRING"},
@@ -128,7 +128,7 @@ func (store *Store) Migrate(_ context.Context) error {
 		{"target_handler", "STRING"},
 		{"protocol", "STRING"},
 	} {
-		store.execNoParams(fmt.Sprintf("ALTER TABLE CALLS ADD %s %s", col.name, col.typ))
+		store.execNoParams(fmt.Sprintf("ALTER TABLE CALLS ADD %s %s", col.name, col.colType))
 	}
 
 	return nil
@@ -354,8 +354,8 @@ var allRelTypes = []struct {
 	{"FILE_CONTAINS", constants.KindFile, constants.KindFunction},
 	{"FILE_CONTAINS_CLASS", constants.KindFile, constants.KindClass},
 	{"FILE_CONTAINS_IFACE", constants.KindFile, constants.KindInterface},
-			{"CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction},
-			{"IFACE_CONTAINS_FUNC", constants.KindInterface, constants.KindFunction},
+	{"CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction},
+	{"IFACE_CONTAINS_FUNC", constants.KindInterface, constants.KindFunction},
 	{"FILE_CONTAINS_VAR", constants.KindFile, constants.KindVariable},
 	{"CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction},
 	{"IFACE_CONTAINS_FUNC", constants.KindInterface, constants.KindFunction},
@@ -654,7 +654,6 @@ func (store *Store) QueryAllEdges(_ context.Context, relKind model.RelationKind,
 	return edges, nil
 }
 
-
 // QueryNodesByIDs returns nodes matching any of the given IDs.
 func (store *Store) QueryNodesByIDs(_ context.Context, ids []string) ([]model.Node, error) {
 	if len(ids) == 0 {
@@ -731,6 +730,7 @@ func (store *Store) QueryEdgesByNodeIDs(_ context.Context, nodeIDs []string, rel
 	}
 	return edges, nil
 }
+
 // TraverseCallChain traverses CALLS relationships up to depth.
 // When minConfidence == 0, uses KùzuDB recursive query for best performance.
 // When minConfidence > 0, uses application-level BFS with per-hop confidence filtering
@@ -800,9 +800,9 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 					edgeProps["declared_type"] = declType
 				}
 				subgraph.Edges = append(subgraph.Edges, model.Edge{
-					SourceID: fmt.Sprint(sourceID),
-					TargetID: neighborID,
-					Kind:     model.RelCalls,
+					SourceID:   fmt.Sprint(sourceID),
+					TargetID:   neighborID,
+					Kind:       model.RelCalls,
 					Properties: edgeProps,
 				})
 
