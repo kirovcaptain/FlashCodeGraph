@@ -78,7 +78,7 @@ func (store *Store) Migrate(_ context.Context) error {
 		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_FUNC (FROM Class TO Function, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS IFACE_CONTAINS_FUNC (FROM Interface TO Function, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_VAR (FROM Class TO Variable, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS CALLS (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, line INT32, declared_type STRING, polymorphic BOOLEAN, flow_context STRING, flow_line INT32, MANY_MANY)`,
+		`CREATE REL TABLE IF NOT EXISTS CALLS (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, line INT32, declared_type STRING, polymorphic BOOLEAN, flow_context STRING, flow_line INT32, via_route STRING, cross_service BOOLEAN, consumer_interface STRING, target_service STRING, target_project STRING, target_branch STRING, target_handler STRING, protocol STRING, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS EXTENDS (FROM Class TO Class, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS IMPLEMENTS (FROM Class TO Interface, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, symbol_name STRING, alias STRING, MANY_MANY)`,
@@ -115,6 +115,20 @@ func (store *Store) Migrate(_ context.Context) error {
 			alter := fmt.Sprintf("ALTER TABLE %s ADD %s %s", kind, col.Name, col.Type)
 			store.execNoParams(alter) // ignore errors (column already exists)
 		}
+	}
+
+	// Upgrade CALLS rel table with cross-service columns added after initial schema.
+	for _, col := range []struct{ name, typ string }{
+		{"via_route", "STRING"},
+		{"cross_service", "BOOLEAN"},
+		{"consumer_interface", "STRING"},
+		{"target_service", "STRING"},
+		{"target_project", "STRING"},
+		{"target_branch", "STRING"},
+		{"target_handler", "STRING"},
+		{"protocol", "STRING"},
+	} {
+		store.execNoParams(fmt.Sprintf("ALTER TABLE CALLS ADD %s %s", col.name, col.typ))
 	}
 
 	return nil

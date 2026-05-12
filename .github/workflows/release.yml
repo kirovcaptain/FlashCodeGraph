@@ -17,30 +17,35 @@ jobs:
             goos: linux
             goarch: amd64
             binary: fcg-linux-amd64
+            pkg: fcg-linux-amd64.tar.gz
             lbug_asset: liblbug-linux-x86_64.tar.gz
             lbug_lib_dir: lib/dynamic/linux-amd64
           - os: ubuntu-24.04-arm
             goos: linux
             goarch: arm64
             binary: fcg-linux-arm64
+            pkg: fcg-linux-arm64.tar.gz
             lbug_asset: liblbug-linux-aarch64.tar.gz
             lbug_lib_dir: lib/dynamic/linux-arm64
           - os: macos-latest
             goos: darwin
             goarch: arm64
             binary: fcg-darwin-arm64
+            pkg: fcg-darwin-arm64.tar.gz
             lbug_asset: liblbug-osx-arm64.tar.gz
             lbug_lib_dir: lib/dynamic/darwin
           # - os: macos-13
           #   goos: darwin
           #   goarch: amd64
           #   binary: fcg-darwin-amd64
+          #   pkg: fcg-darwin-amd64.tar.gz
           #   lbug_asset: liblbug-osx-x86_64.tar.gz
           #   lbug_lib_dir: lib/dynamic/darwin
           - os: windows-latest
             goos: windows
             goarch: amd64
             binary: fcg-windows-amd64.exe
+            pkg: fcg-windows-amd64.zip
             lbug_asset: liblbug-windows-x86_64.zip
             lbug_lib_dir: lib/dynamic/windows
     runs-on: ${{ matrix.os }}
@@ -73,10 +78,48 @@ jobs:
         env:
           CGO_ENABLED: 1
           CGO_LDFLAGS: "-L${{ github.workspace }}/.lbug/${{ matrix.lbug_lib_dir }}"
+      - name: Package Linux release (binary + .so + patchelf rpath)
+        if: matrix.goos == 'linux'
+        run: |
+          sudo apt-get install -y patchelf
+          KUZU_DIR=$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu)
+          LBUG_DIR="${{ github.workspace }}/.lbug/${{ matrix.lbug_lib_dir }}"
+          mkdir -p _release
+          cp ${{ matrix.binary }} _release/
+          cp "$KUZU_DIR/${{ matrix.lbug_lib_dir }}/libkuzu.so" _release/
+          cp -a "$LBUG_DIR"/liblbug.so* _release/
+          patchelf --set-rpath '$ORIGIN' _release/${{ matrix.binary }}
+          tar -czf ${{ matrix.pkg }} -C _release .
+      - name: Package macOS release (binary + .dylib + rpath fix)
+        if: matrix.goos == 'darwin'
+        run: |
+          KUZU_DIR=$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu)
+          LBUG_DIR="${{ github.workspace }}/.lbug/${{ matrix.lbug_lib_dir }}"
+          mkdir -p _release
+          cp ${{ matrix.binary }} _release/
+          cp "$KUZU_DIR/${{ matrix.lbug_lib_dir }}/libkuzu.dylib" _release/
+          cp -a "$LBUG_DIR"/liblbug.dylib* _release/
+          install_name_tool -add_rpath @executable_path _release/${{ matrix.binary }}
+          for rpath in $(otool -l _release/${{ matrix.binary }} | awk '/LC_RPATH/{found=1} found && /path /{print $2; found=0}'); do
+            case "$rpath" in
+              /home/runner/*|/Users/runner/*) install_name_tool -delete_rpath "$rpath" _release/${{ matrix.binary }} 2>/dev/null || true ;;
+            esac
+          done
+          tar -czf ${{ matrix.pkg }} -C _release .
+      - name: Package Windows release (exe + DLLs)
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          KUZU_DIR=$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu)
+          mkdir -p _release
+          cp ${{ matrix.binary }} _release/
+          cp "$KUZU_DIR/lib/dynamic/windows/kuzu_shared.dll" _release/
+          cp "${{ github.workspace }}/.lbug/${{ matrix.lbug_lib_dir }}/lbug_shared.dll" _release/
+          cd _release && 7z a "../${{ matrix.pkg }}" . && cd ..
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.binary }}
-          path: ${{ matrix.binary }}
+          name: ${{ matrix.pkg }}
+          path: ${{ matrix.pkg }}
 
   release:
     needs: build
