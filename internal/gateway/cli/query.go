@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -589,33 +590,34 @@ func runTrace(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %-4d %-12s %-45s %s%s\n", i+1, cn.Kind, name, cn.FilePath, layer)
 	}
 	if len(chain.Queries) > 0 {
-		// Deduplicate by sql + caller
 		type queryKey struct{ sql, caller string }
 		seen := map[queryKey]bool{}
 		var unique []model.ChainNode
-		for _, q := range chain.Queries {
-			key := queryKey{q.Name, q.QualifiedName}
+		for _, queryNode := range chain.Queries {
+			key := queryKey{queryNode.SQLText, queryNode.QualifiedName}
 			if !seen[key] {
 				seen[key] = true
-				unique = append(unique, q)
+				unique = append(unique, queryNode)
 			}
 		}
 		fmt.Printf("\nQueries (%d):\n", len(unique))
-		for _, q := range unique {
-			sql := q.Name
-			if len(sql) > 55 {
-				sql = sql[:55] + "..."
+		for _, queryNode := range unique {
+			sqlDisplay := queryNode.SQLText
+			if len(sqlDisplay) > 55 {
+				sqlDisplay = sqlDisplay[:55] + "..."
 			}
-			tables := ""
-			if q.FilePath != "" {
-				tables = " [" + q.FilePath + "]"
+			tablesDisplay := ""
+			if queryNode.Tables != nil {
+				var tableNames []string
+				if json.Unmarshal(queryNode.Tables, &tableNames) == nil && len(tableNames) > 0 {
+					tablesDisplay = " [" + strings.Join(tableNames, ", ") + "]"
+				}
 			}
-			// Short caller: last segment
-			caller := q.QualifiedName
-			if idx := strings.LastIndex(caller, "."); idx >= 0 {
-				caller = caller[idx+1:]
+			caller := queryNode.QualifiedName
+			if lastDot := strings.LastIndex(caller, "."); lastDot >= 0 {
+				caller = caller[lastDot+1:]
 			}
-			fmt.Printf("  %-8s %-60s ← %s%s\n", q.Kind, sql, caller, tables)
+			fmt.Printf("  %-8s %-60s ← %s%s\n", queryNode.QueryType, sqlDisplay, caller, tablesDisplay)
 		}
 	}
 	return nil

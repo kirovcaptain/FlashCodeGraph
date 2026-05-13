@@ -1113,10 +1113,12 @@ func (querier *Querier) Report(ctx context.Context) (*model.GraphReport, error) 
 				})
 			case constants.KindQueryNode:
 				report.QueryDetails = append(report.QueryDetails, model.QueryDetail{
-					SQLText:   propString(node.Properties, "sql_text"),
-					QueryType: propString(node.Properties, "query_type"),
-					Tables:    propString(node.Properties, "tables"),
-					Caller:    propString(node.Properties, "caller"),
+					SQLText:    propString(node.Properties, "sql_text"),
+					QueryType:  propString(node.Properties, "query_type"),
+					Tables:     propString(node.Properties, "tables"),
+					Caller:     propString(node.Properties, "caller"),
+					BaseSQL:    propString(node.Properties, "base_sql"),
+					Conditions: propString(node.Properties, "conditions"),
 				})
 			}
 		}
@@ -1312,21 +1314,37 @@ func (querier *Querier) traceCallChainMem(nodeID string, maxDepth int, funcMap m
 
 	callerName := propString(node.Properties, "qualified_name")
 	for _, targetID := range execMap[nodeID] {
-		if qn := queryMap[targetID]; qn != nil {
-			sqlText := propString(qn.Properties, "sql_text")
-			queryType := propString(qn.Properties, "query_type")
-			tables := propString(qn.Properties, "tables")
-			name := propString(qn.Properties, "name")
+		if queryNode := queryMap[targetID]; queryNode != nil {
+			sqlText := propString(queryNode.Properties, "sql_text")
+			queryType := propString(queryNode.Properties, "query_type")
+			tablesStr := propString(queryNode.Properties, "tables")
+			baseSQL := propString(queryNode.Properties, "base_sql")
+			conditionsStr := propString(queryNode.Properties, "conditions")
+			name := propString(queryNode.Properties, "name")
 			if name == "" {
 				name = sqlText
 			}
-			chain.Queries = append(chain.Queries, model.ChainNode{
-				ID:            qn.ID,
+
+			chainNode := model.ChainNode{
+				ID:            queryNode.ID,
 				Name:          name,
-				Kind:          queryType,
-				FilePath:      tables,
+				Kind:          constants.KindQueryNode,
+				FilePath:      propString(queryNode.Properties, "file_path"),
 				QualifiedName: callerName,
-			})
+				SQLText:       sqlText,
+				QueryType:     queryType,
+				BaseSQL:       baseSQL,
+			}
+			if tablesStr != "" {
+				tablesArray := strings.Split(tablesStr, ",")
+				if tablesJSON, err := json.Marshal(tablesArray); err == nil {
+					chainNode.Tables = tablesJSON
+				}
+			}
+			if conditionsStr != "" {
+				chainNode.Conditions = json.RawMessage(conditionsStr)
+			}
+			chain.Queries = append(chain.Queries, chainNode)
 		}
 	}
 

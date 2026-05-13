@@ -1699,11 +1699,13 @@ func (indexer *Indexer) writeQueryNodes(ctx context.Context, parseResults []mode
 				ID:   queryID,
 				Kind: constants.KindQueryNode,
 				Properties: map[string]any{
-					"sql_text":   query.SQLText,
-					"query_type": query.QueryType,
-					"tables":     strings.Join(query.Tables, ","),
-					"file_path":  query.FilePath,
-					"caller":     query.CallerName,
+					"sql_text":    query.SQLText,
+					"query_type":  query.QueryType,
+					"tables":      strings.Join(query.Tables, ","),
+					"file_path":   query.FilePath,
+					"caller":      query.CallerName,
+					"base_sql":    query.BaseSQL,
+					"conditions":  marshalConditions(query.Conditions),
 				},
 			})
 			result.SymbolsByKind["query"]++
@@ -2509,6 +2511,14 @@ func extractParamTypeNames(params []model.ParamInfo) []string {
 }
 
 // marshalParams serializes ParamInfo slice to JSON string for storage.
+func marshalConditions(conditions []model.ConditionalFragment) string {
+	if len(conditions) == 0 {
+		return ""
+	}
+	data, _ := json.Marshal(conditions)
+	return string(data)
+}
+
 func marshalParams(params []model.ParamInfo) string {
 	if len(params) == 0 {
 		return "[]"

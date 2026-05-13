@@ -1,7 +1,10 @@
 // Package model defines shared data types for FlashCodeGraph.
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // RelationKind represents the type of relationship between nodes.
 type RelationKind string
@@ -136,10 +139,12 @@ type RouteDetail struct {
 
 // QueryDetail describes a single query node.
 type QueryDetail struct {
-	SQLText   string `json:"sql_text"`
-	QueryType string `json:"query_type"`
-	Tables    string `json:"tables"`
-	Caller    string `json:"caller"`
+	SQLText    string `json:"sql_text"`
+	QueryType  string `json:"query_type"`
+	Tables     string `json:"tables"`
+	Caller     string `json:"caller"`
+	BaseSQL    string `json:"base_sql,omitempty"`
+	Conditions string `json:"conditions,omitempty"`
 }
 
 // ChainNode represents a node in a route chain with layer annotation.
@@ -154,6 +159,12 @@ type ChainNode struct {
 	EndLine       int    `json:"end_line,omitempty"`
 	IsGetter      bool   `json:"is_getter,omitempty"`
 	IsSetter      bool   `json:"is_setter,omitempty"`
+	// Query-specific fields (only populated for QueryNode entries in Queries slice)
+	SQLText    string          `json:"sql_text,omitempty"`
+	QueryType  string          `json:"query_type,omitempty"`
+	Tables     json.RawMessage `json:"tables,omitempty"`
+	BaseSQL    string          `json:"base_sql,omitempty"`
+	Conditions json.RawMessage `json:"conditions,omitempty"`
 }
 
 // ChainEdge is a structured edge for MCP call chain output.

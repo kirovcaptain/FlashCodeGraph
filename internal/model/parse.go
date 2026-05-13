@@ -58,14 +58,23 @@ type RawRemoteCall struct {
 	Line              int     `json:"line"`
 }
 
+// ConditionalFragment represents a SQL fragment appended inside a conditional branch.
+type ConditionalFragment struct {
+	Condition string `json:"condition"`
+	Fragment  string `json:"fragment"`
+	IsElse    bool   `json:"is_else"`
+}
+
 // RawQuery represents a database query extracted from AST.
 type RawQuery struct {
-	SQLText    string   `json:"sql_text"`
-	QueryType  string   `json:"query_type"` // SELECT/INSERT/UPDATE/DELETE
-	Tables     []string `json:"tables"`
-	CallerName string   `json:"caller_name"`
-	FilePath   string   `json:"file_path"`
-	Line       int      `json:"line"`
+	SQLText    string               `json:"sql_text"`
+	QueryType  string               `json:"query_type"` // SELECT/INSERT/UPDATE/DELETE
+	Tables     []string             `json:"tables"`
+	CallerName string               `json:"caller_name"`
+	FilePath   string               `json:"file_path"`
+	Line       int                  `json:"line"`
+	BaseSQL    string               `json:"base_sql,omitempty"`
+	Conditions []ConditionalFragment `json:"conditions,omitempty"`
 }
 
 // RawMiddleware represents a middleware declaration extracted from AST.

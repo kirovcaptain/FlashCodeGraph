@@ -116,6 +116,8 @@ var NodeColumns = map[string][]ColumnDef{
 		{"tables", "STRING"},
 		{"caller", "STRING"},
 		{"file_path", "STRING"},
+		{"base_sql", "STRING"},
+		{"conditions", "STRING"},
 	},
 	"Community": {
 		{"name", "STRING"},

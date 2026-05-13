@@ -431,6 +431,7 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	}
 
 	warning := checkStalenessWarning(ctx, path, branchName)
+	normalizeQueryNodeProperties(subgraph)
 	var resultJSON []byte
 	if mode == "compact" {
 		resultJSON, _ = json.Marshal(struct {
@@ -1197,4 +1198,19 @@ func injectField(originalJSON []byte, fieldName string, fieldValue []byte) strin
 		return "{\"" + fieldName + "\":" + string(fieldValue) + "," + string(originalJSON[1:])
 	}
 	return string(originalJSON)
+}
+
+func normalizeQueryNodeProperties(subgraph *model.Subgraph) {
+	for index := range subgraph.Nodes {
+		node := &subgraph.Nodes[index]
+		if node.Kind != constants.KindQueryNode {
+			continue
+		}
+		if tablesStr, ok := node.Properties["tables"].(string); ok && tablesStr != "" {
+			node.Properties["tables"] = strings.Split(tablesStr, ",")
+		}
+		if conditionsStr, ok := node.Properties["conditions"].(string); ok && conditionsStr != "" {
+			node.Properties["conditions"] = json.RawMessage(conditionsStr)
+		}
+	}
 }
