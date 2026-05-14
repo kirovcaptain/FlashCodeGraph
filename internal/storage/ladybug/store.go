@@ -42,6 +42,7 @@ func (store *Store) exec(query string, params map[string]any) (*lbug.QueryResult
 	if err != nil {
 		return nil, err
 	}
+	defer stmt.Close()
 	return store.conn.Execute(stmt, params)
 }
 
@@ -136,6 +137,9 @@ func (store *Store) Migrate(_ context.Context) error {
 
 // WriteNodes writes nodes in batch using merged SET statements.
 func (store *Store) WriteNodes(_ context.Context, nodes []model.Node) error {
+	if len(nodes) == 0 {
+		return nil
+	}
 	for _, node := range nodes {
 		if err := store.mergeNode(node.Kind, node.ID, node.Properties); err != nil {
 			return err
@@ -145,35 +149,72 @@ func (store *Store) WriteNodes(_ context.Context, nodes []model.Node) error {
 }
 
 func (store *Store) CreateNodes(_ context.Context, nodes []model.Node) error {
-	for _, node := range nodes {
-		if err := store.createNode(node.Kind, node.ID, node.Properties); err != nil {
-			return err
+	if len(nodes) == 0 {
+		return nil
+	}
+	const batchSize = 200
+	grouped := make(map[string][]model.Node)
+	for i := range nodes {
+		grouped[nodes[i].Kind] = append(grouped[nodes[i].Kind], nodes[i])
+	}
+	for kind, kindNodes := range grouped {
+		if !isValidIdentifier(kind) {
+			return fmt.Errorf("ladybug: invalid kind: %s", kind)
+		}
+		columns := model.ColumnNames(kind)
+		var propParts []string
+		propParts = append(propParts, "id: node.id")
+		for _, column := range columns {
+			propParts = append(propParts, fmt.Sprintf("%s: node.%s", column, column))
+		}
+		query := fmt.Sprintf("UNWIND $nodes AS node CREATE (n:%s {%s})", kind, strings.Join(propParts, ", "))
+		for i := 0; i < len(kindNodes); i += batchSize {
+			end := i + batchSize
+			if end > len(kindNodes) {
+				end = len(kindNodes)
+			}
+			nodeParams := make([]any, end-i)
+			for j, node := range kindNodes[i:end] {
+				// JSON round-trip normalizes Go types for ladybug driver parameter binding
+				// (e.g. int→float64, []string→[]any). Do NOT remove without verifying driver type support.
+				propsJSON, _ := json.Marshal(node.Properties)
+				var normalizedProps map[string]any
+				json.Unmarshal(propsJSON, &normalizedProps)
+				entry := map[string]any{"id": node.ID}
+				for _, column := range columns {
+					entry[column] = normalizedProps[column]
+				}
+				nodeParams[j] = entry
+			}
+			result, err := store.exec(query, map[string]any{"nodes": nodeParams})
+			if err != nil {
+				return fmt.Errorf("ladybug: batch create %s: %w", kind, err)
+			}
+			result.Close()
 		}
 	}
 	return nil
 }
 
 func (store *Store) mergeNode(label, id string, props map[string]any) error {
-	// MERGE by id
-	mergeQuery := fmt.Sprintf("MERGE (n:%s {id: $id})", label)
-	result, err := store.exec(mergeQuery, map[string]any{"id": id})
-	if err != nil {
-		return fmt.Errorf("ladybug: merge %s: %w", label, err)
+	if !isValidIdentifier(label) {
+		return fmt.Errorf("ladybug: invalid label/table name: %s", label)
 	}
-	result.Close()
 
-	// Build a single SET statement with all properties
 	// JSON round-trip normalizes Go types for ladybug driver parameter binding
 	// (e.g. int→float64, []string→[]any). Do NOT remove without verifying driver type support.
 	propsJSON, _ := json.Marshal(props)
-	var propsMap map[string]any
-	json.Unmarshal(propsJSON, &propsMap)
+	var normalizedProps map[string]any
+	_ = json.Unmarshal(propsJSON, &normalizedProps)
 
 	setParts := []string{}
 	params := map[string]any{"id": id}
 	paramIndex := 0
-	for key, value := range propsMap {
+	for key, value := range normalizedProps {
 		if key == "id" {
+			continue
+		}
+		if !isValidIdentifier(key) {
 			continue
 		}
 		paramName := fmt.Sprintf("v%d", paramIndex)
@@ -182,61 +223,16 @@ func (store *Store) mergeNode(label, id string, props map[string]any) error {
 		paramIndex++
 	}
 
+	var query string
 	if len(setParts) == 0 {
-		return nil
+		query = fmt.Sprintf("MERGE (n:%s {id: $id})", label)
+	} else {
+		query = fmt.Sprintf("MERGE (n:%s {id: $id}) SET %s", label, strings.Join(setParts, ", "))
 	}
 
-	setQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.id = $id SET %s", label, strings.Join(setParts, ", "))
-	result, err = store.exec(setQuery, params)
-	if err != nil {
-		// Fallback: set properties one by one for schema mismatches
-		for key, value := range propsMap {
-			if key == "id" {
-				continue
-			}
-			fallbackQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.id = $id SET n.%s = $val", label, key)
-			r, e := store.exec(fallbackQuery, map[string]any{"id": id, "val": value})
-			if e != nil {
-				continue // skip properties not in schema
-			}
-			r.Close()
-		}
-		return nil
-	}
-	result.Close()
-	return nil
-}
-
-func (store *Store) createNode(label, id string, props map[string]any) error {
-	// Filter properties to only schema-defined columns
-	validCols := make(map[string]bool)
-	for _, col := range model.NodeColumns[label] {
-		validCols[col.Name] = true
-	}
-
-	// JSON round-trip normalizes Go types for ladybug driver parameter binding
-	// (e.g. int→float64, []string→[]any). Do NOT remove without verifying driver type support.
-	propsJSON, _ := json.Marshal(props)
-	var propsMap map[string]any
-	json.Unmarshal(propsJSON, &propsMap)
-
-	params := map[string]any{"id": id}
-	propDefs := []string{"id: $id"}
-	paramIndex := 0
-	for key, value := range propsMap {
-		if key == "id" || !validCols[key] {
-			continue
-		}
-		paramName := fmt.Sprintf("v%d", paramIndex)
-		propDefs = append(propDefs, fmt.Sprintf("%s: $%s", key, paramName))
-		params[paramName] = value
-		paramIndex++
-	}
-
-	query := fmt.Sprintf("CREATE (n:%s {%s})", label, strings.Join(propDefs, ", "))
 	result, err := store.exec(query, params)
 	if err != nil {
-		return fmt.Errorf("ladybug: create %s: %w", label, err)
+		return fmt.Errorf("ladybugdb execute merge fail on table %s: %w", label, err)
 	}
 	result.Close()
 	return nil
@@ -269,23 +265,26 @@ func (store *Store) createEdge(edge model.Edge) error {
 	}
 
 	params := map[string]any{"source_id": edge.SourceID, "target_id": edge.TargetID}
-	propDefs := []string{}
+	propertyDefs := []string{}
 	paramIndex := 0
 	for key, value := range edge.Properties {
+		if !isValidIdentifier(key) {
+			continue
+		}
 		paramName := fmt.Sprintf("p%d", paramIndex)
-		propDefs = append(propDefs, fmt.Sprintf("%s: $%s", key, paramName))
+		propertyDefs = append(propertyDefs, fmt.Sprintf("%s: $%s", key, paramName))
 		params[paramName] = value
 		paramIndex++
 	}
 
-	propClause := ""
-	if len(propDefs) > 0 {
-		propClause = " {" + strings.Join(propDefs, ", ") + "}"
+	propertyClause := ""
+	if len(propertyDefs) > 0 {
+		propertyClause = " {" + strings.Join(propertyDefs, ", ") + "}"
 	}
 
 	query := fmt.Sprintf(
-		"MATCH (a:%s), (b:%s) WHERE a.id = $source_id AND b.id = $target_id CREATE (a)-[r:%s%s]->(b)",
-		sourceLabel, targetLabel, relTable, propClause)
+		"MATCH (a:%s) WHERE a.id = $source_id MATCH (b:%s) WHERE b.id = $target_id CREATE (a)-[r:%s%s]->(b)",
+		sourceLabel, targetLabel, relTable, propertyClause)
 	result, err := store.exec(query, params)
 	if err != nil {
 		return fmt.Errorf("ladybug: create edge %s: %w", edge.Kind, err)
@@ -302,37 +301,32 @@ func (store *Store) writeEdge(edge model.Edge) error {
 
 	params := map[string]any{"source_id": edge.SourceID, "target_id": edge.TargetID}
 
-	// MERGE the edge first
-	mergeQuery := fmt.Sprintf(
-		"MATCH (a:%s), (b:%s) WHERE a.id = $source_id AND b.id = $target_id MERGE (a)-[r:%s]->(b)",
-		sourceLabel, targetLabel, relTable)
-	result, err := store.exec(mergeQuery, params)
+	var setClause string
+	if len(edge.Properties) > 0 {
+		setParts := []string{}
+		paramIndex := 0
+		for key, value := range edge.Properties {
+			if !isValidIdentifier(key) {
+				continue
+			}
+			paramName := fmt.Sprintf("p%d", paramIndex)
+			setParts = append(setParts, fmt.Sprintf("r.%s = $%s", key, paramName))
+			params[paramName] = value
+			paramIndex++
+		}
+		if len(setParts) > 0 {
+			setClause = " SET " + strings.Join(setParts, ", ")
+		}
+	}
+
+	query := fmt.Sprintf(
+		"MATCH (a:%s) WHERE a.id = $source_id MATCH (b:%s) WHERE b.id = $target_id MERGE (a)-[r:%s]->(b)%s",
+		sourceLabel, targetLabel, relTable, setClause)
+	result, err := store.exec(query, params)
 	if err != nil {
 		return fmt.Errorf("ladybug: write edge %s: %w", edge.Kind, err)
 	}
 	result.Close()
-
-	// SET properties if any
-	if len(edge.Properties) > 0 {
-		setParts := []string{}
-		setParams := map[string]any{"source_id": edge.SourceID, "target_id": edge.TargetID}
-		paramIndex := 0
-		for key, value := range edge.Properties {
-			paramName := fmt.Sprintf("p%d", paramIndex)
-			setParts = append(setParts, fmt.Sprintf("r.%s = $%s", key, paramName))
-			setParams[paramName] = value
-			paramIndex++
-		}
-		setQuery := fmt.Sprintf(
-			"MATCH (a:%s)-[r:%s]->(b:%s) WHERE a.id = $source_id AND b.id = $target_id SET %s",
-			sourceLabel, relTable, targetLabel, strings.Join(setParts, ", "))
-		result, err := store.exec(setQuery, setParams)
-		if err != nil {
-			// Non-fatal: edge created but properties may not match schema
-			return nil
-		}
-		result.Close()
-	}
 	return nil
 }
 
@@ -1232,4 +1226,19 @@ func resultToNode(result *lbug.QueryResult, kind string) *model.Node {
 		id = fmt.Sprint(idValue)
 	}
 	return &model.Node{ID: id, Kind: kind, Properties: props}
+}
+
+func isValidIdentifier(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for i, char := range name {
+		if i == 0 && char >= '0' && char <= '9' {
+			return false
+		}
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_') {
+			return false
+		}
+	}
+	return true
 }

@@ -42,6 +42,7 @@ func (store *Store) exec(query string, params map[string]any) (*gokuzu.QueryResu
 	if err != nil {
 		return nil, err
 	}
+	defer stmt.Close()
 	return store.conn.Execute(stmt, params)
 }
 
