@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	lbug "github.com/LadybugDB/go-ladybug"
@@ -182,7 +183,7 @@ func (store *Store) CreateNodes(_ context.Context, nodes []model.Node) error {
 				json.Unmarshal(propsJSON, &normalizedProps)
 				entry := map[string]any{"id": node.ID}
 				for _, column := range columns {
-					entry[column] = normalizedProps[column]
+					entry[column] = sanitizeSliceForLadybug(normalizedProps[column])
 				}
 				nodeParams[j] = entry
 			}
@@ -1241,4 +1242,203 @@ func isValidIdentifier(name string) bool {
 		}
 	}
 	return true
+}
+
+// sanitizeSliceForLadybug ensures all elements in a slice value have consistent types
+// for go-ladybug LIST parameter binding. The driver requires every element in a LIST
+// to have the same Lbug type; mixed types (e.g. nil + string, int + float64) cause
+// "failed to create LIST value with status: 1". Non-slice values pass through unchanged.
+func sanitizeSliceForLadybug(value any) any {
+	if value == nil {
+		return nil
+	}
+
+	switch typedValue := value.(type) {
+	case []string:
+		result := make([]any, len(typedValue))
+		for i, element := range typedValue {
+			result[i] = element
+		}
+		return result
+
+	case []int:
+		result := make([]any, len(typedValue))
+		for i, element := range typedValue {
+			result[i] = int64(element)
+		}
+		return result
+
+	case []int64:
+		result := make([]any, len(typedValue))
+		for i, element := range typedValue {
+			result[i] = element
+		}
+		return result
+
+	case []any:
+		if len(typedValue) == 0 {
+			return typedValue
+		}
+
+		var hasString, hasFloat, hasBool bool
+		for _, element := range typedValue {
+			if element == nil {
+				continue
+			}
+			switch element.(type) {
+			case string:
+				hasString = true
+			case float64, float32:
+				hasFloat = true
+			case bool:
+				hasBool = true
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			}
+		}
+
+		var targetKind string
+		switch {
+		case hasString:
+			targetKind = "string"
+		case hasFloat:
+			targetKind = "float"
+		case hasBool:
+			targetKind = "bool"
+		default:
+			targetKind = "int"
+		}
+
+		result := make([]any, len(typedValue))
+		for i, element := range typedValue {
+			if element == nil {
+				switch targetKind {
+				case "string":
+					result[i] = ""
+				case "float":
+					result[i] = float64(0)
+				case "bool":
+					result[i] = false
+				case "int":
+					result[i] = int64(0)
+				}
+				continue
+			}
+
+			switch targetKind {
+			case "string":
+				if stringValue, ok := element.(string); ok {
+					result[i] = stringValue
+				} else {
+					result[i] = fmt.Sprintf("%v", element)
+				}
+			case "bool":
+				if boolValue, ok := element.(bool); ok {
+					result[i] = boolValue
+				} else {
+					result[i] = false
+				}
+			case "float":
+				switch numericValue := element.(type) {
+				case float64:
+					result[i] = numericValue
+				case float32:
+					result[i] = float64(numericValue)
+				case int:
+					result[i] = float64(numericValue)
+				case int64:
+					result[i] = float64(numericValue)
+				case int32:
+					result[i] = float64(numericValue)
+				case int16:
+					result[i] = float64(numericValue)
+				case int8:
+					result[i] = float64(numericValue)
+				case uint:
+					result[i] = float64(numericValue)
+				case uint64:
+					result[i] = float64(numericValue)
+				case uint32:
+					result[i] = float64(numericValue)
+				case uint16:
+					result[i] = float64(numericValue)
+				case uint8:
+					result[i] = float64(numericValue)
+				default:
+					result[i] = float64(0)
+				}
+			case "int":
+				switch numericValue := element.(type) {
+				case int:
+					result[i] = int64(numericValue)
+				case int64:
+					result[i] = numericValue
+				case int32:
+					result[i] = int64(numericValue)
+				case int16:
+					result[i] = int64(numericValue)
+				case int8:
+					result[i] = int64(numericValue)
+				case uint:
+					result[i] = int64(numericValue)
+				case uint64:
+					result[i] = int64(numericValue)
+				case uint32:
+					result[i] = int64(numericValue)
+				case uint16:
+					result[i] = int64(numericValue)
+				case uint8:
+					result[i] = int64(numericValue)
+				case float64:
+					result[i] = int64(numericValue)
+				case float32:
+					result[i] = int64(numericValue)
+				default:
+					result[i] = int64(0)
+				}
+			}
+		}
+		return result
+
+	default:
+		reflectValue := reflect.ValueOf(value)
+		if reflectValue.Kind() == reflect.Slice || reflectValue.Kind() == reflect.Array {
+			length := reflectValue.Len()
+			if length == 0 {
+				return []any{}
+			}
+
+			elemKind := reflectValue.Type().Elem().Kind()
+			anySlice := make([]any, length)
+
+			switch {
+			case elemKind == reflect.String:
+				for i := 0; i < length; i++ {
+					anySlice[i] = reflectValue.Index(i).String()
+				}
+			case elemKind == reflect.Bool:
+				for i := 0; i < length; i++ {
+					anySlice[i] = reflectValue.Index(i).Bool()
+				}
+			case elemKind == reflect.Float64 || elemKind == reflect.Float32:
+				for i := 0; i < length; i++ {
+					anySlice[i] = reflectValue.Index(i).Float()
+				}
+			case elemKind >= reflect.Int && elemKind <= reflect.Int64:
+				for i := 0; i < length; i++ {
+					anySlice[i] = reflectValue.Index(i).Int()
+				}
+			case elemKind >= reflect.Uint && elemKind <= reflect.Uint64:
+				for i := 0; i < length; i++ {
+					anySlice[i] = int64(reflectValue.Index(i).Uint())
+				}
+			default:
+				for i := 0; i < length; i++ {
+					anySlice[i] = reflectValue.Index(i).Interface()
+				}
+				return sanitizeSliceForLadybug(anySlice)
+			}
+			return anySlice
+		}
+		return value
+	}
 }
