@@ -183,7 +183,11 @@ func (store *Store) CreateNodes(_ context.Context, nodes []model.Node) error {
 				json.Unmarshal(propsJSON, &normalizedProps)
 				entry := map[string]any{"id": node.ID}
 				for _, column := range columns {
-					entry[column] = sanitizeSliceForLadybug(normalizedProps[column])
+					val := sanitizeSliceForLadybug(normalizedProps[column])
+					if val == nil && strings.HasSuffix(model.GetColumnType(kind, column), "[]") {
+						val = []any{}
+					}
+					entry[column] = val
 				}
 				nodeParams[j] = entry
 			}
