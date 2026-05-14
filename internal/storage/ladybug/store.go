@@ -163,39 +163,78 @@ func (store *Store) CreateNodes(_ context.Context, nodes []model.Node) error {
 			return fmt.Errorf("ladybug: invalid kind: %s", kind)
 		}
 		columns := model.ColumnNames(kind)
-		var propParts []string
-		propParts = append(propParts, "id: node.id")
+
+		// Separate scalar and list columns: LIST columns cannot be in UNWIND CREATE
+		// because the driver requires consistent types per STRUCT key — NULL vs LIST
+		// and empty slice vs LIST both cause type inference failures.
+		var scalarColumns, listColumns []string
 		for _, column := range columns {
+			if strings.HasSuffix(model.GetColumnType(kind, column), "[]") {
+				listColumns = append(listColumns, column)
+			} else {
+				scalarColumns = append(scalarColumns, column)
+			}
+		}
+
+		propParts := []string{"id: node.id"}
+		for _, column := range scalarColumns {
 			propParts = append(propParts, fmt.Sprintf("%s: node.%s", column, column))
 		}
-		query := fmt.Sprintf("UNWIND $nodes AS node CREATE (n:%s {%s})", kind, strings.Join(propParts, ", "))
+		createQuery := fmt.Sprintf("UNWIND $nodes AS node CREATE (n:%s {%s})", kind, strings.Join(propParts, ", "))
+
 		for i := 0; i < len(kindNodes); i += batchSize {
 			end := i + batchSize
 			if end > len(kindNodes) {
 				end = len(kindNodes)
 			}
-			nodeParams := make([]any, end-i)
-			for j, node := range kindNodes[i:end] {
+			batch := kindNodes[i:end]
+
+			// Phase 1: batch CREATE with scalar columns only
+			nodeParams := make([]any, len(batch))
+			allNormalized := make([]map[string]any, len(batch))
+			for j, node := range batch {
 				// JSON round-trip normalizes Go types for ladybug driver parameter binding
 				// (e.g. int→float64, []string→[]any). Do NOT remove without verifying driver type support.
 				propsJSON, _ := json.Marshal(node.Properties)
 				var normalizedProps map[string]any
 				json.Unmarshal(propsJSON, &normalizedProps)
+				allNormalized[j] = normalizedProps
+
 				entry := map[string]any{"id": node.ID}
-				for _, column := range columns {
-					val := sanitizeSliceForLadybug(normalizedProps[column])
-					if val == nil && strings.HasSuffix(model.GetColumnType(kind, column), "[]") {
-						val = []any{}
-					}
-					entry[column] = val
+				for _, column := range scalarColumns {
+					entry[column] = normalizedProps[column]
 				}
 				nodeParams[j] = entry
 			}
-			result, err := store.exec(query, map[string]any{"nodes": nodeParams})
+			result, err := store.exec(createQuery, map[string]any{"nodes": nodeParams})
 			if err != nil {
 				return fmt.Errorf("ladybug: batch create %s: %w", kind, err)
 			}
 			result.Close()
+
+			// Phase 2: batch SET list columns separately — only nodes with non-nil non-empty values
+			for _, listCol := range listColumns {
+				var updates []any
+				for j, node := range batch {
+					val := sanitizeSliceForLadybug(allNormalized[j][listCol])
+					if val == nil {
+						continue
+					}
+					if slice, ok := val.([]any); ok && len(slice) == 0 {
+						continue
+					}
+					updates = append(updates, map[string]any{"id": node.ID, "val": val})
+				}
+				if len(updates) == 0 {
+					continue
+				}
+				setQuery := fmt.Sprintf("UNWIND $updates AS u MATCH (n:%s) WHERE n.id = u.id SET n.%s = u.val", kind, listCol)
+				result, err := store.exec(setQuery, map[string]any{"updates": updates})
+				if err != nil {
+					return fmt.Errorf("ladybug: batch set %s.%s: %w", kind, listCol, err)
+				}
+				result.Close()
+			}
 		}
 	}
 	return nil
