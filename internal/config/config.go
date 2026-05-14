@@ -57,12 +57,13 @@ type AnnotationsConfig struct {
 
 // StorageConfig holds storage backend settings.
 type StorageConfig struct {
-	Database       string `toml:"database"`        // kuzu, falkordb, ladybug, neo4j
+	Database       string `toml:"database"`                   // kuzu, falkordb, ladybug, neo4j
 	Neo4jURI       string `toml:"neo4j_uri,omitempty"`
 	FalkorDBURI    string `toml:"falkordb_uri,omitempty"`
 	FalkorDBGraph  string `toml:"falkordb_graph,omitempty"`
 	KuzuPath       string `toml:"kuzu_path,omitempty"`
 	LadybugPath    string `toml:"ladybug_path,omitempty"`
+	DataDir        string `toml:"data_dir,omitempty"`         // base directory for embedded DB data, default ~/.fcg/data
 	BufferPoolSize string `toml:"buffer_pool_size,omitempty"` // e.g. "3GB", embedded DB buffer pool limit
 	Branch         string `toml:"-"`                          // runtime override, not persisted
 }
@@ -102,6 +103,19 @@ func DefaultConfig() *Config {
 func GlobalDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".fcg")
+}
+
+// DefaultDataDir returns the default data directory for embedded databases.
+func DefaultDataDir() string {
+	return filepath.Join(GlobalDir(), "data")
+}
+
+// ResolveDataDir returns the configured data_dir, or the default if not set.
+func (cfg *Config) ResolveDataDir() string {
+	if cfg.Storage.DataDir != "" {
+		return cfg.Storage.DataDir
+	}
+	return DefaultDataDir()
 }
 
 // GlobalConfigPath returns the global config file path.

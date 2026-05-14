@@ -102,9 +102,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 2b: Embedded database data directory and buffer pool size
-	var bufferPoolSize string
+	var dataDir, bufferPoolSize string
 	if database == "kuzu" || database == "ladybug" {
-		bufferPoolSize = configureEmbeddedStorage(reader, database)
+		dataDir, bufferPoolSize = configureEmbeddedStorage(reader, database)
 	}
 
 	// Step 3: Cross-project index backend
@@ -115,6 +115,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	cfg.Storage.Database = database
 	if falkordbURI != "" {
 		cfg.Storage.FalkorDBURI = falkordbURI
+	}
+	if dataDir != "" {
+		cfg.Storage.DataDir = dataDir
 	}
 	if bufferPoolSize != "" {
 		cfg.Storage.BufferPoolSize = bufferPoolSize
@@ -236,8 +239,8 @@ func selectCrossProjectIndex(reader *bufio.Reader) (backend, sqlitePath string) 
 }
 
 // configureEmbeddedStorage validates the data directory and prompts for buffer pool size.
-func configureEmbeddedStorage(reader *bufio.Reader, database string) string {
-	defaultDir := filepath.Join(config.GlobalDir(), "data")
+func configureEmbeddedStorage(reader *bufio.Reader, database string) (string, string) {
+	defaultDir := config.DefaultDataDir()
 	fmt.Println()
 	fmt.Printf("  %s data directory:\n", strings.ToUpper(database[:1])+database[1:])
 	fmt.Println("    Graph data is stored per-project under this directory.")
@@ -268,5 +271,5 @@ func configureEmbeddedStorage(reader *bufio.Reader, database string) string {
 		line = defaultPool
 	}
 	fmt.Printf("  ✅ Buffer pool: %s\n", line)
-	return line
+	return targetDir, line
 }

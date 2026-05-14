@@ -41,15 +41,13 @@ func openGraphStore(cfg *config.Config, repoPath string) (storage.GraphStore, er
 	case "kuzu":
 		dbPath := cfg.Storage.KuzuPath
 		if dbPath == "" && repoPath != "" {
-			// Auto-resolve: ~/.fcg/data/{project-hash}/{branch}/graph.kuzu
 			absPath, _ := filepath.Abs(repoPath)
-			fcgDir := config.GlobalDir()
-			dataDir := storage.DataDir(fcgDir, absPath)
+			projectName := filepath.Base(absPath)
 			branchName := cfg.Storage.Branch
 			if branchName == "" {
 				branchName = branch.DetectBranch(absPath)
 			}
-			dbPath = filepath.Join(dataDir, branchName, "graph.kuzu")
+			dbPath = filepath.Join(cfg.ResolveDataDir(), projectName, branchName, "graph.kuzu")
 			os.MkdirAll(filepath.Dir(dbPath), model.DirectoryPermission)
 		}
 
@@ -71,13 +69,12 @@ func openGraphStore(cfg *config.Config, repoPath string) (storage.GraphStore, er
 		dbPath := cfg.Storage.LadybugPath
 		if dbPath == "" && repoPath != "" {
 			absPath, _ := filepath.Abs(repoPath)
-			fcgDir := config.GlobalDir()
-			dataDir := storage.DataDir(fcgDir, absPath)
+			projectName := filepath.Base(absPath)
 			branchName := cfg.Storage.Branch
 			if branchName == "" {
 				branchName = branch.DetectBranch(absPath)
 			}
-			dbPath = filepath.Join(dataDir, branchName, "graph.ladybug")
+			dbPath = filepath.Join(cfg.ResolveDataDir(), projectName, branchName, "graph.ladybug")
 			os.MkdirAll(filepath.Dir(dbPath), model.DirectoryPermission)
 		}
 
