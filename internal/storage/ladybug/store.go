@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
+	"runtime"
+	"sort"
 	"strings"
 
 	lbug "github.com/LadybugDB/go-ladybug"
@@ -294,11 +297,76 @@ func (store *Store) WriteEdges(_ context.Context, edges []model.Edge) error {
 	return nil
 }
 
-// CreateEdges writes edges in batch using CREATE (no duplicate check, faster).
+// CreateEdges writes edges in batch using CREATE with prepared statement caching.
 func (store *Store) CreateEdges(_ context.Context, edges []model.Edge) error {
-	for _, edge := range edges {
-		if err := store.createEdge(edge); err != nil {
-			return err
+	if len(edges) == 0 {
+		return nil
+	}
+
+	stmtCache := make(map[string]*lbug.PreparedStatement)
+	defer func() {
+		for _, stmt := range stmtCache {
+			stmt.Close()
+		}
+	}()
+
+	for i, edge := range edges {
+		relTable, sourceLabel, targetLabel := mapRelation(edge.Kind, edge.SourceKind)
+		if relTable == "" {
+			return fmt.Errorf("ladybug: unknown relation kind: %s", edge.Kind)
+		}
+
+		var propKeys []string
+		for key := range edge.Properties {
+			if isValidIdentifier(key) {
+				propKeys = append(propKeys, key)
+			}
+		}
+		sort.Strings(propKeys)
+
+		cacheKey := sourceLabel + "-" + targetLabel + "-" + relTable
+		for _, key := range propKeys {
+			cacheKey += "-" + key
+		}
+
+		stmt, exists := stmtCache[cacheKey]
+		if !exists {
+			var propertyDefs []string
+			for paramIndex, key := range propKeys {
+				propertyDefs = append(propertyDefs, fmt.Sprintf("%s: $p%d", key, paramIndex))
+			}
+			propertyClause := ""
+			if len(propertyDefs) > 0 {
+				propertyClause = " {" + strings.Join(propertyDefs, ", ") + "}"
+			}
+			query := fmt.Sprintf(
+				"MATCH (a:%s) WHERE a.id = $source_id MATCH (b:%s) WHERE b.id = $target_id CREATE (a)-[r:%s%s]->(b)",
+				sourceLabel, targetLabel, relTable, propertyClause)
+
+			var err error
+			stmt, err = store.conn.Prepare(query)
+			if err != nil {
+				return fmt.Errorf("ladybug: prepare create edge %s: %w", edge.Kind, err)
+			}
+			stmtCache[cacheKey] = stmt
+		}
+
+		params := map[string]any{"source_id": edge.SourceID, "target_id": edge.TargetID}
+		for paramIndex, key := range propKeys {
+			params[fmt.Sprintf("p%d", paramIndex)] = edge.Properties[key]
+		}
+
+		result, err := store.conn.Execute(stmt, params)
+		if err != nil {
+			return fmt.Errorf("ladybug: create edge %s: %w", edge.Kind, err)
+		}
+		result.Close()
+
+		if (i+1)%5000 == 0 {
+			var memStats runtime.MemStats
+			runtime.ReadMemStats(&memStats)
+			fmt.Fprintf(os.Stderr, "[mem] CreateEdges %d/%d: heap=%dMB, sys=%dMB\n",
+				i+1, len(edges), memStats.HeapAlloc/1024/1024, memStats.Sys/1024/1024)
 		}
 	}
 	return nil

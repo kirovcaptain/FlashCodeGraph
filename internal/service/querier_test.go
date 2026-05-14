@@ -1191,7 +1191,7 @@ func TestCompactSubgraphEdges_DifferentKind(t *testing.T) {
 }
 
 func TestQuerier_QueryAffectedRoutes(t *testing.T) {
-	store, err := kuzu.New("")
+	store, err := kuzu.New("", 0)
 	if err != nil {
 		t.Fatal("open store:", err)
 	}

@@ -554,6 +554,28 @@ func TestResolveImports_FileIndexStripsExtension(t *testing.T) {
 }
 
 
+func TestResolveImports_WindowsBackslashPaths(t *testing.T) {
+	table := NewSymbolTable()
+	resolver := newTestResolver(table)
+
+	imports := []model.RawImport{
+		{ModulePath: "com.example.UserService", SymbolName: "UserService", FilePath: "src\\main\\java\\com\\example\\App.java", Line: 3},
+	}
+	allFiles := []string{
+		"src\\main\\java\\com\\example\\App.java",
+		"src\\main\\java\\com\\example\\UserService.java",
+	}
+
+	relations := resolver.ResolveImports(imports, allFiles)
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 IMPORTS relation with backslash paths, got %d", len(relations))
+	}
+	if relations[0].TargetID != "file:src\\main\\java\\com\\example\\UserService.java" {
+		t.Fatalf("TargetID expected UserService.java, got %s", relations[0].TargetID)
+	}
+	t.Log("✅ Windows backslash paths resolved")
+}
+
 func TestResolveCalls_TypeParent(t *testing.T) {
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{

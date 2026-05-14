@@ -10,7 +10,7 @@ import (
 )
 
 func TestLadybugAvailable(t *testing.T) {
-	store, err := New("")
+	store, err := New("", 0)
 	if err != nil {
 		t.Fatalf("LadybugDB unavailable (native library missing?): %v", err)
 	}
@@ -23,7 +23,7 @@ func TestLadybugAvailable(t *testing.T) {
 
 func setupTestStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := New("") // in-memory
+	store, err := New("", 0) // in-memory
 	if err != nil {
 		t.Fatal("open:", err)
 	}
@@ -609,7 +609,7 @@ func TestSourceKindConstants(t *testing.T) {
 // TestLadybug_MultiRelTypeRecursive verifies Ladybug supports [:CALLS|DISPATCHES*1..N] syntax.
 // Result: ✅ Supported. Used to decide D-01 in iteration 1.2.
 func TestLadybug_MultiRelTypeRecursive(t *testing.T) {
-	store, err := New("")
+	store, err := New("", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +667,7 @@ func TestLadybug_MultiRelTypeRecursive(t *testing.T) {
 // works correctly in Ladybug. This is the syntax used by traverseBFS for per-hop BFS.
 // Scenario: A -CALLS-> B, A -DISPATCHES-> C. Single hop from A should find both B and C.
 func TestLadybug_MultiRelTypeSingleHop(t *testing.T) {
-	store, err := New("")
+	store, err := New("", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -760,7 +760,7 @@ func TestLadybug_MultiRelTypeSingleHop(t *testing.T) {
 }
 
 func TestLadybug_CreateEdgeInlineProps(t *testing.T) {
-	store, err := New("")
+	store, err := New("", 0)
 	if err != nil { t.Fatal(err) }
 	defer store.Close()
 	ctx := context.Background()

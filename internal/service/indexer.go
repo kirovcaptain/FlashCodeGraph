@@ -890,6 +890,11 @@ func (indexer *Indexer) writeResolvedRelations(
 	allRelations = append(allRelations, implementsRelations...)
 	indexer.dump.OnAllRelations(heritageRelations, overrideRelations, implementsRelations)
 
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	fmt.Fprintf(os.Stderr, "[mem] before relation edges (%d edges): heap=%dMB, sys=%dMB\n",
+		len(allRelations), memStats.HeapAlloc/1024/1024, memStats.Sys/1024/1024)
+
 	indexer.progress.EmitSub(PhaseResolving, SubRelationEdges, "")
 	if err := indexer.writeRelations(ctx, allRelations, scanCtx.result); err != nil {
 		return fmt.Errorf("indexer: write relations: %w", err)

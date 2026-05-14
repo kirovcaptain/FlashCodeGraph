@@ -22,7 +22,7 @@ import (
 
 func setupTestIndexer(t *testing.T) (*Indexer, storage.GraphStore) {
 	t.Helper()
-	store, err := kuzu.New("")
+	store, err := kuzu.New("", 0)
 	if err != nil {
 		t.Fatal("open store:", err)
 	}

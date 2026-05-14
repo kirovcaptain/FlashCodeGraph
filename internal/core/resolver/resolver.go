@@ -983,7 +983,9 @@ func (resolver *Resolver) ResolveImports(imports []model.RawImport, allFiles []s
 		for _, ext := range []string{".java", ".py", ".go", ".ts", ".tsx", ".js", ".jsx"} {
 			base = strings.TrimSuffix(base, ext)
 		}
-		base = lastSegment(strings.ReplaceAll(base, "/", "."))
+		base = strings.ReplaceAll(base, "\\", ".")
+		base = strings.ReplaceAll(base, "/", ".")
+		base = lastSegment(base)
 		fileIndex[base] = filePath
 	}
 
