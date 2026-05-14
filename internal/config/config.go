@@ -57,13 +57,14 @@ type AnnotationsConfig struct {
 
 // StorageConfig holds storage backend settings.
 type StorageConfig struct {
-	Database      string `toml:"database"`        // kuzu, falkordb, ladybug, neo4j
-	Neo4jURI      string `toml:"neo4j_uri,omitempty"`
-	FalkorDBURI   string `toml:"falkordb_uri,omitempty"`
-	FalkorDBGraph string `toml:"falkordb_graph,omitempty"`
-	KuzuPath      string `toml:"kuzu_path,omitempty"`
-	LadybugPath   string `toml:"ladybug_path,omitempty"`
-	Branch        string `toml:"-"` // runtime override, not persisted
+	Database       string `toml:"database"`        // kuzu, falkordb, ladybug, neo4j
+	Neo4jURI       string `toml:"neo4j_uri,omitempty"`
+	FalkorDBURI    string `toml:"falkordb_uri,omitempty"`
+	FalkorDBGraph  string `toml:"falkordb_graph,omitempty"`
+	KuzuPath       string `toml:"kuzu_path,omitempty"`
+	LadybugPath    string `toml:"ladybug_path,omitempty"`
+	BufferPoolSize string `toml:"buffer_pool_size,omitempty"` // e.g. "3GB", embedded DB buffer pool limit
+	Branch         string `toml:"-"`                          // runtime override, not persisted
 }
 
 // SystemConfig holds system-level settings.
@@ -90,7 +91,7 @@ type EmbeddingConfig struct {
 // DefaultConfig returns a config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		Storage:           StorageConfig{Database: DetectDefaultDatabase()},
+		Storage:           StorageConfig{Database: DetectDefaultDatabase(), BufferPoolSize: "3GB"},
 		System:            SystemConfig{Goroutines: 0, MemoryLimit: "4GB", LogLevel: "info"},
 		Index:             IndexConfig{MaxFileSize: 2 * 1024 * 1024, ExcludeTests: true},
 		CrossProjectIndex: CrossProjectIndexConfig{Backend: "sqlite"},

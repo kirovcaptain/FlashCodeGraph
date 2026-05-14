@@ -21,6 +21,14 @@ import (
 func openGraphStore(cfg *config.Config, repoPath string) (storage.GraphStore, error) {
 	database, address, _ := storage.ResolveStorageAddress(cfg)
 
+	// Parse buffer pool size from config for embedded databases
+	var bufferPoolSize uint64
+	if cfg.Storage.BufferPoolSize != "" {
+		if parsed, err := config.ParseMemoryLimit(cfg.Storage.BufferPoolSize); err == nil && parsed > 0 {
+			bufferPoolSize = uint64(parsed)
+		}
+	}
+
 	switch database {
 	case "falkordb":
 		graphName := falkor.ResolveGraphName(cfg, repoPath)
@@ -45,10 +53,10 @@ func openGraphStore(cfg *config.Config, repoPath string) (storage.GraphStore, er
 			os.MkdirAll(filepath.Dir(dbPath), model.DirectoryPermission)
 		}
 
-		store, err := kuzu.New(dbPath)
+		store, err := kuzu.New(dbPath, bufferPoolSize)
 		if err != nil {
-			// Fallback to in-memory if disk mode fails (e.g. WSL)
-			store, err = kuzu.New("")
+			fmt.Fprintf(os.Stderr, "[warn] KùzuDB disk mode failed (%s): %v, falling back to in-memory\n", dbPath, err)
+			store, err = kuzu.New("", bufferPoolSize)
 			if err != nil {
 				return nil, fmt.Errorf("open KùzuDB: %w", err)
 			}
@@ -73,9 +81,10 @@ func openGraphStore(cfg *config.Config, repoPath string) (storage.GraphStore, er
 			os.MkdirAll(filepath.Dir(dbPath), model.DirectoryPermission)
 		}
 
-		lbStore, err := ladybug.New(dbPath)
+		lbStore, err := ladybug.New(dbPath, bufferPoolSize)
 		if err != nil {
-			lbStore, err = ladybug.New("")
+			fmt.Fprintf(os.Stderr, "[warn] LadybugDB disk mode failed (%s): %v, falling back to in-memory\n", dbPath, err)
+			lbStore, err = ladybug.New("", bufferPoolSize)
 			if err != nil {
 				return nil, fmt.Errorf("open LadybugDB: %w", err)
 			}

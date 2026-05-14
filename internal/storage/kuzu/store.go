@@ -20,9 +20,11 @@ type Store struct {
 }
 
 // New creates a KùzuDB store. Pass "" for dbPath to use in-memory mode.
-func New(dbPath string) (*Store, error) {
+func New(dbPath string, bufferPoolSize uint64) (*Store, error) {
 	cfg := gokuzu.DefaultSystemConfig()
-	cfg.BufferPoolSize = 256 * 1024 * 1024
+	if bufferPoolSize > 0 {
+		cfg.BufferPoolSize = bufferPoolSize
+	}
 
 	db, err := gokuzu.OpenDatabase(dbPath, cfg)
 	if err != nil {

@@ -101,6 +101,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Step 2b: Embedded database data directory and buffer pool size
+	var bufferPoolSize string
+	if database == "kuzu" || database == "ladybug" {
+		bufferPoolSize = configureEmbeddedStorage(reader, database)
+	}
+
 	// Step 3: Cross-project index backend
 	crossBackend, crossSQLitePath := selectCrossProjectIndex(reader)
 
@@ -109,6 +115,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	cfg.Storage.Database = database
 	if falkordbURI != "" {
 		cfg.Storage.FalkorDBURI = falkordbURI
+	}
+	if bufferPoolSize != "" {
+		cfg.Storage.BufferPoolSize = bufferPoolSize
 	}
 	cfg.CrossProjectIndex.Backend = crossBackend
 	cfg.CrossProjectIndex.SQLitePath = crossSQLitePath
@@ -224,4 +233,40 @@ func selectCrossProjectIndex(reader *bufio.Reader) (backend, sqlitePath string) 
 	}
 
 	return backend, sqlitePath
+}
+
+// configureEmbeddedStorage validates the data directory and prompts for buffer pool size.
+func configureEmbeddedStorage(reader *bufio.Reader, database string) string {
+	defaultDir := filepath.Join(config.GlobalDir(), "data")
+	fmt.Println()
+	fmt.Printf("  %s data directory:\n", strings.ToUpper(database[:1])+database[1:])
+	fmt.Println("    Graph data is stored per-project under this directory.")
+	fmt.Printf("  Path [%s]: ", defaultDir)
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	targetDir := defaultDir
+	if line != "" {
+		targetDir = line
+	}
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		fmt.Printf("  ⚠️  Cannot create directory %s: %v\n", targetDir, err)
+	} else {
+		fmt.Println("  ✅ Path OK")
+	}
+
+	defaultPool := "3GB"
+	fmt.Println()
+	fmt.Println("  Buffer pool size (limits database memory usage):")
+	fmt.Printf("  Size [%s]: ", defaultPool)
+	line, _ = reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line == "" {
+		line = defaultPool
+	}
+	if _, err := config.ParseMemoryLimit(line); err != nil {
+		fmt.Printf("  ⚠️  Invalid format %q, using default %s\n", line, defaultPool)
+		line = defaultPool
+	}
+	fmt.Printf("  ✅ Buffer pool: %s\n", line)
+	return line
 }
