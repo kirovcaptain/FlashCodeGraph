@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"strings"
 	"time"
@@ -81,6 +83,11 @@ type scanContext struct {
 func (indexer *Indexer) Index(ctx context.Context, repoPath string, branch string, forceFullIndex bool, onProgress model.ProgressCallback) (*model.IndexResult, error) {
 	indexer.mu.Lock()
 	defer indexer.mu.Unlock()
+
+	if limit, err := config.ParseMemoryLimit(indexer.config.System.MemoryLimit); err == nil && limit != math.MaxInt64 {
+		debug.SetMemoryLimit(limit)
+		defer debug.SetMemoryLimit(math.MaxInt64)
+	}
 
 	indexer.progress = NewProgressManager(onProgress)
 
@@ -254,6 +261,7 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 		return nil, err
 	}
 
+	clearParseResultsPhase1(parseResults)
 
 	// Inject cross-project symbols into symbolTable for resolver
 	crossProjectNodes, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable)
@@ -286,6 +294,7 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 		allRemoteCalls = append(allRemoteCalls, parseResult.RemoteCalls...)
 		allPendingCalls = append(allPendingCalls, parseResult.PendingRemoteCalls...)
 	}
+	clearParseResultsPhase2(parseResults)
 	indexer.dump.OnRemoteCalls(allRemoteCalls, allPendingCalls)
 	// Step 8: Match consumer to provider (cross-service CALLS edges)
 	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, allPendingCalls, symbolTable, allRoutes, routeToHandler); err != nil {
@@ -393,6 +402,7 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 		return nil, err
 	}
 
+	clearParseResultsPhase1(parseResults)
 
 	// Inject cross-project symbols into symbolTable for resolver (clean old nodes first for incremental)
 	crossProjectNodes, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable)
@@ -425,6 +435,7 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 		allRemoteCalls = append(allRemoteCalls, parseResult.RemoteCalls...)
 		allPendingCalls = append(allPendingCalls, parseResult.PendingRemoteCalls...)
 	}
+	clearParseResultsPhase2(parseResults)
 	indexer.dump.OnRemoteCalls(allRemoteCalls, allPendingCalls)
 	// Step 8: Match consumer to provider (cross-service CALLS edges)
 	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, allPendingCalls, symbolTable, allRoutes, routeToHandler); err != nil {
@@ -2689,4 +2700,33 @@ func (indexer *Indexer) resolvePendingRemoteCalls(ctx context.Context, scanCtx *
 	indexer.progress.EmitSub(PhaseWriting, SubResolvePendingRemoteCalls,
 		fmt.Sprintf("%d pending, %d matched", len(pendingCalls), matchedCount))
 	return nil
+}
+
+// clearParseResultsPhase1 nils fields consumed by writeSemanticNodes (excluding Symbols,
+// which are still needed by resolveAndWriteRelations type inference).
+// Call after writeSymbolContainsEdges, before resolveAndWriteRelations.
+func clearParseResultsPhase1(parseResults []model.ParseResult) {
+	for i := range parseResults {
+		parseResults[i].Fields = nil
+		parseResults[i].Routes = nil
+		parseResults[i].Queries = nil
+		parseResults[i].Middlewares = nil
+	}
+	runtime.GC()
+}
+
+// clearParseResultsPhase2 nils fields consumed by resolveAndWriteRelations and resolvePendingRemoteCalls.
+// Call after flattening allRemoteCalls/allPendingCalls, before matchConsumerToProvider.
+func clearParseResultsPhase2(parseResults []model.ParseResult) {
+	for i := range parseResults {
+		parseResults[i].Symbols = nil
+		parseResults[i].Calls = nil
+		parseResults[i].Imports = nil
+		parseResults[i].Heritage = nil
+		parseResults[i].TypeHints = nil
+		parseResults[i].PendingAssignments = nil
+		parseResults[i].RemoteCalls = nil
+		parseResults[i].PendingRemoteCalls = nil
+	}
+	runtime.GC()
 }

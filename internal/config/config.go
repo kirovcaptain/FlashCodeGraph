@@ -3,8 +3,10 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -89,8 +91,8 @@ type EmbeddingConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Storage:           StorageConfig{Database: DetectDefaultDatabase()},
-		System:            SystemConfig{Goroutines: 0, MemoryLimit: "1GB", LogLevel: "info"},
-		Index:             IndexConfig{MaxFileSize: 512 * 1024, ExcludeTests: true},
+		System:            SystemConfig{Goroutines: 0, MemoryLimit: "4GB", LogLevel: "info"},
+		Index:             IndexConfig{MaxFileSize: 2 * 1024 * 1024, ExcludeTests: true},
 		CrossProjectIndex: CrossProjectIndexConfig{Backend: "sqlite"},
 	}
 }
@@ -229,12 +231,12 @@ database = "%s"     # Storage backend: kuzu | ladybug (local embedded) | falkord
 
 [system]
 goroutines = 0        # Parallel goroutines, 0 = auto (runtime.NumCPU())
-memory_limit = "1GB"  # Peak memory limit during indexing
+memory_limit = "4GB"  # Peak memory limit during indexing
 log_level = "info"    # Log level: debug | info | warn | error
 
 [index]
 languages = [%s]
-max_file_size = 524288          # Skip files larger than this (bytes), default 512KB
+max_file_size = 2097152         # Skip files larger than this (bytes), default 2MB
 # annotation_nodes = [          # Annotations to create as graph nodes (supports graph queries)
 #     "@RestController", "@Service", "@Repository",
 #     "@Transactional", "@Autowired", "@Bean",
@@ -259,4 +261,33 @@ func formatStringSlice(ss []string) string {
 		quoted[i] = fmt.Sprintf("%q", s)
 	}
 	return strings.Join(quoted, ", ")
+}
+
+// ParseMemoryLimit parses a human-readable memory limit string (e.g. "4GB", "512MB") into bytes.
+// Returns math.MaxInt64 for empty/zero input (no limit).
+func ParseMemoryLimit(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return math.MaxInt64, nil
+	}
+	upper := strings.ToUpper(s)
+	var multiplier int64 = 1
+	switch {
+	case strings.HasSuffix(upper, "GB"):
+		multiplier = 1024 * 1024 * 1024
+		s = s[:len(s)-2]
+	case strings.HasSuffix(upper, "MB"):
+		multiplier = 1024 * 1024
+		s = s[:len(s)-2]
+	case strings.HasSuffix(upper, "KB"):
+		multiplier = 1024
+		s = s[:len(s)-2]
+	case strings.HasSuffix(upper, "B"):
+		s = s[:len(s)-1]
+	}
+	val, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid memory limit %q: %w", s, err)
+	}
+	return int64(val * float64(multiplier)), nil
 }
