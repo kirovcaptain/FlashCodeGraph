@@ -40,10 +40,15 @@ func ResolveStorageAddress(cfg *config.Config) (database string, address string,
 		address = cfg.Storage.Neo4jURI
 	case "ladybug":
 		address = cfg.Storage.LadybugPath
+		if address == "" {
+			address = cfg.ResolveDataDir()
+		}
 	default:
-		// kuzu — address is the data directory path
 		database = "kuzu"
-		address = ""
+		address = cfg.Storage.KuzuPath
+		if address == "" {
+			address = cfg.ResolveDataDir()
+		}
 	}
 
 	return database, address, graphName
@@ -62,6 +67,9 @@ func FormatStorageInfo(database, address string) string {
 		}
 		return fmt.Sprintf("LadybugDB (%s)", address)
 	default:
-		return "KùzuDB (in-memory)"
+		if address == "" {
+			return "KùzuDB (in-memory)"
+		}
+		return fmt.Sprintf("KùzuDB (%s)", address)
 	}
 }
