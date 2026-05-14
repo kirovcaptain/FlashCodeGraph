@@ -706,16 +706,57 @@ func (store *Store) QueryAllEdges(ctx context.Context, relKind model.RelationKin
 }
 
 // QueryNodesByIDs returns nodes matching any of the given IDs.
+// Uses explicit column projection per kind to avoid RESP2 serializing properties() as a string.
 func (store *Store) QueryNodesByIDs(ctx context.Context, ids []string) ([]model.Node, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	cypher := "MATCH (n) WHERE n.id IN $ids RETURN n.id, labels(n)[0], properties(n)"
-	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"ids", ids}})
-	if err != nil {
-		return nil, err
+	var nodes []model.Node
+	for _, kind := range []string{
+		constants.KindFunction, constants.KindClass, constants.KindInterface,
+		constants.KindRoute, constants.KindQueryNode, constants.KindAnnotation,
+	} {
+		returnClause := model.QueryReturnClause(kind)
+		cypher := fmt.Sprintf("MATCH (n:%s) WHERE n.id IN $ids RETURN %s", kind, returnClause)
+		rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"ids", ids}})
+		if err != nil {
+			continue
+		}
+		colNames := append([]string{"id"}, model.ColumnNames(kind)...)
+		nodes = append(nodes, parseExplicitNodeResults(rows, kind, colNames)...)
 	}
-	return parseGenericNodeResults(rows), nil
+	return nodes, nil
+}
+
+// parseExplicitNodeResults parses node query results with explicit column projection.
+// colNames[0] = "id", colNames[1..] = schema columns in QueryReturnClause order.
+func parseExplicitNodeResults(rows []interface{}, kind string, colNames []string) []model.Node {
+	if len(rows) < 2 {
+		return nil
+	}
+	dataRows, ok := rows[1].([]interface{})
+	if !ok {
+		return nil
+	}
+	var nodes []model.Node
+	for _, row := range dataRows {
+		rowSlice, ok := row.([]interface{})
+		if !ok || len(rowSlice) < len(colNames) {
+			continue
+		}
+		id, _ := rowSlice[0].(string)
+		if id == "" {
+			continue
+		}
+		node := model.Node{ID: id, Kind: kind, Properties: make(map[string]any)}
+		for i := 1; i < len(colNames) && i < len(rowSlice); i++ {
+			if rowSlice[i] != nil {
+				node.Properties[colNames[i]] = rowSlice[i]
+			}
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
 }
 
 // QueryEdgesByNodeIDs returns edges where source (Outgoing) or target (Incoming) is in nodeIDs.

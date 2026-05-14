@@ -1253,6 +1253,8 @@ func (querier *Querier) QueryRouteChain(ctx context.Context, routePath string, m
 		}
 	}
 
+	subgraph = PruneDeclaredTypeDispatches(subgraph)
+
 	// Build childrenMap from subgraph edges
 	childrenMap := make(map[string][]string)
 	for _, edge := range subgraph.Edges {

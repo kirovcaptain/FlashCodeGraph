@@ -19,6 +19,7 @@ var ormPatterns = map[string]string{
 	"add":     "INSERT",
 	"save":    "INSERT",
 	"commit":  "INSERT",
+	"create":  "INSERT",
 	"delete":  "DELETE",
 	"update":  "UPDATE",
 	"execute": "UNKNOWN",
@@ -74,6 +75,25 @@ func extractPythonORMCalls(bodyNode *tree_sitter.Node, content []byte, callerNam
 			lastPart := receiverParts[len(receiverParts)-1]
 			if !ormReceivers[lastPart] && !strings.HasSuffix(receiver, ".objects") {
 				return true
+			}
+
+			// For execute(), try to extract actual SQL from the first string argument.
+			if method == "execute" {
+				argsNode := node.ChildByFieldName("arguments")
+				if argsNode != nil && argsNode.NamedChildCount() > 0 {
+					sqlStr := resolvePythonStringExpression(argsNode.NamedChild(0), content)
+					if sqlStr != "" {
+						result.Queries = append(result.Queries, model.RawQuery{
+							SQLText:    sqlStr,
+							QueryType:  sqlutil.DetectQueryType(sqlStr),
+							Tables:     sqlutil.ExtractTablesFromSQL(sqlStr),
+							CallerName: callerName,
+							FilePath:   filePath,
+							Line:       int(node.StartPosition().Row) + 1,
+						})
+						return true
+					}
+				}
 			}
 
 			tableName := ""
