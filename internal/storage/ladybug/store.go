@@ -5,9 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -310,7 +308,7 @@ func (store *Store) CreateEdges(_ context.Context, edges []model.Edge) error {
 		}
 	}()
 
-	for i, edge := range edges {
+	for _, edge := range edges {
 		relTable, sourceLabel, targetLabel := mapRelation(edge.Kind, edge.SourceKind)
 		if relTable == "" {
 			return fmt.Errorf("ladybug: unknown relation kind: %s", edge.Kind)
@@ -362,12 +360,6 @@ func (store *Store) CreateEdges(_ context.Context, edges []model.Edge) error {
 		}
 		result.Close()
 
-		if (i+1)%5000 == 0 {
-			var memStats runtime.MemStats
-			runtime.ReadMemStats(&memStats)
-			fmt.Fprintf(os.Stderr, "[mem] CreateEdges %d/%d: heap=%dMB, sys=%dMB\n",
-				i+1, len(edges), memStats.HeapAlloc/1024/1024, memStats.Sys/1024/1024)
-		}
 	}
 	return nil
 }
