@@ -16,20 +16,22 @@ FCG uses TOML configuration files at two levels:
 
 ### [storage]
 
-| Key | Type | Description |
-|-----|------|-------------|
-| database | string | Storage backend: `falkordb` (default if available), `ladybug`, `kuzu` |
-| falkordb_uri | string | FalkorDB address (default: `localhost:6379`) |
-| falkordb_graph | string | Graph name prefix (default: `fcg`) |
-| kuzu_path | string | KùzuDB data directory |
-| ladybug_path | string | LadybugDB data directory |
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| database | string | auto-detected | Storage backend: `falkordb`, `ladybug`, `kuzu` |
+| falkordb_uri | string | `localhost:6379` | FalkorDB address |
+| falkordb_graph | string | `fcg` | Graph name prefix |
+| kuzu_path | string | | KùzuDB data file path (per-project, auto-resolved if empty) |
+| ladybug_path | string | | LadybugDB data file path (per-project, auto-resolved if empty) |
+| data_dir | string | `~/.fcg/data` | Base directory for embedded DB data (kuzu/ladybug). Per-project data is stored under `{data_dir}/{project}/{branch}/` |
+| buffer_pool_size | string | `3GB` | Buffer pool size for embedded databases (kuzu/ladybug). Accepts human-readable format: `512MB`, `3GB`, etc. |
 
 ### [index]
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | languages | []string | auto-detected | Languages to index |
-| max_file_size | int | 524288 (512KB) | Skip files larger than this |
+| max_file_size | int | 2097152 (2MB) | Skip files larger than this |
 | exclude_tests | bool | true | Exclude test files from indexing |
 | ignore | []string | [] | Additional glob patterns to ignore |
 | annotation_nodes | []string | [] | Extra annotation names to store as graph nodes |
@@ -52,7 +54,7 @@ FCG uses TOML configuration files at two levels:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | goroutines | int | 0 (auto) | Number of parallel workers |
-| memory_limit | string | "1GB" | Memory limit |
+| memory_limit | string | "4GB" | Memory limit |
 | log_level | string | "info" | Log level: debug, info, warn, error |
 
 ### [cross_project_index]

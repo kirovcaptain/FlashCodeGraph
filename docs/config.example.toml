@@ -4,9 +4,11 @@
 [storage]
 database = "falkordb"
 falkordb_uri = "localhost:6379"
+# data_dir = "~/.fcg/data"         # Base directory for embedded DB data (kuzu/ladybug)
+# buffer_pool_size = "3GB"         # Buffer pool size for embedded databases
 
 [index]
-max_file_size = 524288
+max_file_size = 2097152
 exclude_tests = true
 # ignore = ["**/generated/**", "**/vendor/**"]
 # annotation_nodes = ["Transactional", "Async"]
@@ -20,7 +22,7 @@ exclude_tests = true
 
 [system]
 # goroutines = 0
-# memory_limit = "1GB"
+# memory_limit = "4GB"
 # log_level = "info"
 
 # ── Global only (~/.fcg/config.toml) ──

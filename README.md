@@ -334,12 +334,19 @@ type = "maven"          # maven | gradle | npm | go | cargo | dotnet
 
 [storage]
 database = "falkordb"   # falkordb | kuzu | ladybug
+# data_dir = "~/.fcg/data"         # base directory for embedded DB data (kuzu/ladybug)
+# buffer_pool_size = "3GB"         # buffer pool size for embedded databases
+
+[system]
+memory_limit = "4GB"    # peak memory limit during indexing
+# goroutines = 0        # parallel goroutines, 0 = auto
+# log_level = "info"    # debug | info | warn | error
 
 [cross_project_index]
 backend = "sqlite"      # sqlite (default) | json
 
 [index]
-max_file_size = 524288  # skip files > 512KB
+max_file_size = 2097152  # skip files > 2MB (default)
 exclude_tests = true
 ```
 
@@ -360,10 +367,10 @@ See [docs/configuration.md](docs/configuration.md) ([example](docs/config.exampl
 
 | Backend | Type | Status | Use Case |
 |---------|------|--------|----------|
-| FalkorDB | Remote (Redis protocol) | ✅ Implemented | Default, team sharing |
-| LadybugDB | Local embedded | ✅ Implemented | Recommended embedded, no external dependencies |
-| KùzuDB | Local embedded | ✅ Implemented | Legacy embedded backend |
-| Neo4j | Remote | 🚧 Planned | Existing Neo4j infrastructure |
+| FalkorDB | Remote (Redis protocol) | Stable | Team sharing, WSL environments |
+| LadybugDB | Local embedded | Stable | Recommended embedded, no external dependencies |
+| KùzuDB | Local embedded | Stable | Alternative embedded backend |
+| Neo4j | Remote | Planned | Existing Neo4j infrastructure |
 
 ## Architecture
 
@@ -466,16 +473,21 @@ falkordb_uri = "localhost:6379"     # TCP address
 falkordb_graph = "fcg"              # graph name (default: "fcg")
 ```
 
-#### KùzuDB (Default for Native Linux / macOS / Windows)
+#### KùzuDB / LadybugDB (Default for Native Linux / macOS / Windows)
 
-KùzuDB is an embedded graph database — no external process needed. Data stored in memory, no setup required.
+KùzuDB and LadybugDB are embedded graph databases — no external process needed, data is stored locally on disk.
 
 ```toml
 [storage]
-database = "kuzu"
+database = "ladybug"              # or "kuzu"
+data_dir = "~/.fcg/data"          # base directory (default), per-project data under {data_dir}/{project}/{branch}/
+buffer_pool_size = "3GB"          # buffer pool size (default 3GB)
 ```
 
+`fcg init` will guide you through storage path and buffer pool configuration when you select an embedded backend.
+
 > **Note:** KùzuDB disk mode is unreliable under WSL, so FCG auto-detects WSL and defaults to FalkorDB in that environment.
+> **Recommendation:** LadybugDB is the recommended embedded backend. It offers better write performance and lower memory usage than KùzuDB for large projects.
 
 ### Storage Backend Auto-Detection
 
@@ -483,12 +495,10 @@ FCG automatically selects the default backend based on environment:
 
 | Environment | Default Backend | Reason |
 |-------------|----------------|--------|
-| Native Linux / macOS / Windows | KùzuDB | Zero setup, embedded |
+| Native Linux / macOS / Windows | LadybugDB | Zero setup, embedded, best write performance |
 | WSL (Windows Subsystem for Linux) | FalkorDB | KùzuDB disk I/O issues on WSL |
 
 Override anytime via `storage.database` in config.
-
-> **Recommendation:** FalkorDB is the most thoroughly tested backend and is recommended for production use. KùzuDB works well for quick local experiments but FalkorDB has proven more stable across diverse projects and scales.
 
 ## Usage Scenarios
 

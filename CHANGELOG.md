@@ -1,8 +1,11 @@
 # Changelog
 
-## [1.0.3] - 2026-05-15
+## [1.0.2] - 2026-05-15
 
 ### Feature
+- Multi-language SQL extraction with shared variable tracking framework (Java, Go, Python, TypeScript)
+- Java SQL extraction rewrite with variable tracking and conditional branch support
+- Memory optimization — GOMEMLIMIT + phased ParseResult release
 - Embedded storage configuration wizard — `fcg init` now guides data_dir and buffer_pool_size for kuzu/ladybug
 - Configurable buffer pool size for embedded databases (default 3GB)
 - Persist embedded database data_dir in config
@@ -13,20 +16,11 @@
 - LadybugDB sanitizeSliceForLadybug complete numeric type coverage (`[]int64`, `[]float64`, `[]bool`, etc.)
 - LadybugDB replace nil with empty list for array-type columns in UNWIND batch
 - Show actual data_dir instead of "in-memory" for embedded databases in storage info
+- Route chain bugfixes and Python ORM extraction
 
 ### Performance
 - LadybugDB CreateEdges PreparedStatement caching — 286K edges from 286K Prepare calls down to 3-5
 - LadybugDB PreparedStatement leak fix, atomic mergeNode, UNWIND batch CreateNodes
-
-## [1.0.2] - 2026-05-13
-
-### Feature
-- Multi-language SQL extraction with shared variable tracking framework (Java, Go, Python, TypeScript)
-- Java SQL extraction rewrite with variable tracking and conditional branch support
-- Memory optimization — GOMEMLIMIT + phased ParseResult release
-
-### Fix
-- Route chain bugfixes and Python ORM extraction
 
 ## [1.0.1] - 2026-05-12
 
