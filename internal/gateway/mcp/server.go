@@ -95,36 +95,35 @@ func (srv *Server) createIndexer(repoPath string) (*service.Indexer, storage.Gra
 
 // createQuerier creates a Querier for the given project path and optional branch.
 // If branch is empty, the current git branch is auto-detected.
-func (srv *Server) createQuerier(path, branchName string) (*service.Querier, storage.GraphStore, error) {
+// Returns the resolved branch name alongside the querier and store.
+func (srv *Server) createQuerier(path, branchName string) (*service.Querier, storage.GraphStore, string, error) {
 	if path == "" {
-		return nil, nil, fmt.Errorf("path is required, specify the project to query")
+		return nil, nil, "", fmt.Errorf("path is required, specify the project to query")
 	}
 	if !filepath.IsAbs(path) {
-		return nil, nil, fmt.Errorf("path must be absolute, got: %s", path)
+		return nil, nil, "", fmt.Errorf("path must be absolute, got: %s", path)
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
 		cfg = config.DefaultConfig()
 	}
-	if branchName != "" {
-		cfg.Storage.Branch = branchName
+	resolvedBranch := branchName
+	if resolvedBranch == "" {
+		resolvedBranch = branch.DetectBranch(path)
 	}
+	cfg.Storage.Branch = resolvedBranch
 	store, err := srv.storeFactory(cfg, path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open store for %s: %w", path, err)
+		return nil, nil, "", fmt.Errorf("open store for %s: %w", path, err)
 	}
 	// Check if graph exists to prevent FalkorDB from auto-creating empty graphs
 	if falkorStore, ok := store.(*falkor.Store); ok {
 		if !falkorStore.GraphExists(context.Background()) {
 			store.Close()
-			detectedBranch := branchName
-			if detectedBranch == "" {
-				detectedBranch = branch.DetectBranch(path)
-			}
-			return nil, nil, fmt.Errorf("no index found for %s (branch: %s). Run index_repository first", path, detectedBranch)
+			return nil, nil, "", fmt.Errorf("no index found for %s (branch: %s). Run index_repository first", path, resolvedBranch)
 		}
 	}
-	return service.NewQuerier(store), store, nil
+	return service.NewQuerier(store), store, resolvedBranch, nil
 }
 
 // registerTools registers all MCP tools.
@@ -348,7 +347,8 @@ func (srv *Server) handleIndexRepository(ctx context.Context, request mcp.CallTo
 	}
 	status.MarkIndexed(path)
 
-	resultJSON, _ := json.Marshal(result)
+	resp := indexRepositoryResponse{Branch: branchName, IndexResult: result}
+	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
@@ -358,13 +358,17 @@ func (srv *Server) handleCheckIndexStatus(ctx context.Context, request mcp.CallT
 		return mcp.NewToolResultError("path is required"), nil
 	}
 	branchName, _ := request.GetArguments()["branch"].(string)
+	if branchName == "" {
+		branchName = branch.DetectBranch(path)
+	}
 
 	indexStatus, err := service.CheckProjectStaleness(ctx, path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("check index status: %v", err)), nil
 	}
 
-	resultJSON, _ := json.Marshal(indexStatus)
+	resp := checkIndexStatusResponse{Branch: branchName, IndexStatus: indexStatus}
+	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
@@ -377,7 +381,7 @@ func (srv *Server) handleQuerySymbol(ctx context.Context, request mcp.CallToolRe
 
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
-	querier, store, err := srv.createQuerier(path, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -387,7 +391,8 @@ func (srv *Server) handleQuerySymbol(ctx context.Context, request mcp.CallToolRe
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	resultJSON, _ := json.Marshal(nodes)
+	resp := listResponse[model.Node]{Branch: resolvedBranch, Data: nodes}
+	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
@@ -409,7 +414,7 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
-	querier, store, err := srv.createQuerier(path, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -432,21 +437,7 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 
 	warning := checkStalenessWarning(ctx, path, branchName)
 	normalizeQueryNodeProperties(subgraph)
-	var resultJSON []byte
-	if mode == "compact" {
-		resultJSON, _ = json.Marshal(struct {
-			Nodes          []model.Node             `json:"nodes"`
-			Edges          []model.CompactChainEdge `json:"edges"`
-			TruncatedNodes []string                 `json:"truncated_nodes,omitempty"`
-		}{Nodes: subgraph.Nodes, Edges: model.EdgesToCompactChainEdges(subgraph.Edges), TruncatedNodes: subgraph.TruncatedNodes})
-	} else {
-		resultJSON, _ = json.Marshal(struct {
-			Nodes          []model.Node      `json:"nodes"`
-			Edges          []model.ChainEdge `json:"edges"`
-			TruncatedNodes []string          `json:"truncated_nodes,omitempty"`
-		}{Nodes: subgraph.Nodes, Edges: model.EdgesToChainEdges(subgraph.Edges), TruncatedNodes: subgraph.TruncatedNodes})
-	}
-	result := injectWarning(resultJSON, warning)
+
 	var hint string
 	switch mode {
 	case "full":
@@ -458,11 +449,8 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	default:
 		hint = "[mode=core] Showing core call chain (getters/setters and external dependencies are hidden, DISPATCHES pruned). Use mode='full' to see all nodes."
 	}
-	if hint != "" {
-		result = injectHint([]byte(result), hint)
-	}
 
-	// Cross-service hints: detect cross_service=true edges and append follow-up commands
+	// Cross-service hints
 	var crossServiceHints []string
 	for _, edge := range subgraph.Edges {
 		crossService, _ := edge.Properties["cross_service"].(bool)
@@ -480,7 +468,6 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 		}
 	}
 	if len(crossServiceHints) > 0 {
-		// Deduplicate hints
 		seen := make(map[string]bool)
 		var uniqueHints []string
 		for _, crossServiceHint := range crossServiceHints {
@@ -489,11 +476,10 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 				uniqueHints = append(uniqueHints, crossServiceHint)
 			}
 		}
-		hintsJSON, _ := json.Marshal(uniqueHints)
-		result = injectField([]byte(result), "cross_service_hints", hintsJSON)
+		crossServiceHints = uniqueHints
 	}
 
-	// Cross-project hints: detect [cross-project] nodes and suggest querying the source project
+	// Cross-project hints
 	var crossProjectHints []string
 	for _, node := range subgraph.Nodes {
 		filePath, _ := node.Properties["file_path"].(string)
@@ -509,12 +495,35 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 			crossProjectHints = append(crossProjectHints, crossProjectHint)
 		}
 	}
-	if len(crossProjectHints) > 0 {
-		hintsJSON, _ := json.Marshal(crossProjectHints)
-		result = injectField([]byte(result), "cross_project_hints", hintsJSON)
+
+	var resultJSON []byte
+	if mode == "compact" {
+		resp := compactCallChainResponse{
+			Branch:            resolvedBranch,
+			Warning:           warning,
+			Hint:              hint,
+			Nodes:             subgraph.Nodes,
+			Edges:             model.EdgesToCompactChainEdges(subgraph.Edges),
+			TruncatedNodes:    subgraph.TruncatedNodes,
+			CrossServiceHints: crossServiceHints,
+			CrossProjectHints: crossProjectHints,
+		}
+		resultJSON, _ = json.Marshal(resp)
+	} else {
+		resp := callChainResponse{
+			Branch:            resolvedBranch,
+			Warning:           warning,
+			Hint:              hint,
+			Nodes:             subgraph.Nodes,
+			Edges:             model.EdgesToChainEdges(subgraph.Edges),
+			TruncatedNodes:    subgraph.TruncatedNodes,
+			CrossServiceHints: crossServiceHints,
+			CrossProjectHints: crossProjectHints,
+		}
+		resultJSON, _ = json.Marshal(resp)
 	}
 
-	return mcp.NewToolResultText(result), nil
+	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
 func (srv *Server) handleQueryCrossChain(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -526,7 +535,7 @@ func (srv *Server) handleQueryCrossChain(ctx context.Context, request mcp.CallTo
 	projectPath, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
 
-	querier, store, err := srv.createQuerier(projectPath, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(projectPath, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -537,7 +546,8 @@ func (srv *Server) handleQueryCrossChain(ctx context.Context, request mcp.CallTo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	resultJSON, _ := json.Marshal(result)
+	resp := crossChainResponse{Branch: resolvedBranch, CrossChainResult: result}
+	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
@@ -550,7 +560,7 @@ func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToo
 
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
-	querier, store, err := srv.createQuerier(path, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -569,17 +579,6 @@ func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToo
 	repoPath, _ := filepath.Abs(path)
 	affectedRoutes, routeHint := querier.QueryAffectedRoutes(ctx, nodeIDs, repoPath)
 
-	result := map[string]any{
-		"nodes": subgraph.Nodes,
-		"edges": model.EdgesToChainEdges(subgraph.Edges),
-	}
-	if len(affectedRoutes) > 0 {
-		result["affected_routes"] = affectedRoutes
-	}
-	if routeHint != "" {
-		result["hint"] = routeHint
-	}
-
 	// Cross-service hints for impact analysis
 	var impactCrossServiceHints []string
 	for _, node := range subgraph.Nodes {
@@ -593,13 +592,19 @@ func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToo
 			}
 		}
 	}
-	if len(impactCrossServiceHints) > 0 {
-		result["cross_service_hints"] = impactCrossServiceHints
-	}
 
 	warning := checkStalenessWarning(ctx, path, branchName)
-	resultJSON, _ := json.Marshal(result)
-	return mcp.NewToolResultText(injectWarning(resultJSON, warning)), nil
+	resp := impactAnalysisResponse{
+		Branch:            resolvedBranch,
+		Warning:           warning,
+		Nodes:             subgraph.Nodes,
+		Edges:             model.EdgesToChainEdges(subgraph.Edges),
+		AffectedRoutes:    affectedRoutes,
+		Hint:              routeHint,
+		CrossServiceHints: impactCrossServiceHints,
+	}
+	resultJSON, _ := json.Marshal(resp)
+	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
 func (srv *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -611,7 +616,7 @@ func (srv *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest
 
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
-	querier, store, err := srv.createQuerier(path, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -621,7 +626,8 @@ func (srv *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	resultJSON, _ := json.Marshal(results)
+	resp := listResponse[storage.SearchResult]{Branch: resolvedBranch, Data: results}
+	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
@@ -634,7 +640,7 @@ func (srv *Server) handleQueryClassMembers(ctx context.Context, request mcp.Call
 
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
-	querier, store, err := srv.createQuerier(path, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -648,28 +654,30 @@ func (srv *Server) handleQueryClassMembers(ctx context.Context, request mcp.Call
 		return mcp.NewToolResultError(fmt.Sprintf("class %q not found", className)), nil
 	}
 	if candidates != nil {
-		result := map[string]any{
-			"ambiguous":  true,
-			"message":    fmt.Sprintf("Multiple classes match %q, use qualified name", className),
-			"candidates": candidates,
+		resp := classMembersAmbiguousResponse{
+			Branch:     resolvedBranch,
+			Ambiguous:  true,
+			Message:    fmt.Sprintf("Multiple classes match %q, use qualified name", className),
+			Candidates: candidates,
 		}
-		resultJSON, _ := json.Marshal(result)
+		resultJSON, _ := json.Marshal(resp)
 		return mcp.NewToolResultText(string(resultJSON)), nil
 	}
 
-	result := map[string]any{
-		"kind":    kind,
-		"methods": methods,
-		"fields":  fields,
+	resp := classMembersResponse{
+		Branch:  resolvedBranch,
+		Kind:    kind,
+		Methods: methods,
+		Fields:  fields,
 	}
-	resultJSON, _ := json.Marshal(result)
+	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
 func (srv *Server) handleOverview(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
-	querier, store, err := srv.createQuerier(path, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -679,18 +687,14 @@ func (srv *Server) handleOverview(ctx context.Context, request mcp.CallToolReque
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	result := map[string]any{
-		"stats": stats,
-	}
 	s := status.Read(path)
-	if s.IndexTimestamp > 0 {
-		result["indexed_at"] = s.IndexTimestamp
+	resp := overviewResponse{
+		Branch:     resolvedBranch,
+		Stats:      stats,
+		IndexedAt:  s.IndexTimestamp,
+		AnalyzedAt: s.AnalyzeTimestamp,
 	}
-	if s.AnalyzeTimestamp > 0 {
-		result["analyzed_at"] = s.AnalyzeTimestamp
-	}
-
-	resultJSON, _ := json.Marshal(result)
+	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
@@ -713,7 +717,7 @@ func (srv *Server) handleQueryDependencies(ctx context.Context, request mcp.Call
 
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
-	querier, store, err := srv.createQuerier(path, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -731,7 +735,9 @@ func (srv *Server) handleQueryDependencies(ctx context.Context, request mcp.Call
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if len(nodes) == 0 {
-		return mcp.NewToolResultText("[]"), nil
+		resp := dependenciesResponse{Branch: resolvedBranch}
+		resultJSON, _ := json.Marshal(resp)
+		return mcp.NewToolResultText(string(resultJSON)), nil
 	}
 	target := &nodes[0]
 
@@ -746,24 +752,22 @@ func (srv *Server) handleQueryDependencies(ctx context.Context, request mcp.Call
 		nodeIDs[e.SourceID] = true
 		nodeIDs[e.TargetID] = true
 	}
-	nodeMap := map[string]map[string]string{}
+	nodeMap := map[string]dependencyNodeInfo{}
 	for id := range nodeIDs {
 		node, err := store.QueryNodeByID(ctx, id)
 		if err == nil && node != nil {
-			info := map[string]string{"kind": node.Kind}
+			info := dependencyNodeInfo{Kind: node.Kind}
 			if qn, ok := node.Properties["qualified_name"].(string); ok {
-				info["qualified_name"] = qn
+				info.QualifiedName = qn
 			}
 			if fp, ok := node.Properties["file_path"].(string); ok {
-				info["file_path"] = fp
+				info.FilePath = fp
 			}
 			nodeMap[id] = info
 		}
 	}
-	resultJSON, _ := json.Marshal(struct {
-		Edges []model.Edge                 `json:"edges"`
-		Nodes map[string]map[string]string `json:"nodes"`
-	}{Edges: edges, Nodes: nodeMap})
+	resp := dependenciesResponse{Branch: resolvedBranch, Edges: edges, Nodes: nodeMap}
+	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
@@ -790,7 +794,7 @@ func (srv *Server) handleQueryByAnnotation(ctx context.Context, request mcp.Call
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
 
-	querier, store, err := srv.createQuerier(path, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -799,7 +803,8 @@ func (srv *Server) handleQueryByAnnotation(ctx context.Context, request mcp.Call
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	data, _ := json.Marshal(nodes)
+	resp := listResponse[model.Node]{Branch: resolvedBranch, Data: nodes}
+	data, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(data)), nil
 }
 
@@ -810,9 +815,9 @@ func (srv *Server) handleQueryByLayer(ctx context.Context, request mcp.CallToolR
 	}
 	limit := intArg(request, "limit", 50)
 	path, _ := request.GetArguments()["path"].(string)
-	branch, _ := request.GetArguments()["branch"].(string)
+	branchName, _ := request.GetArguments()["branch"].(string)
 
-	querier, store, err := srv.createQuerier(path, branch)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -821,7 +826,8 @@ func (srv *Server) handleQueryByLayer(ctx context.Context, request mcp.CallToolR
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	data, _ := json.Marshal(nodes)
+	resp := listResponse[model.Node]{Branch: resolvedBranch, Data: nodes}
+	data, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(data)), nil
 }
 
@@ -830,7 +836,7 @@ func (srv *Server) handleQueryRoutes(ctx context.Context, request mcp.CallToolRe
 	methodFilter, _ := request.GetArguments()["method"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
 
-	_, store, err := srv.createQuerier(path, branchName)
+	_, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("create store: %v", err)), nil
 	}
@@ -841,21 +847,25 @@ func (srv *Server) handleQueryRoutes(ctx context.Context, request mcp.CallToolRe
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	var results []map[string]any
+	var results []routeEntry
 	for _, r := range routes {
 		method, _ := r.Properties["method"].(string)
 		if methodFilter != "" && !strings.EqualFold(method, methodFilter) {
 			continue
 		}
-		results = append(results, map[string]any{
-			"method":    method,
-			"path":      r.Properties["path_pattern"],
-			"handler":   r.Properties["handler_method"],
-			"framework": r.Properties["framework"],
+		pathPattern, _ := r.Properties["path_pattern"].(string)
+		handlerMethod, _ := r.Properties["handler_method"].(string)
+		framework, _ := r.Properties["framework"].(string)
+		results = append(results, routeEntry{
+			Method:    method,
+			Path:      pathPattern,
+			Handler:   handlerMethod,
+			Framework: framework,
 		})
 	}
 
-	data, _ := json.Marshal(results)
+	resp := listResponse[routeEntry]{Branch: resolvedBranch, Data: results}
+	data, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(data)), nil
 }
 func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -867,9 +877,9 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 	maxDepth := intArg(request, "max_depth", 10)
 	mode := stringArg(request, "mode", "dry")
 	path, _ := request.GetArguments()["path"].(string)
-	branch, _ := request.GetArguments()["branch"].(string)
+	branchName, _ := request.GetArguments()["branch"].(string)
 
-	querier, store, err := srv.createQuerier(path, branch)
+	querier, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -881,12 +891,12 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 	if mode != "full" {
 		chain = service.FilterCoreRouteChain(chain)
 	}
-	data, _ := json.Marshal(chain)
-	result := string(data)
+	resp := routeChainResponse{Branch: resolvedBranch, RouteChain: chain}
 	if mode != "full" {
-		result = injectHint(data, "Showing core route chain (getters/setters and external dependencies are hidden). Use mode='full' to see all nodes.")
+		resp.Hint = "Showing core route chain (getters/setters and external dependencies are hidden). Use mode='full' to see all nodes."
 	}
-	return mcp.NewToolResultText(result), nil
+	data, _ := json.Marshal(resp)
+	return mcp.NewToolResultText(string(data)), nil
 }
 
 // Helpers
@@ -923,7 +933,7 @@ func (srv *Server) handleAnalyzeRepository(ctx context.Context, request mcp.Call
 		scope = "all"
 	}
 
-	_, store, err := srv.createQuerier(path, "")
+	_, store, resolvedBranch, err := srv.createQuerier(path, "")
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("create store: %v", err)), nil
 	}
@@ -945,17 +955,21 @@ func (srv *Server) handleAnalyzeRepository(ctx context.Context, request mcp.Call
 	for _, e := range entries {
 		byType[e.EntryType]++
 	}
-	result := map[string]any{"entries": len(entries), "entries_by_type": byType}
+	resp := analyzeRepositoryResponse{
+		Branch:        resolvedBranch,
+		Entries:       len(entries),
+		EntriesByType: byType,
+	}
 	if scope == "all" || scope == "process" {
 		layerMap := analyzer.BuildLayerMap(ctx)
 		analyzer.ClearAnalysisData(ctx)
 		processCount, stepCount := analyzer.WriteProcesses(ctx, entries, forest, 10, layerMap)
-		result["processes"] = processCount
-		result["total_steps"] = stepCount
+		resp.Processes = processCount
+		resp.TotalSteps = stepCount
 	}
 	status.MarkAnalyzed(path)
 
-	data, _ := json.Marshal(result)
+	data, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(data)), nil
 }
 
@@ -968,7 +982,7 @@ func (srv *Server) handleQueryEntryPoints(ctx context.Context, request mcp.CallT
 	limit := intArg(request, "limit", 50)
 	branchName, _ := request.GetArguments()["branch"].(string)
 
-	_, store, err := srv.createQuerier(path, branchName)
+	_, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("create store: %v", err)), nil
 	}
@@ -984,19 +998,24 @@ func (srv *Server) handleQueryEntryPoints(ctx context.Context, request mcp.CallT
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	results := make([]map[string]any, 0, len(nodes))
+	results := make([]entryPointEntry, 0, len(nodes))
 	for _, n := range nodes {
-		results = append(results, map[string]any{
-			"id":             n.ID,
-			"name":           n.Properties["name"],
-			"qualified_name": n.Properties["qualified_name"],
-			"file_path":      n.Properties["file_path"],
-			"entry_type":     n.Properties["entry_type"],
-			"score":          n.Properties["entry_point_score"],
+		name, _ := n.Properties["name"].(string)
+		qualifiedName, _ := n.Properties["qualified_name"].(string)
+		filePath, _ := n.Properties["file_path"].(string)
+		et, _ := n.Properties["entry_type"].(string)
+		results = append(results, entryPointEntry{
+			ID:            n.ID,
+			Name:          name,
+			QualifiedName: qualifiedName,
+			FilePath:      filePath,
+			EntryType:     et,
+			Score:         n.Properties["entry_point_score"],
 		})
 	}
 
-	data, _ := json.Marshal(results)
+	resp := listResponse[entryPointEntry]{Branch: resolvedBranch, Data: results}
+	data, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(data)), nil
 }
 
@@ -1010,7 +1029,7 @@ func (srv *Server) handleQueryCallForest(ctx context.Context, request mcp.CallTo
 	mode := stringArg(request, "mode", "dry")
 	branchName, _ := request.GetArguments()["branch"].(string)
 
-	_, store, err := srv.createQuerier(path, branchName)
+	_, store, resolvedBranch, err := srv.createQuerier(path, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("create store: %v", err)), nil
 	}
@@ -1049,12 +1068,12 @@ func (srv *Server) handleQueryCallForest(ctx context.Context, request mcp.CallTo
 		trees = append(trees, tree)
 	}
 
-	data, _ := json.Marshal(trees)
-	result := string(data)
+	resp := callForestResponse{Branch: resolvedBranch, Data: trees}
 	if mode != "full" {
-		result = injectHint(data, "Showing core call forest (getters/setters and external dependencies are hidden). Use mode='full' to see all nodes.")
+		resp.Hint = "Showing core call forest (getters/setters and external dependencies are hidden). Use mode='full' to see all nodes."
 	}
-	return mcp.NewToolResultText(result), nil
+	data, _ := json.Marshal(resp)
+	return mcp.NewToolResultText(string(data)), nil
 }
 
 func processStepToMap(step *service.ProcessStep) map[string]any {
@@ -1133,7 +1152,7 @@ func (srv *Server) handleLocateFunction(ctx context.Context, request mcp.CallToo
 	branchName, _ := request.GetArguments()["branch"].(string)
 	locationsJSON, _ := request.GetArguments()["locations"].(string)
 
-	querier, store, err := srv.createQuerier(repoPath, branchName)
+	querier, store, resolvedBranch, err := srv.createQuerier(repoPath, branchName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -1149,7 +1168,8 @@ func (srv *Server) handleLocateFunction(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	out, _ := json.MarshalIndent(results, "", "  ")
+	resp := listResponse[model.LocateResult]{Branch: resolvedBranch, Data: results}
+	out, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(out)), nil
 }
 
@@ -1161,43 +1181,6 @@ func checkStalenessWarning(ctx context.Context, repoPath string, branchName stri
 		return ""
 	}
 	return service.FormatStalenessWarning(indexStatus)
-}
-
-// injectWarning prepends a "warning" field into a JSON object string.
-// If warning is empty, returns the original JSON unchanged.
-func injectWarning(originalJSON []byte, warning string) string {
-	if warning == "" {
-		return string(originalJSON)
-	}
-	// Insert "warning":"..." right after the opening brace
-	if len(originalJSON) > 0 && originalJSON[0] == '{' {
-		warningJSON, _ := json.Marshal(warning)
-		return "{\"warning\":" + string(warningJSON) + "," + string(originalJSON[1:])
-	}
-	return string(originalJSON)
-}
-
-// injectHint prepends a "hint" field into a JSON object string.
-func injectHint(originalJSON []byte, hint string) string {
-	if hint == "" {
-		return string(originalJSON)
-	}
-	hintJSON, _ := json.Marshal(hint)
-	if len(originalJSON) > 0 && originalJSON[0] == '{' {
-		return "{\"hint\":" + string(hintJSON) + "," + string(originalJSON[1:])
-	}
-	if len(originalJSON) > 0 && originalJSON[0] == '[' {
-		return "{\"hint\":" + string(hintJSON) + ",\"items\":" + string(originalJSON) + "}"
-	}
-	return string(originalJSON)
-}
-
-// injectField adds a JSON field to the beginning of a JSON object.
-func injectField(originalJSON []byte, fieldName string, fieldValue []byte) string {
-	if len(originalJSON) > 0 && originalJSON[0] == '{' {
-		return "{\"" + fieldName + "\":" + string(fieldValue) + "," + string(originalJSON[1:])
-	}
-	return string(originalJSON)
 }
 
 func normalizeQueryNodeProperties(subgraph *model.Subgraph) {
