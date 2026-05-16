@@ -619,9 +619,14 @@ func (store *Store) QueryNodesByName(ctx context.Context, name string, opts mode
 	}
 
 	// UNION across labels to hit name index
+	// If name contains ".", treat it as a qualified_name (all supported languages use "." as separator)
+	nameField := "n.name"
+	if strings.Contains(name, ".") {
+		nameField = "n.qualified_name"
+	}
 	var parts []string
 	for _, label := range labels {
-		parts = append(parts, "MATCH (n:"+label+") WHERE n.name = $nodeName RETURN "+allCols)
+		parts = append(parts, "MATCH (n:"+label+") WHERE "+nameField+" = $nodeName RETURN "+allCols)
 	}
 	cypher := strings.Join(parts, " UNION ")
 	if opts.Limit > 0 {

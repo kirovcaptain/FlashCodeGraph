@@ -631,7 +631,11 @@ func (store *Store) QueryNodesByName(_ context.Context, name string, opts model.
 		returnClause := model.QueryReturnClause(table)
 		colNames := append([]string{"id"}, model.ColumnNames(table)...)
 
-		query := fmt.Sprintf("MATCH (n:%s) WHERE n.name = $name RETURN %s LIMIT %d", table, returnClause, limit)
+		nameField := "name"
+		if strings.Contains(name, ".") {
+			nameField = "qualified_name"
+		}
+		query := fmt.Sprintf("MATCH (n:%s) WHERE n.%s = $name RETURN %s LIMIT %d", table, nameField, returnClause, limit)
 		result, err := store.exec(query, map[string]any{"name": name})
 		if err != nil {
 			continue
