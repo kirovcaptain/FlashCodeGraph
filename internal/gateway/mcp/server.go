@@ -424,9 +424,11 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	// Collect queries before mode filtering (queries are not mode-filtered)
+	queries, _ := querier.CollectQueries(ctx, subgraph.Nodes)
+
 	if mode != "full" {
 		subgraph = service.FilterCoreSubgraph(subgraph)
-		subgraph = service.PruneDeclaredTypeDispatches(subgraph)
 	}
 	if mode == "dry" || mode == "compact" {
 		subgraph = service.FilterDrySubgraph(subgraph)
@@ -504,6 +506,7 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 			Hint:              hint,
 			Nodes:             subgraph.Nodes,
 			Edges:             model.EdgesToCompactChainEdges(subgraph.Edges),
+			Queries:           queries,
 			TruncatedNodes:    subgraph.TruncatedNodes,
 			CrossServiceHints: crossServiceHints,
 			CrossProjectHints: crossProjectHints,
@@ -516,6 +519,7 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 			Hint:              hint,
 			Nodes:             subgraph.Nodes,
 			Edges:             model.EdgesToChainEdges(subgraph.Edges),
+			Queries:           queries,
 			TruncatedNodes:    subgraph.TruncatedNodes,
 			CrossServiceHints: crossServiceHints,
 			CrossProjectHints: crossProjectHints,
@@ -888,15 +892,60 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+
+	// Mode filtering on the subgraph portion (same pipeline as handleQueryCallChain)
+	routeSubgraph := &model.Subgraph{Nodes: chain.Nodes, Edges: chain.Edges}
 	if mode != "full" {
-		chain = service.FilterCoreRouteChain(chain)
+		routeSubgraph = service.FilterCoreSubgraph(routeSubgraph)
 	}
-	resp := routeChainResponse{Branch: resolvedBranch, RouteChain: chain}
-	if mode != "full" {
-		resp.Hint = "Showing core route chain (getters/setters and external dependencies are hidden). Use mode='full' to see all nodes."
+	if mode == "dry" || mode == "compact" {
+		routeSubgraph = service.FilterDrySubgraph(routeSubgraph)
 	}
-	data, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(data)), nil
+
+	warning := checkStalenessWarning(ctx, path, branchName)
+
+	var hint string
+	switch mode {
+	case "full":
+		// no hint
+	case "compact":
+		hint = "[mode=compact] Showing compact route chain (edges merged, log/exception removed). Use mode='full' to see all nodes."
+	case "dry":
+		hint = "[mode=dry] Showing dry route chain (log/exception/accessors removed, properties trimmed). Use mode='full' to see all nodes."
+	default:
+		hint = "[mode=core] Showing core route chain (getters/setters and external dependencies are hidden, DISPATCHES pruned). Use mode='full' to see all nodes."
+	}
+
+	var resultJSON []byte
+	if mode == "compact" {
+		routeSubgraph = service.CompactSubgraphEdges(routeSubgraph)
+		resp := compactRouteChainResponse{
+			Branch:         resolvedBranch,
+			Warning:        warning,
+			Hint:           hint,
+			Route:          chain.Route,
+			Method:         chain.Method,
+			Nodes:          routeSubgraph.Nodes,
+			Edges:          model.EdgesToCompactChainEdges(routeSubgraph.Edges),
+			Queries:        chain.Queries,
+			TruncatedNodes: routeSubgraph.TruncatedNodes,
+		}
+		resultJSON, _ = json.Marshal(resp)
+	} else {
+		resp := routeChainResponse{
+			Branch:         resolvedBranch,
+			Warning:        warning,
+			Hint:           hint,
+			Route:          chain.Route,
+			Method:         chain.Method,
+			Nodes:          routeSubgraph.Nodes,
+			Edges:          model.EdgesToChainEdges(routeSubgraph.Edges),
+			Queries:        chain.Queries,
+			TruncatedNodes: routeSubgraph.TruncatedNodes,
+		}
+		resultJSON, _ = json.Marshal(resp)
+	}
+	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
 // Helpers

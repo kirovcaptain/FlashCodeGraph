@@ -90,9 +90,16 @@ public class ChildService extends BaseService implements Runnable {
 	for _, h := range result.Heritage {
 		if h.Kind == "extends" && h.ParentName == "BaseService" {
 			hasExtends = true
+			if h.ParentQualified != "com.example.BaseService" {
+				t.Fatalf("expected ParentQualified=com.example.BaseService, got %s", h.ParentQualified)
+			}
 		}
 		if h.Kind == "implements" && h.ParentName == "Runnable" {
 			hasImplements = true
+			// Runnable has no import → falls back to same package
+			if h.ParentQualified != "com.example.Runnable" {
+				t.Fatalf("expected ParentQualified=com.example.Runnable, got %s", h.ParentQualified)
+			}
 		}
 	}
 	if !hasExtends {
@@ -101,7 +108,42 @@ public class ChildService extends BaseService implements Runnable {
 	if !hasImplements {
 		t.Fatal("missing implements Runnable")
 	}
-	t.Log("✅ Java Extract: imports + extends + implements")
+	t.Log("✅ Java Extract: imports + extends + implements with ParentQualified")
+}
+
+func TestExtract_HeritageParentQualifiedDisambiguation(t *testing.T) {
+	// When multiple classes share the same short name (e.g. BaseDao in different modules),
+	// ParentQualified must resolve via the import statement, not pick arbitrarily.
+	code := []byte(`package com.weijin.chatting.biz.core.dao.withdraw;
+
+import com.weijin.chatting.biz.core.dao.BaseDao;
+import java.io.Serializable;
+
+@Repository
+public class BroadcasterIdentityVerificationReviewDao extends BaseDao implements Serializable {
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "BroadcasterIdentityVerificationReviewDao.java", Language: "java"}
+	file := scanner.ScannedFile{
+		Path:     "/test/BroadcasterIdentityVerificationReviewDao.java",
+		RelPath:  "BroadcasterIdentityVerificationReviewDao.java",
+		Language: "java",
+	}
+	Extract(root, code, file, result)
+
+	for _, h := range result.Heritage {
+		if h.Kind == "extends" && h.ParentName == "BaseDao" {
+			if h.ParentQualified != "com.weijin.chatting.biz.core.dao.BaseDao" {
+				t.Fatalf("expected ParentQualified from import, got %s", h.ParentQualified)
+			}
+			t.Log("✅ Java Extract: ParentQualified resolved via import for ambiguous class name")
+			return
+		}
+	}
+	t.Fatal("missing extends BaseDao heritage entry")
 }
 
 func TestExtractMybatisMapper_Tables(t *testing.T) {

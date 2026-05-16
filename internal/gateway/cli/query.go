@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -381,12 +380,12 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Collect SQL queries before mode filtering (queries are not mode-filtered)
+	queries, _ := querier.CollectQueries(ctx, subgraph.Nodes)
+
 	fmt.Printf("%s of %q (depth=%d, minConfidence=%.2f):\n\n", strings.ToUpper(dirLabel[:1])+dirLabel[1:], args[0], callchainDepth, callchainMinConf)
 
 	// Apply mode filters before rendering
-	if callchainMode != "full" {
-		subgraph = service.PruneDeclaredTypeDispatches(subgraph)
-	}
 	if callchainMode == "dry" || callchainMode == "compact" {
 		subgraph = service.FilterCoreSubgraph(subgraph)
 		subgraph = service.FilterDrySubgraph(subgraph)
@@ -400,6 +399,7 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 
 	printCallTree(subgraph, args[0], callchainDepth)
 	fmt.Printf("\nTotal: %d %s\n", len(subgraph.Nodes), dirLabel)
+	printQueries(queries)
 	var modeHint string
 	switch callchainMode {
 	case "full":
@@ -559,66 +559,53 @@ func runRoutes(cmd *cobra.Command, args []string) error {
 }
 
 func runTrace(cmd *cobra.Command, args []string) error {
+	warnIfIndexStale()
 	querier, store, err := createQuerier()
 	if err != nil {
 		return err
 	}
 	defer store.Close()
 
-	chain, err := querier.QueryRouteChain(context.Background(), args[0], traceMethod, traceDepth)
+	ctx := context.Background()
+	chain, err := querier.QueryRouteChain(ctx, args[0], traceMethod, traceDepth)
 	if err != nil {
 		return err
 	}
 
-	if traceMode != "full" {
-		chain = service.FilterCoreRouteChain(chain)
+	subgraph := &model.Subgraph{Nodes: chain.Nodes, Edges: chain.Edges}
+
+	// Apply mode filters
+	if traceMode == "dry" || traceMode == "compact" {
+		subgraph = service.FilterCoreSubgraph(subgraph)
+		subgraph = service.FilterDrySubgraph(subgraph)
+	}
+	if traceMode == "compact" {
+		subgraph = service.CompactSubgraphEdges(subgraph)
 	}
 
 	fmt.Printf("Route: %s %s\n", chain.Method, chain.Route)
-	fmt.Printf("Chain (%d nodes):\n\n", len(chain.Chain))
-	fmt.Printf("  %-4s %-12s %-45s %s\n", "#", "KIND", "NAME", "FILE")
-	fmt.Printf("  %-4s %-12s %-45s %s\n", "-", "----", "----", "----")
-	for i, cn := range chain.Chain {
-		name := cn.Name
-		if cn.QualifiedName != "" {
-			name = cn.QualifiedName
-		}
-		layer := ""
-		if cn.Layer != "" {
-			layer = " [" + cn.Layer + "]"
-		}
-		fmt.Printf("  %-4d %-12s %-45s %s%s\n", i+1, cn.Kind, name, cn.FilePath, layer)
+	fmt.Printf("Chain (%d nodes):\n\n", len(subgraph.Nodes))
+
+	// Set display mode for tree rendering
+	callchainMode = traceMode
+	printCallTree(subgraph, chain.Route, traceDepth)
+	fmt.Printf("\nTotal: %d nodes\n", len(subgraph.Nodes))
+
+	printQueries(chain.Queries)
+
+	var modeHint string
+	switch traceMode {
+	case "full":
+		// no hint
+	case "compact":
+		modeHint = "ℹ [mode=compact] Showing compact call chain (edges merged, log/exception removed). Use --mode=full to see all nodes."
+	case "dry":
+		modeHint = "ℹ [mode=dry] Showing dry call chain (log/exception removed, properties trimmed). Use --mode=full to see all nodes."
+	default:
+		modeHint = "ℹ [mode=core] Showing core call chain (DISPATCHES pruned). Use --mode=full to see all nodes including accessors and externals."
 	}
-	if len(chain.Queries) > 0 {
-		type queryKey struct{ sql, caller string }
-		seen := map[queryKey]bool{}
-		var unique []model.ChainNode
-		for _, queryNode := range chain.Queries {
-			key := queryKey{queryNode.SQLText, queryNode.QualifiedName}
-			if !seen[key] {
-				seen[key] = true
-				unique = append(unique, queryNode)
-			}
-		}
-		fmt.Printf("\nQueries (%d):\n", len(unique))
-		for _, queryNode := range unique {
-			sqlDisplay := queryNode.SQLText
-			if len(sqlDisplay) > 55 {
-				sqlDisplay = sqlDisplay[:55] + "..."
-			}
-			tablesDisplay := ""
-			if queryNode.Tables != nil {
-				var tableNames []string
-				if json.Unmarshal(queryNode.Tables, &tableNames) == nil && len(tableNames) > 0 {
-					tablesDisplay = " [" + strings.Join(tableNames, ", ") + "]"
-				}
-			}
-			caller := queryNode.QualifiedName
-			if lastDot := strings.LastIndex(caller, "."); lastDot >= 0 {
-				caller = caller[lastDot+1:]
-			}
-			fmt.Printf("  %-8s %-60s ← %s%s\n", queryNode.QueryType, sqlDisplay, caller, tablesDisplay)
-		}
+	if modeHint != "" {
+		fmt.Println(modeHint)
 	}
 	return nil
 }

@@ -711,6 +711,69 @@ func TestResolveHeritage_ImplementsKind(t *testing.T) {
 	t.Log("✅ implements → IMPLEMENTS relation")
 }
 
+func TestResolveHeritage_SameShortNameDisambiguation(t *testing.T) {
+	// Two parent classes with the same short name in different packages.
+	// Each child imports a different one via ParentQualified.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "child_a", Name: "OrderDao", QualifiedName: "com.biz.dao.OrderDao", Kind: "Class", FilePath: "OrderDao.java"},
+		{ID: "child_b", Name: "UserDao", QualifiedName: "com.msg.dao.UserDao", Kind: "Class", FilePath: "UserDao.java"},
+		{ID: "base_biz", Name: "BaseDao", QualifiedName: "com.biz.dao.BaseDao", Kind: "Class", FilePath: "biz/BaseDao.java"},
+		{ID: "base_msg", Name: "BaseDao", QualifiedName: "com.msg.dao.BaseDao", Kind: "Class", FilePath: "msg/BaseDao.java"},
+	})
+	resolver := newTestResolver(table)
+
+	heritage := []model.RawHeritage{
+		{ChildName: "OrderDao", ChildQualified: "com.biz.dao.OrderDao", ParentName: "BaseDao", ParentQualified: "com.biz.dao.BaseDao", Kind: "extends", FilePath: "OrderDao.java"},
+		{ChildName: "UserDao", ChildQualified: "com.msg.dao.UserDao", ParentName: "BaseDao", ParentQualified: "com.msg.dao.BaseDao", Kind: "extends", FilePath: "UserDao.java"},
+	}
+
+	relations := resolver.ResolveHeritage(heritage)
+	if len(relations) != 2 {
+		t.Fatalf("expected 2 relations, got %d", len(relations))
+	}
+	for _, rel := range relations {
+		if rel.SourceID == "child_a" && rel.TargetID != "base_biz" {
+			t.Fatalf("OrderDao should extend biz BaseDao, got target %s", rel.TargetID)
+		}
+		if rel.SourceID == "child_b" && rel.TargetID != "base_msg" {
+			t.Fatalf("UserDao should extend msg BaseDao, got target %s", rel.TargetID)
+		}
+		if rel.Confidence != ConfidenceArgCount {
+			t.Fatalf("ParentQualified match should give confidence %.2f, got %.2f", ConfidenceArgCount, rel.Confidence)
+		}
+	}
+	t.Log("✅ Same short name parents disambiguated via ParentQualified")
+}
+
+func TestBuildQualifiedParentMap_SameShortNameDisambiguation(t *testing.T) {
+	// buildQualifiedParentMap must resolve each child to its own parent,
+	// not share a single cache entry across all children with the same ParentName.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "base_biz", Name: "BaseDao", QualifiedName: "com.biz.dao.BaseDao", Kind: "Class", FilePath: "biz/BaseDao.java"},
+		{ID: "base_msg", Name: "BaseDao", QualifiedName: "com.msg.dao.BaseDao", Kind: "Class", FilePath: "msg/BaseDao.java"},
+	})
+	resolver := newTestResolver(table)
+
+	heritage := []model.RawHeritage{
+		{ChildName: "OrderDao", ChildQualified: "com.biz.dao.OrderDao", ParentName: "BaseDao", ParentQualified: "com.biz.dao.BaseDao", Kind: "extends"},
+		{ChildName: "UserDao", ChildQualified: "com.msg.dao.UserDao", ParentName: "BaseDao", ParentQualified: "com.msg.dao.BaseDao", Kind: "extends"},
+	}
+
+	qnMap := resolver.buildQualifiedParentMap(heritage)
+	bizParents := qnMap["com.biz.dao.OrderDao"]
+	msgParents := qnMap["com.msg.dao.UserDao"]
+
+	if len(bizParents) != 1 || bizParents[0] != "com.biz.dao.BaseDao" {
+		t.Fatalf("OrderDao parent should be com.biz.dao.BaseDao, got %v", bizParents)
+	}
+	if len(msgParents) != 1 || msgParents[0] != "com.msg.dao.BaseDao" {
+		t.Fatalf("UserDao parent should be com.msg.dao.BaseDao, got %v", msgParents)
+	}
+	t.Log("✅ buildQualifiedParentMap: same short name parents correctly disambiguated")
+}
+
 func TestResolveCall_TypeHierarchy(t *testing.T) {
 	// BaseRepository has save(), UserDao extends BaseRepository but has no save()
 	// Calling dao.save() where dao is UserDao should resolve to BaseRepository.save via hierarchy

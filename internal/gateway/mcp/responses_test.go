@@ -111,24 +111,25 @@ func TestEmbeddedStructFlatten_IndexResult(t *testing.T) {
 	}
 }
 
-func TestEmbeddedStructFlatten_RouteChain(t *testing.T) {
+func TestRouteChainResponse_JSONSchema(t *testing.T) {
 	resp := routeChainResponse{
 		Branch: "main",
 		Hint:   "test hint",
-		RouteChain: &model.RouteChain{
-			Route:  "/api/users",
-			Method: "GET",
-		},
+		Route:  "/api/users",
+		Method: "GET",
 	}
 	data, _ := json.Marshal(resp)
 	var m map[string]any
 	json.Unmarshal(data, &m)
 
 	if m["route"] != "/api/users" {
-		t.Errorf("route = %v, should be flattened from RouteChain", m["route"])
+		t.Errorf("route = %v, want /api/users", m["route"])
 	}
 	if m["hint"] != "test hint" {
 		t.Errorf("hint = %v", m["hint"])
+	}
+	if m["method"] != "GET" {
+		t.Errorf("method = %v, want GET", m["method"])
 	}
 }
 

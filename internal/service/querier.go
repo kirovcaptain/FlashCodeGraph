@@ -452,6 +452,78 @@ func (querier *Querier) QueryCallChainByNodeID(ctx context.Context, nodeID strin
 	return querier.graphStore.TraverseCallChain(ctx, nodeID, depth, direction, minConfidence)
 }
 
+// CollectQueries finds SQL queries executed by the given nodes via EXECUTES edges.
+// Must be called before mode filtering to capture all queries (queries are not mode-filtered).
+func (querier *Querier) CollectQueries(ctx context.Context, nodes []model.Node) ([]model.ChainNode, error) {
+	nodeIDs := make([]string, len(nodes))
+	nodeMap := make(map[string]*model.Node, len(nodes))
+	for i := range nodes {
+		nodeIDs[i] = nodes[i].ID
+		nodeMap[nodes[i].ID] = &nodes[i]
+	}
+
+	execEdges, err := querier.graphStore.QueryEdgesByNodeIDs(ctx, nodeIDs, model.RelExecutes, model.Outgoing)
+	if err != nil || len(execEdges) == 0 {
+		return nil, err
+	}
+
+	var queryNodeIDs []string
+	executesMap := make(map[string][]string)
+	for _, edge := range execEdges {
+		executesMap[edge.SourceID] = append(executesMap[edge.SourceID], edge.TargetID)
+		queryNodeIDs = append(queryNodeIDs, edge.TargetID)
+	}
+
+	queryNodes, err := querier.graphStore.QueryNodesByIDs(ctx, queryNodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	queryNodeMap := make(map[string]*model.Node, len(queryNodes))
+	for i := range queryNodes {
+		queryNodeMap[queryNodes[i].ID] = &queryNodes[i]
+	}
+
+	var queries []model.ChainNode
+	for callerID, targetIDs := range executesMap {
+		callerName := ""
+		if caller := nodeMap[callerID]; caller != nil {
+			callerName = propString(caller.Properties, "qualified_name")
+		}
+		for _, targetID := range targetIDs {
+			queryNode := queryNodeMap[targetID]
+			if queryNode == nil {
+				continue
+			}
+			sqlText := propString(queryNode.Properties, "sql_text")
+			name := propString(queryNode.Properties, "name")
+			if name == "" {
+				name = sqlText
+			}
+			entry := model.ChainNode{
+				ID:            queryNode.ID,
+				Name:          name,
+				Kind:          constants.KindQueryNode,
+				FilePath:      propString(queryNode.Properties, "file_path"),
+				QualifiedName: callerName,
+				SQLText:       sqlText,
+				QueryType:     propString(queryNode.Properties, "query_type"),
+				BaseSQL:       propString(queryNode.Properties, "base_sql"),
+			}
+			if tablesStr := propString(queryNode.Properties, "tables"); tablesStr != "" {
+				tablesArray := strings.Split(tablesStr, ",")
+				if tablesJSON, err := json.Marshal(tablesArray); err == nil {
+					entry.Tables = tablesJSON
+				}
+			}
+			if conditionsStr := propString(queryNode.Properties, "conditions"); conditionsStr != "" {
+				entry.Conditions = json.RawMessage(conditionsStr)
+			}
+			queries = append(queries, entry)
+		}
+	}
+	return queries, nil
+}
+
 // filterTruncatedNodes removes truncated entries whose qualified_name matches any excluded node.
 func filterTruncatedNodes(truncated []string, excluded map[string]bool, nodes []model.Node) []string {
 	if len(truncated) == 0 || len(excluded) == 0 {
@@ -506,154 +578,7 @@ func FilterCoreSubgraph(sg *model.Subgraph) *model.Subgraph {
 	return &model.Subgraph{Nodes: nodes, Edges: edges, TruncatedNodes: filterTruncatedNodes(sg.TruncatedNodes, excluded, sg.Nodes)}
 }
 
-// FilterCoreRouteChain removes accessor and external nodes from a route chain.
-func FilterCoreRouteChain(chain *model.RouteChain) *model.RouteChain {
-	if chain == nil {
-		return chain
-	}
-	var filtered []model.ChainNode
-	for _, chainNode := range chain.Chain {
-		if chainNode.FilePath == constants.FilePathExternal || chainNode.FilePath == constants.FilePathCrossProject || chainNode.FilePath == "" {
-			continue
-		}
-		if chainNode.IsGetter || chainNode.IsSetter {
-			continue
-		}
-		filtered = append(filtered, chainNode)
-	}
-	return &model.RouteChain{
-		Route:   chain.Route,
-		Method:  chain.Method,
-		Chain:   filtered,
-		Queries: chain.Queries,
-	}
-}
 
-// PruneDeclaredTypeDispatches removes DISPATCHES edges whose target does not match
-// the declared_type of the corresponding CALLS edge. When a CALLS edge has a declared_type
-// (e.g. "com.example.SettlementDao"), only DISPATCHES branches from the same base target
-// whose qualified_name starts with that declared_type are kept. This prevents unrelated
-// subclass implementations (e.g. AbTestReportDao.insert) from polluting the call chain.
-// Orphan nodes (no remaining edges) are removed afterward.
-func PruneDeclaredTypeDispatches(sg *model.Subgraph) *model.Subgraph {
-	if sg == nil {
-		return sg
-	}
-
-	// Step 1: Collect DISPATCHES targets so we can exclude their CALLS edges from prefix collection.
-	dispatchTargets := map[string]bool{}
-	for _, e := range sg.Edges {
-		if e.Kind == model.RelDispatches {
-			dispatchTargets[e.TargetID] = true
-		}
-	}
-
-	// Step 1b: For each CALLS edge with declared_type, record targetID → set of declared_type prefixes.
-	// Skip CALLS edges whose source is a DISPATCHES target (these are super() callbacks, not real callers).
-	declaredTypePrefixes := map[string]map[string]bool{} // targetID → set of "declared_type." prefixes
-	for _, e := range sg.Edges {
-		if e.Kind != model.RelCalls {
-			continue
-		}
-		if dispatchTargets[e.SourceID] {
-			continue
-		}
-		declaredType, _ := e.Properties["declared_type"].(string)
-		if declaredType == "" {
-			continue
-		}
-		if declaredTypePrefixes[e.TargetID] == nil {
-			declaredTypePrefixes[e.TargetID] = map[string]bool{}
-		}
-		declaredTypePrefixes[e.TargetID][declaredType+"."] = true
-	}
-
-	nodeByID := make(map[string]*model.Node, len(sg.Nodes))
-	for i := range sg.Nodes {
-		nodeByID[sg.Nodes[i].ID] = &sg.Nodes[i]
-	}
-
-	prunedDispatchEdges := map[string]bool{} // "sourceID→targetID" of pruned DISPATCHES edges
-	for _, e := range sg.Edges {
-		if e.Kind != model.RelDispatches {
-			continue
-		}
-		prefixes, hasPrefixes := declaredTypePrefixes[e.SourceID]
-		if !hasPrefixes {
-			continue
-		}
-		targetQN := ""
-		if n, ok := nodeByID[e.TargetID]; ok {
-			targetQN, _ = n.Properties["qualified_name"].(string)
-		}
-		matched := false
-		for prefix := range prefixes {
-			if strings.HasPrefix(targetQN, prefix) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			prunedDispatchEdges[e.SourceID+"→"+e.TargetID] = true
-		}
-	}
-
-	// Step 3: Build non-pruned incoming edges count per node.
-	// A node is excludable only if ALL its incoming edges are pruned DISPATCHES edges.
-	incomingNonPruned := map[string]int{}
-	for _, e := range sg.Edges {
-		key := e.SourceID + "→" + e.TargetID
-		if !prunedDispatchEdges[key] {
-			incomingNonPruned[e.TargetID]++
-		}
-	}
-
-	// Mark nodes with zero non-pruned incoming edges as excluded (they are only reachable via pruned DISPATCHES).
-	excludedNodes := map[string]bool{}
-	for _, e := range sg.Edges {
-		key := e.SourceID + "→" + e.TargetID
-		if prunedDispatchEdges[key] && incomingNonPruned[e.TargetID] == 0 {
-			excludedNodes[e.TargetID] = true
-		}
-	}
-
-	// Step 4: Cascade — excluded nodes' outgoing edges may create new orphans.
-	changed := true
-	for changed {
-		changed = false
-		// Recount incoming edges excluding edges from excluded sources
-		cascadeIncoming := map[string]int{}
-		for _, e := range sg.Edges {
-			if excludedNodes[e.SourceID] || excludedNodes[e.TargetID] {
-				continue
-			}
-			cascadeIncoming[e.TargetID]++
-		}
-		for _, e := range sg.Edges {
-			if excludedNodes[e.SourceID] && !excludedNodes[e.TargetID] {
-				if cascadeIncoming[e.TargetID] == 0 {
-					excludedNodes[e.TargetID] = true
-					changed = true
-				}
-			}
-		}
-	}
-
-	// Step 5: Filter edges and nodes
-	var edges []model.Edge
-	for _, e := range sg.Edges {
-		if !excludedNodes[e.SourceID] && !excludedNodes[e.TargetID] {
-			edges = append(edges, e)
-		}
-	}
-	var nodes []model.Node
-	for _, n := range sg.Nodes {
-		if !excludedNodes[n.ID] {
-			nodes = append(nodes, n)
-		}
-	}
-	return &model.Subgraph{Nodes: nodes, Edges: edges, TruncatedNodes: filterTruncatedNodes(sg.TruncatedNodes, excludedNodes, sg.Nodes)}
-}
 // logMethodNames is the set of method names considered as logging calls for dry mode filtering.
 var logMethodNames = map[string]bool{
 	"info": true, "warn": true, "error": true,
@@ -689,10 +614,18 @@ func FilterDrySubgraph(sg *model.Subgraph) *model.Subgraph {
 
 	// Inherited base class methods: if a CALLS edge has declared_type and the target's
 	// qualified_name class differs from declared_type, the target is a base class method
-	// reached via inheritance. Exclude it in dry mode.
+	// reached via inheritance. Only exclude it if the subgraph already contains a
+	// DISPATCHES edge from this target to an override matching the declared_type,
+	// meaning the real implementation is already present.
 	nodeByID := map[string]*model.Node{}
 	for i := range sg.Nodes {
 		nodeByID[sg.Nodes[i].ID] = &sg.Nodes[i]
+	}
+	dispatchTargetsBySource := map[string][]string{}
+	for _, e := range sg.Edges {
+		if e.Kind == model.RelDispatches {
+			dispatchTargetsBySource[e.SourceID] = append(dispatchTargetsBySource[e.SourceID], e.TargetID)
+		}
 	}
 	for _, e := range sg.Edges {
 		if e.Kind != model.RelCalls {
@@ -712,7 +645,19 @@ func FilterDrySubgraph(sg *model.Subgraph) *model.Subgraph {
 			continue
 		}
 		targetClass := targetQN[:lastDot]
-		if targetClass != declaredType {
+		if targetClass == declaredType {
+			continue
+		}
+		hasOverrideInSubgraph := false
+		for _, dispatchTargetID := range dispatchTargetsBySource[e.TargetID] {
+			if dispatchNode := nodeByID[dispatchTargetID]; dispatchNode != nil {
+				if dispatchQN, _ := dispatchNode.Properties["qualified_name"].(string); strings.HasPrefix(dispatchQN, declaredType+".") {
+					hasOverrideInSubgraph = true
+					break
+				}
+			}
+		}
+		if hasOverrideInSubgraph {
 			excluded[e.TargetID] = true
 		}
 	}
@@ -1212,18 +1157,18 @@ func filterAllByMethod(nodes []model.Node, method string) []model.Node {
 }
 
 // QueryRouteChain traces a route through HANDLES → BFS CALLS → EXECUTES, annotating each node with its layer.
+// Returns a graph structure (nodes + edges) instead of a flat chain, with layer injected into Node.Properties.
 func (querier *Querier) QueryRouteChain(ctx context.Context, routePath string, method string, maxDepth int) (*model.RouteChain, error) {
 	if maxDepth <= 0 {
 		maxDepth = 10
 	}
 
-	// Find matching route: exact match first, then contains fallback
 	routeNode, err := querier.findRouteNode(ctx, routePath, method)
 	if err != nil {
 		return nil, err
 	}
 
-	chain := &model.RouteChain{
+	result := &model.RouteChain{
 		Route:  propString(routeNode.Properties, "path_pattern"),
 		Method: propString(routeNode.Properties, "method"),
 	}
@@ -1231,128 +1176,49 @@ func (querier *Querier) QueryRouteChain(ctx context.Context, routePath string, m
 	// HANDLES edges: Route ← Function
 	handles, err := querier.graphStore.QueryEdges(ctx, routeNode.ID, constants.KindRoute, model.RelHandles, model.Incoming)
 	if err != nil || len(handles) == 0 {
-		return chain, nil
+		return result, nil
 	}
 
-	// Load only reachable data via BFS from handler
 	handlerID := handles[0].SourceID
 	subgraph, _ := querier.graphStore.TraverseCallChain(ctx, handlerID, maxDepth, model.Outgoing, 0)
 
-	// Build funcMap from subgraph nodes + handler itself
-	funcMap := make(map[string]*model.Node, len(subgraph.Nodes)+1)
-	nodeIDs := make([]string, 0, len(subgraph.Nodes)+1)
-	nodeIDs = append(nodeIDs, handlerID)
-	for i := range subgraph.Nodes {
-		funcMap[subgraph.Nodes[i].ID] = &subgraph.Nodes[i]
-		nodeIDs = append(nodeIDs, subgraph.Nodes[i].ID)
+	// Ensure handler node is in subgraph (TraverseCallChain doesn't include the start node)
+	handlerInSubgraph := false
+	for _, node := range subgraph.Nodes {
+		if node.ID == handlerID {
+			handlerInSubgraph = true
+			break
+		}
 	}
-	if funcMap[handlerID] == nil {
+	if !handlerInSubgraph {
 		handlerNode, _ := querier.graphStore.QueryNodeByID(ctx, handlerID)
 		if handlerNode != nil {
-			funcMap[handlerID] = handlerNode
+			subgraph.Nodes = append([]model.Node{*handlerNode}, subgraph.Nodes...)
 		}
 	}
 
-	subgraph = PruneDeclaredTypeDispatches(subgraph)
-
-	// Build childrenMap from subgraph edges
-	childrenMap := make(map[string][]string)
-	for _, edge := range subgraph.Edges {
-		childrenMap[edge.SourceID] = append(childrenMap[edge.SourceID], edge.TargetID)
+	// Inject layer into Node.Properties
+	funcMap := make(map[string]*model.Node, len(subgraph.Nodes))
+	for i := range subgraph.Nodes {
+		funcMap[subgraph.Nodes[i].ID] = &subgraph.Nodes[i]
 	}
-
-	// Batch query EXECUTES edges for reachable nodes
-	execEdges, _ := querier.graphStore.QueryEdgesByNodeIDs(ctx, nodeIDs, model.RelExecutes, model.Outgoing)
-	execMap := make(map[string][]string)
-	var queryNodeIDs []string
-	for _, edge := range execEdges {
-		execMap[edge.SourceID] = append(execMap[edge.SourceID], edge.TargetID)
-		queryNodeIDs = append(queryNodeIDs, edge.TargetID)
-	}
-
-	// Batch query QueryNode properties
-	queryMap := make(map[string]*model.Node)
-	if len(queryNodeIDs) > 0 {
-		queryNodes, _ := querier.graphStore.QueryNodesByIDs(ctx, queryNodeIDs)
-		for i := range queryNodes {
-			queryMap[queryNodes[i].ID] = &queryNodes[i]
-		}
-	}
-
-	// Build layer map for reachable nodes only
 	layerMap := querier.buildLayerMapForNodes(ctx, funcMap)
-
-	// DFS traversal in memory
-	visited := map[string]bool{}
-	for _, h := range handles {
-		querier.traceCallChainMem(h.SourceID, maxDepth, funcMap, childrenMap, execMap, queryMap, layerMap, visited, chain)
-	}
-	return chain, nil
-}
-
-func (querier *Querier) traceCallChainMem(nodeID string, maxDepth int, funcMap map[string]*model.Node, childrenMap map[string][]string, execMap map[string][]string, queryMap map[string]*model.Node, layerMap map[string]string, visited map[string]bool, chain *model.RouteChain) {
-	if visited[nodeID] || maxDepth <= 0 {
-		return
-	}
-	visited[nodeID] = true
-
-	node := funcMap[nodeID]
-	if node == nil {
-		return
-	}
-
-	chain.Chain = append(chain.Chain, model.ChainNode{
-		ID:            node.ID,
-		Name:          propString(node.Properties, "name"),
-		QualifiedName: propString(node.Properties, "qualified_name"),
-		Kind:          node.Kind,
-		FilePath:      propString(node.Properties, "file_path"),
-		Layer:         layerMap[node.ID],
-		StartLine:     propInt(node.Properties, "start_line"),
-		EndLine:       propInt(node.Properties, "end_line"),
-		IsGetter:      propBool(node.Properties, "is_getter"),
-		IsSetter:      propBool(node.Properties, "is_setter"),
-	})
-
-	callerName := propString(node.Properties, "qualified_name")
-	for _, targetID := range execMap[nodeID] {
-		if queryNode := queryMap[targetID]; queryNode != nil {
-			sqlText := propString(queryNode.Properties, "sql_text")
-			queryType := propString(queryNode.Properties, "query_type")
-			tablesStr := propString(queryNode.Properties, "tables")
-			baseSQL := propString(queryNode.Properties, "base_sql")
-			conditionsStr := propString(queryNode.Properties, "conditions")
-			name := propString(queryNode.Properties, "name")
-			if name == "" {
-				name = sqlText
+	for i := range subgraph.Nodes {
+		if layer, ok := layerMap[subgraph.Nodes[i].ID]; ok {
+			if subgraph.Nodes[i].Properties == nil {
+				subgraph.Nodes[i].Properties = make(map[string]any)
 			}
-
-			chainNode := model.ChainNode{
-				ID:            queryNode.ID,
-				Name:          name,
-				Kind:          constants.KindQueryNode,
-				FilePath:      propString(queryNode.Properties, "file_path"),
-				QualifiedName: callerName,
-				SQLText:       sqlText,
-				QueryType:     queryType,
-				BaseSQL:       baseSQL,
-			}
-			if tablesStr != "" {
-				tablesArray := strings.Split(tablesStr, ",")
-				if tablesJSON, err := json.Marshal(tablesArray); err == nil {
-					chainNode.Tables = tablesJSON
-				}
-			}
-			if conditionsStr != "" {
-				chainNode.Conditions = json.RawMessage(conditionsStr)
-			}
-			chain.Queries = append(chain.Queries, chainNode)
+			subgraph.Nodes[i].Properties["layer"] = layer
 		}
 	}
 
-	for _, targetID := range childrenMap[nodeID] {
-		querier.traceCallChainMem(targetID, maxDepth-1, funcMap, childrenMap, execMap, queryMap, layerMap, visited, chain)
-	}
+	// Collect SQL queries via EXECUTES edges
+	queries, _ := querier.CollectQueries(ctx, subgraph.Nodes)
+
+	result.Nodes = subgraph.Nodes
+	result.Edges = subgraph.Edges
+	result.Queries = queries
+	return result, nil
 }
 
 func (querier *Querier) buildLayerMapBatch(ctx context.Context, funcs []model.Node) map[string]string {

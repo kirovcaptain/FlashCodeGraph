@@ -751,12 +751,12 @@ func TestLadybug_MultiRelTypeSingleHop(t *testing.T) {
 		t.Fatal("depth=1 should find B (CALLS)")
 	}
 	if nodeIDs["sh_c"] {
-		t.Fatal("C (DISPATCHES only) should NOT appear in call chain")
+		t.Fatal("C (DISPATCHES from root) should NOT appear in call chain")
 	}
-	if nodeIDs["sh_d"] {
-		t.Fatal("D (reached via DISPATCHES) should NOT appear in call chain")
+	if !nodeIDs["sh_d"] {
+		t.Fatal("D (reached via DISPATCHES from B, no declared_type) SHOULD appear in call chain")
 	}
-	t.Logf("✅ traverseBFS only follows CALLS, not DISPATCHES: %d nodes", len(sub.Nodes))
+	t.Logf("✅ traverseBFS follows CALLS + DISPATCHES: %d nodes", len(sub.Nodes))
 }
 
 func TestLadybug_CreateEdgeInlineProps(t *testing.T) {

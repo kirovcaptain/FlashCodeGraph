@@ -241,30 +241,12 @@ func (resolver *Resolver) getQualifiedParentMap(heritage []model.RawHeritage) ma
 }
 
 // buildQualifiedParentMap builds a mapping from child qualified name to parent qualified names.
-// Uses ChildQualified from heritage and resolves parent qualified names via symbolTable.
+// Uses ParentQualified (from imports) when available for exact resolution.
+// Falls back to FindByName with caching only for entries without ParentQualified.
 func (resolver *Resolver) buildQualifiedParentMap(heritage []model.RawHeritage) map[string][]string {
-	parentQNCache := make(map[string]string)
-	for _, entry := range heritage {
-		// Use ParentQualified if available (cross-package embedding)
-		if entry.ParentQualified != "" {
-			candidates := resolver.symbolTable.FindByQualifiedName(entry.ParentQualified)
-			if len(candidates) > 0 {
-				parentQNCache[entry.ParentName] = candidates[0].QualifiedName
-				continue
-			}
-		}
-		if _, exists := parentQNCache[entry.ParentName]; exists {
-			continue
-		}
-		candidates := resolver.symbolTable.FindByName(entry.ParentName)
-		for _, c := range candidates {
-			if c.Kind == constants.KindClass || c.Kind == "abstract_class" ||
-				c.Kind == constants.KindInterface || c.ClassType == "struct" {
-				parentQNCache[entry.ParentName] = c.QualifiedName
-				break
-			}
-		}
-	}
+	// Cache for entries WITHOUT ParentQualified — keyed by short name.
+	// Only used as last resort; entries with ParentQualified bypass this entirely.
+	fallbackCache := make(map[string]string)
 
 	qnParentMap := make(map[string][]string)
 	for _, entry := range heritage {
@@ -272,11 +254,32 @@ func (resolver *Resolver) buildQualifiedParentMap(heritage []model.RawHeritage) 
 		if childQN == "" {
 			continue
 		}
-		parentQN := parentQNCache[entry.ParentName]
-		if parentQN == "" {
-			continue
+
+		parentQN := ""
+		if entry.ParentQualified != "" {
+			candidates := resolver.symbolTable.FindByQualifiedName(entry.ParentQualified)
+			if len(candidates) > 0 {
+				parentQN = candidates[0].QualifiedName
+			}
 		}
-		qnParentMap[childQN] = append(qnParentMap[childQN], parentQN)
+		if parentQN == "" {
+			if cached, exists := fallbackCache[entry.ParentName]; exists {
+				parentQN = cached
+			} else {
+				candidates := resolver.symbolTable.FindByName(entry.ParentName)
+				for _, c := range candidates {
+					if c.Kind == constants.KindClass || c.Kind == "abstract_class" ||
+						c.Kind == constants.KindInterface || c.ClassType == "struct" {
+						parentQN = c.QualifiedName
+						break
+					}
+				}
+				fallbackCache[entry.ParentName] = parentQN
+			}
+		}
+		if parentQN != "" {
+			qnParentMap[childQN] = append(qnParentMap[childQN], parentQN)
+		}
 	}
 	return qnParentMap
 }

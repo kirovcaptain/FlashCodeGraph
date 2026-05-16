@@ -752,27 +752,34 @@ func (store *Store) traverseRecursive(nodeID string, depth int, direction model.
 }
 
 // traverseBFS uses application-level BFS with per-hop confidence filtering.
-// Only follows edges where confidence >= minConfidence, ensuring every hop on the path qualifies.
+// Each level queries CALLS edges first, then DISPATCHES edges from the new
+// CALLS targets, filtering DISPATCHES by declared_type prefix matching.
 func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direction, minConfidence float64) (*model.Subgraph, error) {
 	subgraph := &model.Subgraph{}
 	visited := map[string]bool{nodeID: true}
 	queue := []string{nodeID}
 
-	var queryTemplate string
-	confFilter := "AND (r.confidence IS NULL OR r.confidence >= $minConf)"
+	confidenceFilter := "AND (r.confidence IS NULL OR r.confidence >= $minConf)"
+	var callsQueryTemplate, dispatchQueryTemplate string
 	switch direction {
 	case model.Outgoing:
-		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confFilter)
+		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
+		dispatchQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
 	case model.Incoming:
-		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, r.line, r.declared_type, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line", confFilter)
+		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, r.line, r.declared_type, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line", confidenceFilter)
+		dispatchQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line", confidenceFilter)
 	default:
-		queryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confFilter)
+		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
+		dispatchQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:DISPATCHES]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
 	}
 
 	for level := 0; level < depth && len(queue) > 0; level++ {
 		var nextQueue []string
+		declaredTypePrefixes := map[string]map[string]bool{}
+
+		// Step 1: Query CALLS edges for all queue nodes
 		for _, currentID := range queue {
-			result, err := store.exec(queryTemplate, map[string]any{"id": currentID, "minConf": minConfidence})
+			result, err := store.exec(callsQueryTemplate, map[string]any{"id": currentID, "minConf": minConfidence})
 			if err != nil {
 				continue
 			}
@@ -788,25 +795,29 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				isGetter, _ := row.GetValue(7)
 				isSetter, _ := row.GetValue(8)
 				qualifiedName, _ := row.GetValue(9)
-				isCtor, _ := row.GetValue(10)
+				isConstructor, _ := row.GetValue(10)
 				sourceProject, _ := row.GetValue(11)
 				sourceBranch, _ := row.GetValue(12)
 				startLine, _ := row.GetValue(13)
 				endLine, _ := row.GetValue(14)
 
 				neighborID := fmt.Sprint(targetID)
-				edgeProps := map[string]any{"confidence": confidence}
+				edgeProperties := map[string]any{"confidence": confidence}
 				if line != nil {
-					edgeProps["line"] = line
+					edgeProperties["line"] = line
 				}
-				if declType, ok := declaredType.(string); ok && declType != "" {
-					edgeProps["declared_type"] = declType
+				if declaredTypeStr, ok := declaredType.(string); ok && declaredTypeStr != "" {
+					edgeProperties["declared_type"] = declaredTypeStr
+					if declaredTypePrefixes[neighborID] == nil {
+						declaredTypePrefixes[neighborID] = map[string]bool{}
+					}
+					declaredTypePrefixes[neighborID][declaredTypeStr+"."] = true
 				}
 				subgraph.Edges = append(subgraph.Edges, model.Edge{
 					SourceID:   fmt.Sprint(sourceID),
 					TargetID:   neighborID,
 					Kind:       model.RelCalls,
-					Properties: edgeProps,
+					Properties: edgeProperties,
 				})
 
 				if visited[neighborID] {
@@ -814,62 +825,162 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				}
 				visited[neighborID] = true
 				nextQueue = append(nextQueue, neighborID)
-				nodeProps := map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter}
-				if qualName, ok := qualifiedName.(string); ok && qualName != "" {
-					nodeProps["qualified_name"] = qualName
+				nodeProperties := map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter}
+				if qualifiedNameStr, ok := qualifiedName.(string); ok && qualifiedNameStr != "" {
+					nodeProperties["qualified_name"] = qualifiedNameStr
 				}
-				if isConstructor, ok := isCtor.(bool); ok {
-					nodeProps["is_constructor"] = isConstructor
+				if isConstructorBool, ok := isConstructor.(bool); ok {
+					nodeProperties["is_constructor"] = isConstructorBool
 				}
-				if srcProject, ok := sourceProject.(string); ok && srcProject != "" {
-					nodeProps["source_project"] = srcProject
+				if sourceProjectStr, ok := sourceProject.(string); ok && sourceProjectStr != "" {
+					nodeProperties["source_project"] = sourceProjectStr
 				}
-				if srcBranch, ok := sourceBranch.(string); ok && srcBranch != "" {
-					nodeProps["source_branch"] = srcBranch
+				if sourceBranchStr, ok := sourceBranch.(string); ok && sourceBranchStr != "" {
+					nodeProperties["source_branch"] = sourceBranchStr
 				}
 				if startLine != nil {
-					nodeProps["start_line"] = startLine
+					nodeProperties["start_line"] = startLine
 				}
 				if endLine != nil {
-					nodeProps["end_line"] = endLine
+					nodeProperties["end_line"] = endLine
 				}
 				subgraph.Nodes = append(subgraph.Nodes, model.Node{
 					ID:         neighborID,
 					Kind:       constants.KindFunction,
-					Properties: nodeProps,
+					Properties: nodeProperties,
 				})
 			}
 			result.Close()
 		}
-		queue = nextQueue
-	}
 
-	// Detect truncated nodes: queue now contains depth-layer nodes whose callees were not explored
-	if len(queue) > 0 {
-		qnByID := map[string]string{}
-		for _, n := range subgraph.Nodes {
-			if qn, _ := n.Properties["qualified_name"].(string); qn != "" {
-				qnByID[n.ID] = qn
+		// Step 2: Query DISPATCHES edges from new CALLS targets, filter by declared_type
+		sourceQualifiedNameByID := map[string]string{}
+		for _, node := range subgraph.Nodes {
+			if qualifiedName, ok := node.Properties["qualified_name"].(string); ok {
+				sourceQualifiedNameByID[node.ID] = qualifiedName
 			}
 		}
-		for _, boundaryID := range queue {
-			result, err := store.exec(queryTemplate, map[string]any{"id": boundaryID, "minConf": minConfidence})
+		callsTargets := make([]string, len(nextQueue))
+		copy(callsTargets, nextQueue)
+		for _, dispatchSourceID := range callsTargets {
+			result, err := store.exec(dispatchQueryTemplate, map[string]any{"id": dispatchSourceID, "minConf": minConfidence})
 			if err != nil {
 				continue
 			}
-			remainingCount := 0
-			for result.HasNext() {
-				row, _ := result.Next()
-				neighborID, _ := row.GetValue(1)
-				if !visited[fmt.Sprint(neighborID)] {
-					remainingCount++
+			prefixes := declaredTypePrefixes[dispatchSourceID]
+			skipFiltering := false
+			if len(prefixes) > 0 {
+				sourceQualifiedName := sourceQualifiedNameByID[dispatchSourceID]
+				for prefix := range prefixes {
+					if strings.HasPrefix(sourceQualifiedName, prefix) {
+						skipFiltering = true
+						break
+					}
 				}
 			}
+			for result.HasNext() {
+				row, _ := result.Next()
+				sourceID, _ := row.GetValue(0)
+				targetID, _ := row.GetValue(1)
+				name, _ := row.GetValue(2)
+				filePath, _ := row.GetValue(3)
+				confidence, _ := row.GetValue(4)
+				isGetter, _ := row.GetValue(5)
+				isSetter, _ := row.GetValue(6)
+				qualifiedName, _ := row.GetValue(7)
+				isConstructor, _ := row.GetValue(8)
+				sourceProject, _ := row.GetValue(9)
+				sourceBranch, _ := row.GetValue(10)
+				startLine, _ := row.GetValue(11)
+				endLine, _ := row.GetValue(12)
+
+				if len(prefixes) > 0 && !skipFiltering {
+					targetQualifiedName, _ := qualifiedName.(string)
+					matched := false
+					for prefix := range prefixes {
+						if strings.HasPrefix(targetQualifiedName, prefix) {
+							matched = true
+							break
+						}
+					}
+					if !matched {
+						continue
+					}
+				}
+
+				neighborID := fmt.Sprint(targetID)
+				edgeProperties := map[string]any{"confidence": confidence}
+				subgraph.Edges = append(subgraph.Edges, model.Edge{
+					SourceID:   fmt.Sprint(sourceID),
+					TargetID:   neighborID,
+					Kind:       model.RelDispatches,
+					Properties: edgeProperties,
+				})
+
+				if visited[neighborID] {
+					continue
+				}
+				visited[neighborID] = true
+				nextQueue = append(nextQueue, neighborID)
+				nodeProperties := map[string]any{"name": name, "file_path": filePath, "is_getter": isGetter, "is_setter": isSetter}
+				if qualifiedNameStr, ok := qualifiedName.(string); ok && qualifiedNameStr != "" {
+					nodeProperties["qualified_name"] = qualifiedNameStr
+				}
+				if isConstructorBool, ok := isConstructor.(bool); ok {
+					nodeProperties["is_constructor"] = isConstructorBool
+				}
+				if sourceProjectStr, ok := sourceProject.(string); ok && sourceProjectStr != "" {
+					nodeProperties["source_project"] = sourceProjectStr
+				}
+				if sourceBranchStr, ok := sourceBranch.(string); ok && sourceBranchStr != "" {
+					nodeProperties["source_branch"] = sourceBranchStr
+				}
+				if startLine != nil {
+					nodeProperties["start_line"] = startLine
+				}
+				if endLine != nil {
+					nodeProperties["end_line"] = endLine
+				}
+				subgraph.Nodes = append(subgraph.Nodes, model.Node{
+					ID:         neighborID,
+					Kind:       constants.KindFunction,
+					Properties: nodeProperties,
+				})
+			}
 			result.Close()
+		}
+
+		queue = nextQueue
+	}
+
+	// Detect truncated nodes: query both CALLS and DISPATCHES for boundary nodes
+	if len(queue) > 0 {
+		qualifiedNameByID := map[string]string{}
+		for _, node := range subgraph.Nodes {
+			if qualifiedName, _ := node.Properties["qualified_name"].(string); qualifiedName != "" {
+				qualifiedNameByID[node.ID] = qualifiedName
+			}
+		}
+		for _, boundaryID := range queue {
+			remainingCount := 0
+			for _, template := range []string{callsQueryTemplate, dispatchQueryTemplate} {
+				result, err := store.exec(template, map[string]any{"id": boundaryID, "minConf": minConfidence})
+				if err != nil {
+					continue
+				}
+				for result.HasNext() {
+					row, _ := result.Next()
+					neighborID, _ := row.GetValue(1)
+					if !visited[fmt.Sprint(neighborID)] {
+						remainingCount++
+					}
+				}
+				result.Close()
+			}
 			if remainingCount > 0 {
-				if qn := qnByID[boundaryID]; qn != "" {
+				if qualifiedName := qualifiedNameByID[boundaryID]; qualifiedName != "" {
 					subgraph.TruncatedNodes = append(subgraph.TruncatedNodes,
-						fmt.Sprintf("%s (%d direct callees not expanded)", qn, remainingCount))
+						fmt.Sprintf("%s (%d direct callees not expanded)", qualifiedName, remainingCount))
 				}
 			}
 		}

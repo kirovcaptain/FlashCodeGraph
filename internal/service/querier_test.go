@@ -587,19 +587,19 @@ func TestQuerier_QueryRouteChain(t *testing.T) {
 	if chain.Method != "GET" {
 		t.Errorf("expected method=GET, got %s", chain.Method)
 	}
-	if len(chain.Chain) == 0 {
+	if len(chain.Nodes) == 0 {
 		t.Error("expected non-empty call chain")
 	}
 
 	// Verify chain nodes have layer annotations
 	hasLayer := false
-	for _, cn := range chain.Chain {
-		if cn.Layer != "" {
+	for _, node := range chain.Nodes {
+		if layer, ok := node.Properties["layer"].(string); ok && layer != "" {
 			hasLayer = true
 		}
 	}
 	// At least the controller handler should have a layer
-	t.Logf("chain: %d nodes, hasLayer=%v", len(chain.Chain), hasLayer)
+	t.Logf("chain: %d nodes, hasLayer=%v", len(chain.Nodes), hasLayer)
 
 	// Non-existent route
 	_, err = querier.QueryRouteChain(ctx, "/nonexistent", "GET", 10)
@@ -801,10 +801,13 @@ func TestQuerier_QueryRouteChain_LayerPropagation(t *testing.T) {
 
 	// The handler function should inherit controller layer from its class
 	hasLayerOnFunction := false
-	for _, cn := range chain.Chain {
-		if cn.Kind == "Function" && cn.Layer != "" {
-			hasLayerOnFunction = true
-			t.Logf("  Function %s has layer=%s (propagated from class)", cn.Name, cn.Layer)
+	for _, node := range chain.Nodes {
+		if node.Kind == "Function" {
+			if layer, ok := node.Properties["layer"].(string); ok && layer != "" {
+				hasLayerOnFunction = true
+				name, _ := node.Properties["name"].(string)
+				t.Logf("  Function %s has layer=%s (propagated from class)", name, layer)
+			}
 		}
 	}
 
@@ -812,7 +815,7 @@ func TestQuerier_QueryRouteChain_LayerPropagation(t *testing.T) {
 		t.Log("⚠ No layer propagation to functions (CONTAINS edges may not exist in test project)")
 	}
 
-	t.Logf("✅ RouteChain layer propagation: %d nodes, hasLayerOnFunction=%v", len(chain.Chain), hasLayerOnFunction)
+	t.Logf("✅ RouteChain layer propagation: %d nodes, hasLayerOnFunction=%v", len(chain.Nodes), hasLayerOnFunction)
 }
 
 func TestFilterCoreSubgraph(t *testing.T) {
@@ -882,149 +885,13 @@ func TestFilterCoreSubgraph_Nil(t *testing.T) {
 	t.Log("✅ FilterCoreSubgraph: nil input → nil output")
 }
 
-func TestPruneDeclaredTypeDispatches(t *testing.T) {
-	sg := &model.Subgraph{
-		Nodes: []model.Node{
-			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "createV2", "qualified_name": "OrderService.createV2"}},
-			{ID: "base_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.BaseDao.insert"}},
-			{ID: "order_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.OrderDao.insert"}},
-			{ID: "unrelated_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.ReportDao.insert"}},
-		},
-		Edges: []model.Edge{
-			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.OrderDao"}},
-			{SourceID: "base_insert", TargetID: "order_insert", Kind: model.RelDispatches, Properties: map[string]any{"confidence": 1.0}},
-			{SourceID: "base_insert", TargetID: "unrelated_insert", Kind: model.RelDispatches, Properties: map[string]any{"confidence": 1.0}},
-		},
-	}
-	result := PruneDeclaredTypeDispatches(sg)
-	// unrelated_insert should be pruned
-	for _, n := range result.Nodes {
-		if n.ID == "unrelated_insert" {
-			t.Fatal("expected unrelated_insert to be pruned")
-		}
-	}
-	// order_insert should remain
-	found := false
-	for _, n := range result.Nodes {
-		if n.ID == "order_insert" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("expected order_insert to remain")
-	}
-	if len(result.Edges) != 2 {
-		t.Fatalf("expected 2 edges (CALLS + matching DISPATCHES), got %d", len(result.Edges))
-	}
-	t.Log("✅ PruneDeclaredTypeDispatches: unrelated DISPATCHES pruned")
-}
-
-
-func TestPruneDeclaredTypeDispatches_CallbackToSource(t *testing.T) {
-	// Real scenario: BaseDao.insert --DISPATCHES--> TaskDao.insert --CALLS(declared_type=TaskDao)--> BaseDao.insert
-	// The CALLS callback creates a declared_type prefix that matches the DISPATCHES target itself.
-	// TaskDao.insert should still be pruned because the only "real" declared_type is OrderDao.
-	sg := &model.Subgraph{
-		Nodes: []model.Node{
-			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "createV2", "qualified_name": "Service.createV2"}},
-			{ID: "base_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.BaseDao.insert"}},
-			{ID: "task_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.TaskDao.insert"}},
-			{ID: "fb_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.FbDao.insert"}},
-			{ID: "sql_util", Kind: "Function", Properties: map[string]any{"name": "getFields", "qualified_name": "com.example.SqlUtil.getFields"}},
-		},
-		Edges: []model.Edge{
-			// Real caller with declared_type=OrderDao
-			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.OrderDao"}},
-			// DISPATCHES from base to children
-			{SourceID: "base_insert", TargetID: "task_insert", Kind: model.RelDispatches},
-			{SourceID: "base_insert", TargetID: "fb_insert", Kind: model.RelDispatches},
-			// Children call back to parent (super.insert()) — these should NOT pollute declaredTypePrefixes
-			{SourceID: "task_insert", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.TaskDao"}},
-			{SourceID: "fb_insert", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.FbDao"}},
-			// BaseDao.insert's real callee
-			{SourceID: "base_insert", TargetID: "sql_util", Kind: model.RelCalls},
-		},
-	}
-	result := PruneDeclaredTypeDispatches(sg)
-
-	nodeIDs := map[string]bool{}
-	for _, n := range result.Nodes {
-		nodeIDs[n.ID] = true
-	}
-	if nodeIDs["task_insert"] {
-		t.Fatal("expected task_insert to be pruned")
-	}
-	if nodeIDs["fb_insert"] {
-		t.Fatal("expected fb_insert to be pruned")
-	}
-	if !nodeIDs["root"] || !nodeIDs["base_insert"] || !nodeIDs["sql_util"] {
-		t.Fatalf("expected root, base_insert, sql_util to remain, got %v", nodeIDs)
-	}
-	if len(result.Edges) != 2 {
-		for _, e := range result.Edges {
-			t.Logf("  edge: %s → %s (%s)", e.SourceID, e.TargetID, e.Kind)
-		}
-		t.Fatalf("expected 2 edges (root→base, base→sql), got %d", len(result.Edges))
-	}
-	t.Log("✅ PruneDeclaredTypeDispatches: DISPATCHES targets with super callback also pruned")
-}
-
-func TestPruneDeclaredTypeDispatches_ChildHasOtherCaller(t *testing.T) {
-	// If a DISPATCHES target is also called by another non-excluded node, it should NOT be pruned
-	sg := &model.Subgraph{
-		Nodes: []model.Node{
-			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "createV2", "qualified_name": "Service.createV2"}},
-			{ID: "base_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.BaseDao.insert"}},
-			{ID: "task_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.dao.TaskDao.insert"}},
-			{ID: "other_service", Kind: "Function", Properties: map[string]any{"name": "doWork", "qualified_name": "OtherService.doWork"}},
-		},
-		Edges: []model.Edge{
-			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.dao.OrderDao"}},
-			{SourceID: "root", TargetID: "other_service", Kind: model.RelCalls},
-			{SourceID: "base_insert", TargetID: "task_insert", Kind: model.RelDispatches},
-			{SourceID: "other_service", TargetID: "task_insert", Kind: model.RelCalls}, // another caller
-		},
-	}
-	result := PruneDeclaredTypeDispatches(sg)
-	nodeIDs := map[string]bool{}
-	for _, n := range result.Nodes {
-		nodeIDs[n.ID] = true
-	}
-	// task_insert has another caller (other_service), so it should remain
-	if !nodeIDs["task_insert"] {
-		t.Fatal("expected task_insert to remain (has other caller)")
-	}
-	t.Log("✅ PruneDeclaredTypeDispatches: DISPATCHES target with other caller preserved")
-}
-
-func TestPruneDeclaredTypeDispatches_NoDeclaredType(t *testing.T) {
-	sg := &model.Subgraph{
-		Nodes: []model.Node{
-			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "process"}},
-			{ID: "iface", Kind: "Function", Properties: map[string]any{"name": "pay", "qualified_name": "PayService.pay"}},
-			{ID: "impl1", Kind: "Function", Properties: map[string]any{"name": "pay", "qualified_name": "AlipayService.pay"}},
-			{ID: "impl2", Kind: "Function", Properties: map[string]any{"name": "pay", "qualified_name": "WechatService.pay"}},
-		},
-		Edges: []model.Edge{
-			{SourceID: "root", TargetID: "iface", Kind: model.RelCalls, Properties: map[string]any{}},
-			{SourceID: "iface", TargetID: "impl1", Kind: model.RelDispatches},
-			{SourceID: "iface", TargetID: "impl2", Kind: model.RelDispatches},
-		},
-	}
-	result := PruneDeclaredTypeDispatches(sg)
-	if len(result.Nodes) != 4 {
-		t.Fatalf("expected all 4 nodes preserved, got %d", len(result.Nodes))
-	}
-	if len(result.Edges) != 3 {
-		t.Fatalf("expected all 3 edges preserved, got %d", len(result.Edges))
-	}
-	t.Log("✅ PruneDeclaredTypeDispatches: no declared_type → all DISPATCHES preserved")
-}
 
 func TestFilterDrySubgraph_InheritedBaseMethod(t *testing.T) {
-	// dry mode should prune base class methods reached via inheritance.
+	// dry mode should prune base class methods reached via inheritance,
+	// but ONLY when the override is in the subgraph (via DISPATCHES edge).
 	// OrderCycleDao.get → BaseDao.get (via OrderCycleDao) → SqlPageHandler/BaseDao.list
-	// Only OrderCycleDao.get should remain.
+	// BaseDao.get dispatches to OrderCycleDao.get (override exists).
+	// Only OrderCycleDao.get should remain; BaseDao.get and its subtree are pruned.
 	sg := &model.Subgraph{
 		Nodes: []model.Node{
 			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "execute", "file_path": "Job.java"}},
@@ -1038,6 +905,7 @@ func TestFilterDrySubgraph_InheritedBaseMethod(t *testing.T) {
 			{SourceID: "dao_get", TargetID: "base_get", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.OrderCycleDao"}},
 			{SourceID: "base_get", TargetID: "sql_handler", Kind: model.RelCalls},
 			{SourceID: "base_get", TargetID: "base_list", Kind: model.RelCalls},
+			{SourceID: "base_get", TargetID: "dao_get", Kind: model.RelDispatches},
 		},
 	}
 	result := FilterDrySubgraph(sg)
@@ -1051,7 +919,32 @@ func TestFilterDrySubgraph_InheritedBaseMethod(t *testing.T) {
 	if nodeIDs["base_get"] || nodeIDs["sql_handler"] || nodeIDs["base_list"] {
 		t.Fatalf("expected base_get, sql_handler, base_list to be pruned, got %v", nodeIDs)
 	}
-	t.Log("✅ FilterDrySubgraph: inherited base method chain pruned")
+	t.Log("✅ FilterDrySubgraph: inherited base method chain pruned when override exists")
+}
+
+func TestFilterDrySubgraph_InheritedBaseMethod_NoOverride(t *testing.T) {
+	// When no override exists (no DISPATCHES edge), the base method IS the real
+	// implementation and must NOT be pruned.
+	sg := &model.Subgraph{
+		Nodes: []model.Node{
+			{ID: "root", Kind: "Function", Properties: map[string]any{"name": "save", "file_path": "Service.java"}},
+			{ID: "base_insert", Kind: "Function", Properties: map[string]any{"name": "insert", "qualified_name": "com.example.BaseDao.insert", "file_path": "BaseDao.java"}},
+			{ID: "sql_build", Kind: "Function", Properties: map[string]any{"name": "build", "qualified_name": "com.example.SqlBuilder.build", "file_path": "SqlBuilder.java"}},
+		},
+		Edges: []model.Edge{
+			{SourceID: "root", TargetID: "base_insert", Kind: model.RelCalls, Properties: map[string]any{"declared_type": "com.example.ReviewDao"}},
+			{SourceID: "base_insert", TargetID: "sql_build", Kind: model.RelCalls},
+		},
+	}
+	result := FilterDrySubgraph(sg)
+	nodeIDs := map[string]bool{}
+	for _, n := range result.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	if !nodeIDs["root"] || !nodeIDs["base_insert"] || !nodeIDs["sql_build"] {
+		t.Fatalf("expected all nodes to remain when no override exists, got %v", nodeIDs)
+	}
+	t.Log("✅ FilterDrySubgraph: inherited base method kept when no override in subgraph")
 }
 func TestFilterDrySubgraph_Log(t *testing.T) {
 	sg := &model.Subgraph{

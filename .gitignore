@@ -6,4 +6,5 @@
 *.so
 *.dylib
 /fcg
+.claude/
 /analysis/analysisReport

@@ -843,75 +843,295 @@ func parseBatchEdgeResults(rows []interface{}, defaultKind model.RelationKind) [
 	return edges
 }
 
-// TraverseCallChain traverses the call graph from nodeID up to the given depth.
-// Note: the returned Nodes contain only reachable neighbors (callees/callers),
-// NOT the root node itself. The root nodeID is included in the edge query so
-// edges referencing it as source/target are present. CLI adds the root node
-// separately for rendering; MCP consumers already know the root from the request.
+// TraverseCallChain traverses the call graph from nodeID up to the given depth
+// using level-by-level BFS. Each level queries CALLS edges first, then queries
+// DISPATCHES edges from the new CALLS targets and filters them by declared_type.
+//
+// The returned Nodes contain only reachable neighbors (callees/callers),
+// NOT the root node itself.
 func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth int, direction model.Direction, minConfidence float64) (*model.Subgraph, error) {
 	subgraph := &model.Subgraph{}
+	visited := map[string]bool{nodeID: true}
+	queue := []string{nodeID}
 
-	// Query reachable nodes (excludes the root node itself)
-	var nodeCypher string
+	confidenceFilter := ""
+	if minConfidence > 0 {
+		confidenceFilter = fmt.Sprintf(" AND (r.confidence IS NULL OR r.confidence >= %f)", minConfidence)
+	}
+
+	var callsCypher, dispatchesCypher string
 	switch direction {
 	case model.Outgoing:
-		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]->(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line",
-			depth)
+		callsCypher = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id IN $ids" + confidenceFilter +
+			" RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, 'CALLS', r.cross_service, r.via_route, r.target_project, r.target_handler," +
+			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line"
+		dispatchesCypher = "MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE a.id IN $ids" +
+			" RETURN a.id, b.id, r.confidence, NULL AS line, NULL AS flow_context, NULL AS flow_line, NULL AS declared_type, NULL AS polymorphic, 'DISPATCHES', NULL AS cross_service, NULL AS via_route, NULL AS target_project, NULL AS target_handler," +
+			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line"
 	case model.Incoming:
-		nodeCypher = fmt.Sprintf(
-			"MATCH (a)-[:CALLS|DISPATCHES*1..%d]->(b:Function {id: $nodeID}) RETURN DISTINCT a.id, a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line",
-			depth)
+		callsCypher = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id IN $ids" + confidenceFilter +
+			" RETURN b.id, a.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, 'CALLS', r.cross_service, r.via_route, r.target_project, r.target_handler," +
+			" a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line"
+		dispatchesCypher = "MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE b.id IN $ids" +
+			" RETURN b.id, a.id, r.confidence, NULL AS line, NULL AS flow_context, NULL AS flow_line, NULL AS declared_type, NULL AS polymorphic, 'DISPATCHES', NULL AS cross_service, NULL AS via_route, NULL AS target_project, NULL AS target_handler," +
+			" a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line"
 	default:
-		nodeCypher = fmt.Sprintf(
-			"MATCH (a:Function {id: $nodeID})-[:CALLS|DISPATCHES*1..%d]-(b) RETURN DISTINCT b.id, b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line",
-			depth)
+		callsCypher = "MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id IN $ids" + confidenceFilter +
+			" RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, 'CALLS', r.cross_service, r.via_route, r.target_project, r.target_handler," +
+			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line"
+		dispatchesCypher = "MATCH (a:Function)-[r:DISPATCHES]-(b:Function) WHERE a.id IN $ids" +
+			" RETURN a.id, b.id, r.confidence, NULL AS line, NULL AS flow_context, NULL AS flow_line, NULL AS declared_type, NULL AS polymorphic, 'DISPATCHES', NULL AS cross_service, NULL AS via_route, NULL AS target_project, NULL AS target_handler," +
+			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line"
 	}
 
-	rows, err := store.queryWithParams(ctx, nodeCypher, []cypherParam{{"nodeID", nodeID}})
-	if err != nil {
-		return subgraph, err
-	}
-	subgraph.Nodes = parseCallChainResults(rows)
+	for level := 0; level < depth && len(queue) > 0; level++ {
+		// Step 1: Batch query CALLS edges from queue nodes
+		callsRows, err := store.queryWithParams(ctx, callsCypher, []cypherParam{{"ids", queue}})
+		if err != nil {
+			return subgraph, err
+		}
 
-	if len(subgraph.Nodes) == 0 {
-		return subgraph, nil
+		var nextQueue []string
+		// Track declared_type prefixes per CALLS target for DISPATCHES filtering
+		declaredTypePrefixes := map[string]map[string]bool{}
+
+		callsEdgesAndNodes := parseBFSResults(callsRows)
+		for _, result := range callsEdgesAndNodes {
+			subgraph.Edges = append(subgraph.Edges, result.edge)
+
+			// Collect declared_type for the CALLS target
+			if declaredType, ok := result.edge.Properties["declared_type"].(string); ok && declaredType != "" {
+				neighborID := result.edge.TargetID
+				if direction == model.Incoming {
+					neighborID = result.edge.SourceID
+				}
+				if declaredTypePrefixes[neighborID] == nil {
+					declaredTypePrefixes[neighborID] = map[string]bool{}
+				}
+				declaredTypePrefixes[neighborID][declaredType+"."] = true
+			}
+
+			if !visited[result.node.ID] {
+				visited[result.node.ID] = true
+				nextQueue = append(nextQueue, result.node.ID)
+				subgraph.Nodes = append(subgraph.Nodes, result.node)
+			}
+		}
+
+		// Step 2: Batch query DISPATCHES edges from new CALLS targets, filter by declared_type
+		if len(nextQueue) > 0 {
+			sourceQualifiedNameByID := map[string]string{}
+			for _, node := range subgraph.Nodes {
+				if qualifiedName, ok := node.Properties["qualified_name"].(string); ok {
+					sourceQualifiedNameByID[node.ID] = qualifiedName
+				}
+			}
+
+			dispatchRows, dispatchErr := store.queryWithParams(ctx, dispatchesCypher, []cypherParam{{"ids", nextQueue}})
+			if dispatchErr == nil {
+				dispatchEdgesAndNodes := parseBFSResults(dispatchRows)
+				for _, result := range dispatchEdgesAndNodes {
+					dispatchSourceID := result.edge.SourceID
+					if direction == model.Incoming {
+						dispatchSourceID = result.edge.TargetID
+					}
+
+					prefixes := declaredTypePrefixes[dispatchSourceID]
+					if len(prefixes) > 0 {
+						// When declared_type matches the source's own class, the caller
+						// uses the interface/abstract type — keep all implementations
+						sourceQualifiedName := sourceQualifiedNameByID[dispatchSourceID]
+						declaredTypeMatchesSource := false
+						for prefix := range prefixes {
+							if strings.HasPrefix(sourceQualifiedName, prefix) {
+								declaredTypeMatchesSource = true
+								break
+							}
+						}
+						if !declaredTypeMatchesSource {
+							targetQualifiedName, _ := result.node.Properties["qualified_name"].(string)
+							matched := false
+							for prefix := range prefixes {
+								if strings.HasPrefix(targetQualifiedName, prefix) {
+									matched = true
+									break
+								}
+							}
+							if !matched {
+								continue
+							}
+						}
+					}
+
+					subgraph.Edges = append(subgraph.Edges, result.edge)
+					if !visited[result.node.ID] {
+						visited[result.node.ID] = true
+						nextQueue = append(nextQueue, result.node.ID)
+						subgraph.Nodes = append(subgraph.Nodes, result.node)
+					}
+				}
+			}
+		}
+
+		queue = nextQueue
 	}
 
-	// Query CALLS edges between root + all reachable nodes.
-	// This intentionally queries ALL edges between reachable nodes (not just root→callee),
-	// because the node query (*1..depth) may return nodes at different depths, and we need
-	// edges at every level for tree rendering. The over-fetched edges are filtered below.
-	idList := make([]string, 0, len(subgraph.Nodes)+1)
-	idList = append(idList, nodeID)
-	for _, n := range subgraph.Nodes {
-		idList = append(idList, n.ID)
-	}
-	edgeCypher := "MATCH (a:Function)-[r:CALLS|DISPATCHES]->(b:Function) WHERE a.id IN $nodeIDs AND b.id IN $nodeIDs RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, type(r), r.cross_service, r.via_route, r.target_project, r.target_handler"
-	edgeRows, err := store.queryWithParams(ctx, edgeCypher, []cypherParam{{"nodeIDs", idList}})
-	if err == nil {
-		subgraph.Edges = parseEdgeResults(edgeRows)
-	}
-
-	// Filter edges by depth using BFS from root.
-	//
-	// Why: The edge query above returns ALL edges between reachable nodes, including edges
-	// between callees at the same depth level. For example, with depth=1 and graph:
-	//   root → A, root → B, A → B
-	// The edge query returns 3 edges, but A→B is a depth=2 relationship (root→A→B).
-	// Without filtering, CLI renders A→B as a child of A, creating misleading "depth=2" output.
-	//
-	// How: BFS computes each node's shortest distance from root. An edge is kept only if its
-	// upstream node (source for outgoing, target for incoming) is within depth-1 hops,
-	// ensuring it represents a valid parent→child relationship within the requested depth.
-	var boundaryIDs []string
-	subgraph.Edges, boundaryIDs = filterEdgesByDepth(nodeID, subgraph.Edges, depth, direction)
-
-	if len(boundaryIDs) > 0 {
-		subgraph.TruncatedNodes = store.queryTruncatedNodes(ctx, boundaryIDs, idList, direction)
+	// Detect truncated nodes: queue contains boundary nodes whose callees were not explored
+	if len(queue) > 0 {
+		allVisitedIDs := make([]string, 0, len(visited))
+		for visitedID := range visited {
+			allVisitedIDs = append(allVisitedIDs, visitedID)
+		}
+		subgraph.TruncatedNodes = store.queryTruncatedNodes(ctx, queue, allVisitedIDs, direction)
 	}
 
 	return subgraph, nil
+}
+
+// bfsEdgeNodeResult holds a paired edge and its neighbor node from a BFS query row.
+type bfsEdgeNodeResult struct {
+	edge model.Edge
+	node model.Node
+}
+
+// parseBFSResults parses rows from BFS queries that return both edge and node columns.
+// Expected column layout: [0-12] edge columns (same as parseEdgeResults), [13-22] node columns.
+func parseBFSResults(rows []interface{}) []bfsEdgeNodeResult {
+	if len(rows) < 2 {
+		return nil
+	}
+	dataRows, ok := rows[1].([]interface{})
+	if !ok {
+		return nil
+	}
+	results := make([]bfsEdgeNodeResult, 0, len(dataRows))
+	for _, row := range dataRows {
+		cols, ok := row.([]interface{})
+		if !ok || len(cols) < 16 {
+			continue
+		}
+
+		// Parse edge (columns 0-12) — reuse parseEdgeResults layout
+		edgeKind := model.RelCalls
+		if len(cols) >= 9 && cols[8] != nil {
+			if typeName, ok := cols[8].(string); ok {
+				edgeKind = model.RelationKind(typeName)
+			}
+		}
+		edge := model.Edge{
+			SourceID:   asString(cols[0]),
+			TargetID:   asString(cols[1]),
+			Kind:       edgeKind,
+			Properties: make(map[string]any),
+		}
+		if cols[2] != nil {
+			if confidence, ok := asFloat(cols[2]); ok {
+				edge.Properties["confidence"] = confidence
+			}
+		}
+		if cols[3] != nil {
+			if lineNumber, ok := asInt(cols[3]); ok {
+				edge.Properties["line"] = lineNumber
+			}
+		}
+		if cols[4] != nil {
+			if flowContext, ok := cols[4].(string); ok && flowContext != "" {
+				edge.Properties["flow_context"] = flowContext
+			}
+		}
+		if cols[5] != nil {
+			if flowLineNumber, ok := asInt(cols[5]); ok {
+				edge.Properties["flow_line"] = flowLineNumber
+			}
+		}
+		if cols[6] != nil {
+			if declaredType, ok := cols[6].(string); ok && declaredType != "" {
+				edge.Properties["declared_type"] = declaredType
+			}
+		}
+		if cols[7] != nil {
+			switch polymorphicValue := cols[7].(type) {
+			case bool:
+				if polymorphicValue {
+					edge.Properties["polymorphic"] = true
+				}
+			case string:
+				if polymorphicValue == "true" {
+					edge.Properties["polymorphic"] = true
+				}
+			}
+		}
+		if len(cols) >= 10 && cols[9] != nil {
+			switch crossServiceValue := cols[9].(type) {
+			case bool:
+				edge.Properties["cross_service"] = crossServiceValue
+			case string:
+				edge.Properties["cross_service"] = crossServiceValue == "true"
+			}
+		}
+		if len(cols) >= 11 && cols[10] != nil {
+			if viaRoute, ok := cols[10].(string); ok && viaRoute != "" {
+				edge.Properties["via_route"] = viaRoute
+			}
+		}
+		if len(cols) >= 12 && cols[11] != nil {
+			if targetProject, ok := cols[11].(string); ok && targetProject != "" {
+				edge.Properties["target_project"] = targetProject
+			}
+		}
+		if len(cols) >= 13 && cols[12] != nil {
+			if targetHandler, ok := cols[12].(string); ok && targetHandler != "" {
+				edge.Properties["target_handler"] = targetHandler
+			}
+		}
+
+		// Parse neighbor node (columns 13-22)
+		neighborID := edge.TargetID
+		if edge.SourceID != "" && edge.TargetID != "" {
+			// For incoming direction, the neighbor is the source
+			// But parseBFSResults always gets the neighbor in cols[1] position
+			// because the Cypher query is structured to return (anchor, neighbor, ...)
+			neighborID = asString(cols[1])
+		}
+		nodeProperties := map[string]any{
+			"name":      cols[13],
+			"file_path": cols[14],
+		}
+		if cols[15] != nil {
+			nodeProperties["qualified_name"] = cols[15]
+		}
+		if len(cols) > 16 && cols[16] != nil {
+			nodeProperties["is_getter"] = convertByType(cols[16], "BOOLEAN")
+		}
+		if len(cols) > 17 && cols[17] != nil {
+			nodeProperties["is_setter"] = convertByType(cols[17], "BOOLEAN")
+		}
+		if len(cols) > 18 && cols[18] != nil {
+			nodeProperties["is_constructor"] = convertByType(cols[18], "BOOLEAN")
+		}
+		if len(cols) > 19 && cols[19] != nil {
+			nodeProperties["source_project"] = cols[19]
+		}
+		if len(cols) > 20 && cols[20] != nil {
+			nodeProperties["source_branch"] = cols[20]
+		}
+		if len(cols) > 21 && cols[21] != nil {
+			nodeProperties["start_line"] = cols[21]
+		}
+		if len(cols) > 22 && cols[22] != nil {
+			nodeProperties["end_line"] = cols[22]
+		}
+
+		results = append(results, bfsEdgeNodeResult{
+			edge: edge,
+			node: model.Node{
+				ID:         neighborID,
+				Kind:       constants.KindFunction,
+				Properties: nodeProperties,
+			},
+		})
+	}
+	return results
 }
 
 // TraverseImpact finds all nodes affected by changes to a node.
@@ -960,77 +1180,6 @@ func (store *Store) queryTruncatedNodes(ctx context.Context, boundaryIDs []strin
 	return truncated
 }
 
-// filterEdgesByDepth uses BFS from rootID to compute each node's shortest distance,
-// then keeps only edges where the source (for outgoing) or target (for incoming) is
-// within depth-1 hops from root. This prevents returning edges between nodes at the
-// same depth level (which would represent deeper relationships).
-func filterEdgesByDepth(rootID string, edges []model.Edge, depth int, direction model.Direction) ([]model.Edge, []string) {
-	if len(edges) == 0 {
-		return edges, nil
-	}
-
-	// Build adjacency list from edges
-	adjacency := make(map[string][]string)
-	for _, edge := range edges {
-		switch direction {
-		case model.Outgoing:
-			adjacency[edge.SourceID] = append(adjacency[edge.SourceID], edge.TargetID)
-		case model.Incoming:
-			adjacency[edge.TargetID] = append(adjacency[edge.TargetID], edge.SourceID)
-		default:
-			adjacency[edge.SourceID] = append(adjacency[edge.SourceID], edge.TargetID)
-			adjacency[edge.TargetID] = append(adjacency[edge.TargetID], edge.SourceID)
-		}
-	}
-
-	// BFS from root to compute shortest distance
-	nodeLevel := map[string]int{rootID: 0}
-	queue := []string{rootID}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		currentLevel := nodeLevel[current]
-		if currentLevel >= depth {
-			continue
-		}
-		for _, neighbor := range adjacency[current] {
-			if _, visited := nodeLevel[neighbor]; !visited {
-				nodeLevel[neighbor] = currentLevel + 1
-				queue = append(queue, neighbor)
-			}
-		}
-	}
-
-	// Collect boundary node IDs (nodes at exactly max depth)
-	var boundaryIDs []string
-	for id, level := range nodeLevel {
-		if id != rootID && level == depth {
-			boundaryIDs = append(boundaryIDs, id)
-		}
-	}
-
-	// Filter: keep edges where the "upstream" node is within depth-1
-	var filtered []model.Edge
-	for _, edge := range edges {
-		switch direction {
-		case model.Outgoing:
-			if level, ok := nodeLevel[edge.SourceID]; ok && level < depth {
-				filtered = append(filtered, edge)
-			}
-		case model.Incoming:
-			if level, ok := nodeLevel[edge.TargetID]; ok && level < depth {
-				filtered = append(filtered, edge)
-			}
-		default:
-			sourceLevel, sourceOK := nodeLevel[edge.SourceID]
-			targetLevel, targetOK := nodeLevel[edge.TargetID]
-			if (sourceOK && sourceLevel < depth) || (targetOK && targetLevel < depth) {
-				filtered = append(filtered, edge)
-			}
-		}
-	}
-	return filtered, boundaryIDs
-}
 
 // BatchUpdateNodeProperties updates properties on multiple nodes using UNWIND.
 func (store *Store) BatchUpdateNodeProperties(ctx context.Context, kind string, updates []storage.PropertyUpdate) error {

@@ -191,10 +191,11 @@ type CompactChainEdge struct {
 
 // RouteChain represents the full call chain from a route entry point.
 type RouteChain struct {
-	Route    string      `json:"route"`
-	Method   string      `json:"method"`
-	Chain    []ChainNode `json:"chain"`
-	Queries  []ChainNode `json:"queries,omitempty"`
+	Route   string      `json:"route"`
+	Method  string      `json:"method"`
+	Nodes   []Node      `json:"nodes"`
+	Edges   []Edge      `json:"edges"`
+	Queries []ChainNode `json:"queries,omitempty"`
 }
 
 // LocateRequest is a single file+line pair for locate_function.

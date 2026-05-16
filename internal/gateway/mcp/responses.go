@@ -32,6 +32,7 @@ type callChainResponse struct {
 	Hint              string            `json:"hint,omitempty"`
 	Nodes             []model.Node      `json:"nodes"`
 	Edges             []model.ChainEdge `json:"edges"`
+	Queries           []model.ChainNode `json:"queries,omitempty"`
 	TruncatedNodes    []string          `json:"truncated_nodes,omitempty"`
 	CrossServiceHints []string          `json:"cross_service_hints,omitempty"`
 	CrossProjectHints []string          `json:"cross_project_hints,omitempty"`
@@ -43,6 +44,7 @@ type compactCallChainResponse struct {
 	Hint              string                   `json:"hint,omitempty"`
 	Nodes             []model.Node             `json:"nodes"`
 	Edges             []model.CompactChainEdge `json:"edges"`
+	Queries           []model.ChainNode        `json:"queries,omitempty"`
 	TruncatedNodes    []string                 `json:"truncated_nodes,omitempty"`
 	CrossServiceHints []string                 `json:"cross_service_hints,omitempty"`
 	CrossProjectHints []string                 `json:"cross_project_hints,omitempty"`
@@ -116,9 +118,27 @@ type routeEntry struct {
 }
 
 type routeChainResponse struct {
-	Branch string `json:"branch,omitempty"`
-	Hint   string `json:"hint,omitempty"`
-	*model.RouteChain
+	Branch         string            `json:"branch,omitempty"`
+	Warning        string            `json:"warning,omitempty"`
+	Hint           string            `json:"hint,omitempty"`
+	Route          string            `json:"route"`
+	Method         string            `json:"method"`
+	Nodes          []model.Node      `json:"nodes"`
+	Edges          []model.ChainEdge `json:"edges"`
+	Queries        []model.ChainNode `json:"queries,omitempty"`
+	TruncatedNodes []string          `json:"truncated_nodes,omitempty"`
+}
+
+type compactRouteChainResponse struct {
+	Branch         string                   `json:"branch,omitempty"`
+	Warning        string                   `json:"warning,omitempty"`
+	Hint           string                   `json:"hint,omitempty"`
+	Route          string                   `json:"route"`
+	Method         string                   `json:"method"`
+	Nodes          []model.Node             `json:"nodes"`
+	Edges          []model.CompactChainEdge `json:"edges"`
+	Queries        []model.ChainNode        `json:"queries,omitempty"`
+	TruncatedNodes []string                 `json:"truncated_nodes,omitempty"`
 }
 
 // --- Analyze repository ---

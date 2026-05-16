@@ -190,6 +190,11 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 		name = "🌐 " + name + " [cross-service]"
 		filePath = ""
 	}
+	if node != nil {
+		if layer, ok := node.Properties["layer"].(string); ok && layer != "" && filePath != "" {
+			name = name + " [" + layer + "]"
+		}
+	}
 
 	connector := "├── "
 	if isLast {
@@ -376,6 +381,41 @@ func renderVNode(node *vnode, nodeMap map[string]*model.Node, children map[strin
 			}
 			renderVNode(ch, nodeMap, children, visited, childPrefix, currentDepth, maxDepth)
 		}
+	}
+}
+
+func printQueries(queries []model.ChainNode) {
+	if len(queries) == 0 {
+		return
+	}
+	type queryKey struct{ sql, caller string }
+	seen := map[queryKey]bool{}
+	var unique []model.ChainNode
+	for _, queryNode := range queries {
+		key := queryKey{queryNode.SQLText, queryNode.QualifiedName}
+		if !seen[key] {
+			seen[key] = true
+			unique = append(unique, queryNode)
+		}
+	}
+	fmt.Printf("\nQueries (%d):\n", len(unique))
+	for _, queryNode := range unique {
+		sqlDisplay := queryNode.SQLText
+		if len(sqlDisplay) > 55 {
+			sqlDisplay = sqlDisplay[:55] + "..."
+		}
+		tablesDisplay := ""
+		if queryNode.Tables != nil {
+			var tableNames []string
+			if json.Unmarshal(queryNode.Tables, &tableNames) == nil && len(tableNames) > 0 {
+				tablesDisplay = " [" + strings.Join(tableNames, ", ") + "]"
+			}
+		}
+		caller := queryNode.QualifiedName
+		if lastDot := strings.LastIndex(caller, "."); lastDot >= 0 {
+			caller = caller[lastDot+1:]
+		}
+		fmt.Printf("  %-8s %-60s ← %s%s\n", queryNode.QueryType, sqlDisplay, caller, tablesDisplay)
 	}
 }
 

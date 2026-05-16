@@ -144,6 +144,22 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 		annotations = ExtractAnnotations(modifiers, content)
 	}
 
+	// Resolve short type name → qualified name using imports and package context
+	resolveParentQualified := func(shortName string) string {
+		if strings.Contains(shortName, ".") {
+			return shortName
+		}
+		for _, imp := range result.Imports {
+			if imp.SymbolName == shortName {
+				return imp.ModulePath
+			}
+		}
+		if packageName != "" {
+			return packageName + "." + shortName
+		}
+		return ""
+	}
+
 	// Extract heritage (extends/implements)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -152,11 +168,12 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 			parentType := extractTypeFromHeritage(child, content)
 			if parentType != "" {
 				result.Heritage = append(result.Heritage, model.RawHeritage{
-					ChildName:      className,
-					ChildQualified: qualifiedName,
-					ParentName:     parentType,
-					Kind:           "extends",
-					FilePath:       filePath,
+					ChildName:       className,
+					ChildQualified:  qualifiedName,
+					ParentName:      parentType,
+					ParentQualified: resolveParentQualified(parentType),
+					Kind:            "extends",
+					FilePath:        filePath,
 				})
 			}
 		case "super_interfaces":
@@ -177,11 +194,12 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 						ifaceName := ExtractTypeName(iface, content)
 						if ifaceName != "" {
 							result.Heritage = append(result.Heritage, model.RawHeritage{
-								ChildName:      className,
-								ChildQualified: qualifiedName,
-								ParentName:     ifaceName,
-								Kind:           "implements",
-								FilePath:       filePath,
+								ChildName:       className,
+								ChildQualified:  qualifiedName,
+								ParentName:      ifaceName,
+								ParentQualified: resolveParentQualified(ifaceName),
+								Kind:            "implements",
+								FilePath:        filePath,
 							})
 						}
 					}
