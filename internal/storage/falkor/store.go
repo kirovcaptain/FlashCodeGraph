@@ -1366,13 +1366,25 @@ func (store *Store) QueryNodesByProperty(ctx context.Context, kind string, key s
 	return nodes, nil
 }
 
-// SearchFTS performs full-text search on node names.
+// SearchFTS performs full-text search on node names, qualified names, variable types, and annotation params.
 func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) ([]storage.SearchResult, error) {
 	var parts []string
 	for _, label := range constants.BaseSymbolKinds {
+		returnCols := fmt.Sprintf("n.id AS id, '%s' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name, n.start_line AS start_line, n.end_line AS end_line", label)
 		parts = append(parts,
-			"MATCH (n:"+label+") WHERE n.name CONTAINS $searchText RETURN n.id AS id, '"+label+"' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name, n.start_line AS start_line, n.end_line AS end_line")
+			"MATCH (n:"+label+") WHERE n.name CONTAINS $searchText RETURN "+returnCols)
+		parts = append(parts,
+			"MATCH (n:"+label+") WHERE n.qualified_name CONTAINS $searchText RETURN "+returnCols)
 	}
+
+	parts = append(parts,
+		"MATCH (n:Variable) WHERE n.name CONTAINS $searchText OR n.var_type CONTAINS $searchText "+
+			"RETURN n.id AS id, 'Variable' AS kind, n.name AS name, n.file_path AS file_path, '' AS qualified_name, n.line AS start_line, n.line AS end_line")
+
+	parts = append(parts,
+		"MATCH (n:Annotation) WHERE n.params CONTAINS $searchText "+
+			"RETURN n.id AS id, 'Annotation' AS kind, n.name AS name, n.file_path AS file_path, '' AS qualified_name, n.line AS start_line, n.line AS end_line")
+
 	cypher := strings.Join(parts, " UNION ") + fmt.Sprintf(" LIMIT %d", limit)
 
 	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"searchText", queryText}})

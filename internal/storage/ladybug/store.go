@@ -1234,11 +1234,11 @@ func (store *Store) QueryNodesByProperty(_ context.Context, kind string, key str
 	return nodes, nil
 }
 
-// SearchFTS performs full-text search on node names.
+// SearchFTS performs full-text search on node names, qualified names, variable types, and annotation params.
 func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]storage.SearchResult, error) {
 	var results []storage.SearchResult
 	for _, table := range constants.BaseSymbolKinds {
-		cypherQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.name CONTAINS $query RETURN n.id, n.name, n.file_path, n.qualified_name, n.start_line, n.end_line LIMIT %d", table, limit)
+		cypherQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.name CONTAINS $query OR n.qualified_name CONTAINS $query RETURN n.id, n.name, n.file_path, n.qualified_name, n.start_line, n.end_line LIMIT %d", table, limit)
 		result, err := store.exec(cypherQuery, map[string]any{"query": query})
 		if err != nil {
 			continue
@@ -1268,6 +1268,59 @@ func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]sto
 		}
 		result.Close()
 	}
+
+	{
+		cypherQuery := fmt.Sprintf("MATCH (n:Variable) WHERE n.name CONTAINS $query OR n.var_type CONTAINS $query RETURN n.id, n.name, n.file_path, n.line LIMIT %d", limit)
+		result, err := store.exec(cypherQuery, map[string]any{"query": query})
+		if err == nil {
+			for result.HasNext() {
+				row, _ := result.Next()
+				nodeID, _ := row.GetValue(0)
+				nodeName, _ := row.GetValue(1)
+				filePath, _ := row.GetValue(2)
+				line, _ := row.GetValue(3)
+				searchResult := storage.SearchResult{
+					NodeID: fmt.Sprint(nodeID),
+					Name:   fmt.Sprint(nodeName),
+					Kind:   "Variable",
+					Path:   fmt.Sprint(filePath),
+				}
+				if lineInt, ok := line.(int64); ok {
+					searchResult.StartLine = int(lineInt)
+					searchResult.EndLine = int(lineInt)
+				}
+				results = append(results, searchResult)
+			}
+			result.Close()
+		}
+	}
+
+	{
+		cypherQuery := fmt.Sprintf("MATCH (n:Annotation) WHERE n.params CONTAINS $query RETURN n.id, n.name, n.file_path, n.line LIMIT %d", limit)
+		result, err := store.exec(cypherQuery, map[string]any{"query": query})
+		if err == nil {
+			for result.HasNext() {
+				row, _ := result.Next()
+				nodeID, _ := row.GetValue(0)
+				nodeName, _ := row.GetValue(1)
+				filePath, _ := row.GetValue(2)
+				line, _ := row.GetValue(3)
+				searchResult := storage.SearchResult{
+					NodeID: fmt.Sprint(nodeID),
+					Name:   fmt.Sprint(nodeName),
+					Kind:   "Annotation",
+					Path:   fmt.Sprint(filePath),
+				}
+				if lineInt, ok := line.(int64); ok {
+					searchResult.StartLine = int(lineInt)
+					searchResult.EndLine = int(lineInt)
+				}
+				results = append(results, searchResult)
+			}
+			result.Close()
+		}
+	}
+
 	return results, nil
 }
 
