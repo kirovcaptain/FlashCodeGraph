@@ -1234,9 +1234,11 @@ func (store *Store) QueryNodesByProperty(_ context.Context, kind string, key str
 	return nodes, nil
 }
 
-// SearchFTS performs full-text search on node names, qualified names, variable types, and annotation params.
+// SearchFTS performs full-text search on node names, qualified names, class/interface fields, and annotation params.
 func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]storage.SearchResult, error) {
 	var results []storage.SearchResult
+
+	// Function / Class / Interface: search by name and qualified_name.
 	for _, table := range constants.BaseSymbolKinds {
 		cypherQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.name CONTAINS $query OR n.qualified_name CONTAINS $query RETURN n.id, n.name, n.file_path, n.qualified_name, n.start_line, n.end_line LIMIT %d", table, limit)
 		result, err := store.exec(cypherQuery, map[string]any{"query": query})
@@ -1269,32 +1271,37 @@ func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]sto
 		result.Close()
 	}
 
-	{
-		cypherQuery := fmt.Sprintf("MATCH (n:Variable) WHERE n.name CONTAINS $query OR n.var_type CONTAINS $query RETURN n.id, n.name, n.file_path, n.line LIMIT %d", limit)
+	// Class / Interface: search by fields JSON attribute (field name or field type).
+	for _, nodeKind := range []string{"Class", "Interface"} {
+		cypherQuery := fmt.Sprintf(
+			"MATCH (n:%s) WHERE n.fields CONTAINS $query "+
+				"RETURN n.id, n.file_path, n.qualified_name, n.start_line, n.end_line, n.fields LIMIT %d", nodeKind, limit)
 		result, err := store.exec(cypherQuery, map[string]any{"query": query})
-		if err == nil {
-			for result.HasNext() {
-				row, _ := result.Next()
-				nodeID, _ := row.GetValue(0)
-				nodeName, _ := row.GetValue(1)
-				filePath, _ := row.GetValue(2)
-				line, _ := row.GetValue(3)
-				searchResult := storage.SearchResult{
-					NodeID: fmt.Sprint(nodeID),
-					Name:   fmt.Sprint(nodeName),
-					Kind:   "Variable",
-					Path:   fmt.Sprint(filePath),
-				}
-				if lineInt, ok := line.(int64); ok {
-					searchResult.StartLine = int(lineInt)
-					searchResult.EndLine = int(lineInt)
-				}
-				results = append(results, searchResult)
-			}
-			result.Close()
+		if err != nil {
+			continue
 		}
+		for result.HasNext() {
+			row, _ := result.Next()
+			nodeIDRaw, _ := row.GetValue(0)
+			filePathRaw, _ := row.GetValue(1)
+			qualifiedNameRaw, _ := row.GetValue(2)
+			startLineRaw, _ := row.GetValue(3)
+			endLineRaw, _ := row.GetValue(4)
+			fieldsRaw, _ := row.GetValue(5)
+			classStartLine, classEndLine := extractLineNumbers(startLineRaw, endLineRaw)
+			results = append(results,
+				extractFieldResults(
+					fmt.Sprint(nodeIDRaw),
+					fmt.Sprint(qualifiedNameRaw),
+					fmt.Sprint(filePathRaw),
+					classStartLine, classEndLine,
+					fmt.Sprint(fieldsRaw), query,
+				)...)
+		}
+		result.Close()
 	}
 
+	// Annotation: search by params.
 	{
 		cypherQuery := fmt.Sprintf("MATCH (n:Annotation) WHERE n.params CONTAINS $query RETURN n.id, n.name, n.file_path, n.line LIMIT %d", limit)
 		result, err := store.exec(cypherQuery, map[string]any{"query": query})
@@ -1322,6 +1329,49 @@ func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]sto
 	}
 
 	return results, nil
+}
+
+// extractLineNumbers converts raw start/end line values from ladybug (INT32 schema) to int.
+// Handles both int32 and int64 to be robust against driver version differences.
+func extractLineNumbers(startLineRaw, endLineRaw any) (int, int) {
+	toLine := func(raw any) int {
+		switch value := raw.(type) {
+		case int32:
+			return int(value)
+		case int64:
+			return int(value)
+		}
+		return 0
+	}
+	return toLine(startLineRaw), toLine(endLineRaw)
+}
+
+// extractFieldResults parses the fields JSON of a Class/Interface node and returns one SearchResult
+// per field whose name or type contains queryText.
+// classStartLine and classEndLine are the enclosing node's lines (field-level line is not stored).
+func extractFieldResults(classNodeID, classQualifiedName, classFilePath string, classStartLine, classEndLine int, fieldsJSON, queryText string) []storage.SearchResult {
+	if fieldsJSON == "" || fieldsJSON == "null" || fieldsJSON == "[]" {
+		return nil
+	}
+	var fields []model.FieldInfo
+	if err := json.Unmarshal([]byte(fieldsJSON), &fields); err != nil {
+		return nil
+	}
+	var results []storage.SearchResult
+	for _, field := range fields {
+		if strings.Contains(field.Name, queryText) || strings.Contains(field.Type, queryText) {
+			results = append(results, storage.SearchResult{
+				NodeID:        classNodeID + "::field::" + field.Name,
+				Name:          field.Name,
+				Kind:          "Field",
+				Path:          classFilePath,
+				QualifiedName: classQualifiedName + "." + field.Name,
+				StartLine:     classStartLine,
+				EndLine:       classEndLine,
+			})
+		}
+	}
+	return results
 }
 
 // GetStats returns aggregate statistics.

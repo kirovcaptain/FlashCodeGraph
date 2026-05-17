@@ -1366,33 +1366,95 @@ func (store *Store) QueryNodesByProperty(ctx context.Context, kind string, key s
 	return nodes, nil
 }
 
-// SearchFTS performs full-text search on node names, qualified names, variable types, and annotation params.
+// SearchFTS performs full-text search on node names, qualified names, class/interface fields, and annotation params.
 func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) ([]storage.SearchResult, error) {
-	var parts []string
+	// Phase 1: Function / Class / Interface (name + qualified_name) and Annotation (params) via UNION.
+	var unionParts []string
 	for _, label := range constants.BaseSymbolKinds {
 		returnCols := fmt.Sprintf("n.id AS id, '%s' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name, n.start_line AS start_line, n.end_line AS end_line", label)
-		parts = append(parts,
+		unionParts = append(unionParts,
 			"MATCH (n:"+label+") WHERE n.name CONTAINS $searchText RETURN "+returnCols)
-		parts = append(parts,
+		unionParts = append(unionParts,
 			"MATCH (n:"+label+") WHERE n.qualified_name CONTAINS $searchText RETURN "+returnCols)
 	}
-
-	parts = append(parts,
-		"MATCH (n:Variable) WHERE n.name CONTAINS $searchText OR n.var_type CONTAINS $searchText "+
-			"RETURN n.id AS id, 'Variable' AS kind, n.name AS name, n.file_path AS file_path, '' AS qualified_name, n.line AS start_line, n.line AS end_line")
-
-	parts = append(parts,
+	unionParts = append(unionParts,
 		"MATCH (n:Annotation) WHERE n.params CONTAINS $searchText "+
 			"RETURN n.id AS id, 'Annotation' AS kind, n.name AS name, n.file_path AS file_path, '' AS qualified_name, n.line AS start_line, n.line AS end_line")
 
-	cypher := strings.Join(parts, " UNION ") + fmt.Sprintf(" LIMIT %d", limit)
-
-	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"searchText", queryText}})
+	unionCypher := strings.Join(unionParts, " UNION ") + fmt.Sprintf(" LIMIT %d", limit)
+	rows, err := store.queryWithParams(ctx, unionCypher, []cypherParam{{"searchText", queryText}})
 	if err != nil {
 		return nil, err
 	}
+	results := parseSearchResults(rows)
 
-	return parseSearchResults(rows), nil
+	// Phase 2: Class / Interface fields JSON attribute search.
+	fieldResults, _ := store.searchClassAndInterfaceFields(ctx, queryText, limit)
+	results = append(results, fieldResults...)
+	return results, nil
+}
+
+// searchClassAndInterfaceFields searches the fields JSON attribute of Class and Interface nodes.
+// It returns one SearchResult per field whose name or type contains queryText.
+func (store *Store) searchClassAndInterfaceFields(ctx context.Context, queryText string, limit int) ([]storage.SearchResult, error) {
+	var results []storage.SearchResult
+	for _, nodeKind := range []string{"Class", "Interface"} {
+		cypher := fmt.Sprintf(
+			"MATCH (n:%s) WHERE n.fields CONTAINS $searchText "+
+				"RETURN n.id, n.file_path, n.qualified_name, n.start_line, n.end_line, n.fields LIMIT %d",
+			nodeKind, limit)
+		rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"searchText", queryText}})
+		if err != nil {
+			continue
+		}
+		dataRows, ok := rows[1].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, rawRow := range dataRows {
+			cols, ok := rawRow.([]interface{})
+			if !ok || len(cols) < 6 {
+				continue
+			}
+			classNodeID := asString(cols[0])
+			classFilePath := asString(cols[1])
+			classQualifiedName := asString(cols[2])
+			classStartLine, _ := asInt(cols[3])
+			classEndLine, _ := asInt(cols[4])
+			fieldsJSON := asString(cols[5])
+			results = append(results,
+				extractFieldResults(classNodeID, classQualifiedName, classFilePath, classStartLine, classEndLine, fieldsJSON, queryText)...)
+		}
+	}
+	return results, nil
+}
+
+// extractFieldResults parses the fields JSON of a Class/Interface node and returns one SearchResult
+// per field whose name or type contains queryText.
+// startLine and endLine are the enclosing class/interface node's lines (field-level line is not stored).
+func extractFieldResults(classNodeID, classQualifiedName, classFilePath string, startLine, endLine int, fieldsJSON, queryText string) []storage.SearchResult {
+	if fieldsJSON == "" || fieldsJSON == "null" || fieldsJSON == "[]" {
+		return nil
+	}
+	var fields []model.FieldInfo
+	if err := json.Unmarshal([]byte(fieldsJSON), &fields); err != nil {
+		return nil
+	}
+	var results []storage.SearchResult
+	for _, field := range fields {
+		if strings.Contains(field.Name, queryText) || strings.Contains(field.Type, queryText) {
+			results = append(results, storage.SearchResult{
+				NodeID:        classNodeID + "::field::" + field.Name,
+				Name:          field.Name,
+				Kind:          "Field",
+				Path:          classFilePath,
+				QualifiedName: classQualifiedName + "." + field.Name,
+				StartLine:     startLine,
+				EndLine:       endLine,
+			})
+		}
+	}
+	return results
 }
 
 // GetStats returns aggregate statistics.

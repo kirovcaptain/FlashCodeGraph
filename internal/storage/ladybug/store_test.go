@@ -2,6 +2,7 @@ package ladybug
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -854,4 +855,132 @@ func TestQueryNodesByProperty(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("limit: expected 1, got %d", len(results))
 	}
+}
+
+func TestSearchFTS_FieldSearch(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	// Write a Function node to verify existing search is not regressed.
+	functionNode := model.Node{
+		ID:   "func:handlePayment",
+		Kind: "Function",
+		Properties: map[string]any{
+			"name":      "handlePayment",
+			"file_path": "PaymentController.java",
+		},
+	}
+
+	// Write a Class node with fields JSON (format written by iteration 7.2).
+	classFields := []model.FieldInfo{
+		{Name: "userService", Type: "UserService", Visibility: "private"},
+		{Name: "orderRepository", Type: "OrderRepository", Visibility: "private"},
+	}
+	classFieldsJSON, _ := json.Marshal(classFields)
+	classNode := model.Node{
+		ID:   "cls:PaymentController",
+		Kind: "Class",
+		Properties: map[string]any{
+			"name":           "PaymentController",
+			"qualified_name": "com.example.PaymentController",
+			"file_path":      "PaymentController.java",
+			"start_line":     int32(10),
+			"end_line":       int32(80),
+			"fields":         string(classFieldsJSON),
+		},
+	}
+
+	if err := store.WriteNodes(ctx, []model.Node{functionNode, classNode}); err != nil {
+		t.Fatalf("WriteNodes failed: %v", err)
+	}
+
+	t.Run("按字段名搜索返回Field结果", func(t *testing.T) {
+		results, err := store.SearchFTS(ctx, "userService", 20)
+		if err != nil {
+			t.Fatalf("SearchFTS error: %v", err)
+		}
+		var fieldResults []any
+		for _, result := range results {
+			if result.Kind == "Field" {
+				fieldResults = append(fieldResults, result)
+			}
+		}
+		if len(fieldResults) != 1 {
+			t.Fatalf("期望 1 条 Field 结果，实际 %d 条: %+v", len(fieldResults), results)
+		}
+		found := results[0]
+		if found.Kind != "Field" {
+			// find the Field result
+			for _, r := range results {
+				if r.Kind == "Field" {
+					found = r
+					break
+				}
+			}
+		}
+		if found.Name != "userService" {
+			t.Errorf("Name 期望 userService，实际 %s", found.Name)
+		}
+		if found.QualifiedName != "com.example.PaymentController.userService" {
+			t.Errorf("QualifiedName 期望 com.example.PaymentController.userService，实际 %s", found.QualifiedName)
+		}
+		if found.NodeID != "cls:PaymentController::field::userService" {
+			t.Errorf("NodeID 期望 cls:PaymentController::field::userService，实际 %s", found.NodeID)
+		}
+		if found.StartLine != 10 || found.EndLine != 80 {
+			t.Errorf("行号期望 10-80，实际 %d-%d", found.StartLine, found.EndLine)
+		}
+		t.Logf("✅ 按字段名搜索: %+v", found)
+	})
+
+	t.Run("按字段类型搜索返回Field结果", func(t *testing.T) {
+		results, err := store.SearchFTS(ctx, "OrderRepository", 20)
+		if err != nil {
+			t.Fatalf("SearchFTS error: %v", err)
+		}
+		var found *model.Node
+		_ = found
+		var fieldKindCount int
+		var fieldResult any
+		for _, result := range results {
+			if result.Kind == "Field" {
+				fieldKindCount++
+				fieldResult = result
+			}
+		}
+		if fieldKindCount != 1 {
+			t.Fatalf("期望 1 条 Field 结果，实际 %d 条: %+v", fieldKindCount, results)
+		}
+		_ = fieldResult
+		t.Logf("✅ 按字段类型搜索: %+v", fieldResult)
+	})
+
+	t.Run("原Function搜索不退化", func(t *testing.T) {
+		results, err := store.SearchFTS(ctx, "handlePayment", 20)
+		if err != nil {
+			t.Fatalf("SearchFTS error: %v", err)
+		}
+		var functionKindCount int
+		for _, result := range results {
+			if result.Kind == "Function" {
+				functionKindCount++
+			}
+		}
+		if functionKindCount < 1 {
+			t.Fatalf("期望至少 1 条 Function 结果，实际 %d 条", functionKindCount)
+		}
+		t.Logf("✅ Function 搜索不退化: %d 条", functionKindCount)
+	})
+
+	t.Run("无匹配返回空", func(t *testing.T) {
+		results, err := store.SearchFTS(ctx, "NoSuchFieldOrFunction", 20)
+		if err != nil {
+			t.Fatalf("SearchFTS error: %v", err)
+		}
+		if len(results) != 0 {
+			t.Fatalf("期望 0 条结果，实际 %d 条", len(results))
+		}
+		t.Log("✅ 无匹配返回空")
+	})
 }

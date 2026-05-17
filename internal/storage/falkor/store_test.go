@@ -2,8 +2,9 @@ package falkor
 
 import (
 	"context"
-	"os"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -499,4 +500,110 @@ func TestTraverseCallChain_DepthLimit(t *testing.T) {
 		}
 	}
 	t.Logf("cross-callee depth=1: %d nodes, %d edges", len(result3.Nodes), len(result3.Edges))
+}
+
+func TestSearchFTS_FieldSearch(t *testing.T) {
+	store := setupTestStore(t) // skips automatically if FalkorDB unavailable
+	defer store.Close()
+	defer store.DeleteGraph(context.Background())
+	ctx := context.Background()
+
+	// Write a Function node to verify existing search is not regressed.
+	functionNode := model.Node{
+		ID:   "func:handlePayment",
+		Kind: "Function",
+		Properties: map[string]any{
+			"name":      "handlePayment",
+			"file_path": "PaymentController.java",
+		},
+	}
+
+	// Write a Class node with fields JSON (format written by iteration 7.2).
+	classFields := []model.FieldInfo{
+		{Name: "userService", Type: "UserService", Visibility: "private"},
+		{Name: "orderRepository", Type: "OrderRepository", Visibility: "private"},
+	}
+	classFieldsJSON, _ := json.Marshal(classFields)
+	classNode := model.Node{
+		ID:   "cls:PaymentController",
+		Kind: "Class",
+		Properties: map[string]any{
+			"name":           "PaymentController",
+			"qualified_name": "com.example.PaymentController",
+			"file_path":      "PaymentController.java",
+			"start_line":     10,
+			"end_line":       80,
+			"fields":         string(classFieldsJSON),
+		},
+	}
+
+	if err := store.WriteNodes(ctx, []model.Node{functionNode, classNode}); err != nil {
+		t.Fatalf("WriteNodes failed: %v", err)
+	}
+
+	t.Run("按字段名搜索返回Field结果", func(t *testing.T) {
+		results, err := store.SearchFTS(ctx, "userService", 20)
+		if err != nil {
+			t.Fatalf("SearchFTS error: %v", err)
+		}
+		var fieldKindCount int
+		var fieldResult any
+		for _, result := range results {
+			if result.Kind == "Field" {
+				fieldKindCount++
+				fieldResult = result
+			}
+		}
+		if fieldKindCount != 1 {
+			t.Fatalf("期望 1 条 Field 结果，实际 %d 条: %+v", fieldKindCount, results)
+		}
+		t.Logf("✅ 按字段名搜索: %+v", fieldResult)
+	})
+
+	t.Run("按字段类型搜索返回Field结果", func(t *testing.T) {
+		results, err := store.SearchFTS(ctx, "OrderRepository", 20)
+		if err != nil {
+			t.Fatalf("SearchFTS error: %v", err)
+		}
+		var fieldKindCount int
+		var fieldResult any
+		for _, result := range results {
+			if result.Kind == "Field" {
+				fieldKindCount++
+				fieldResult = result
+			}
+		}
+		if fieldKindCount != 1 {
+			t.Fatalf("期望 1 条 Field 结果，实际 %d 条: %+v", fieldKindCount, results)
+		}
+		t.Logf("✅ 按字段类型搜索: %+v", fieldResult)
+	})
+
+	t.Run("原Function搜索不退化", func(t *testing.T) {
+		results, err := store.SearchFTS(ctx, "handlePayment", 20)
+		if err != nil {
+			t.Fatalf("SearchFTS error: %v", err)
+		}
+		var functionKindCount int
+		for _, result := range results {
+			if result.Kind == "Function" {
+				functionKindCount++
+			}
+		}
+		if functionKindCount < 1 {
+			t.Fatalf("期望至少 1 条 Function 结果，实际 %d 条", functionKindCount)
+		}
+		t.Logf("✅ Function 搜索不退化: %d 条", functionKindCount)
+	})
+
+	t.Run("无匹配返回空", func(t *testing.T) {
+		results, err := store.SearchFTS(ctx, "NoSuchFieldOrFunction", 20)
+		if err != nil {
+			t.Fatalf("SearchFTS error: %v", err)
+		}
+		if len(results) != 0 {
+			t.Fatalf("期望 0 条结果，实际 %d 条", len(results))
+		}
+		t.Log("✅ 无匹配返回空")
+	})
 }
