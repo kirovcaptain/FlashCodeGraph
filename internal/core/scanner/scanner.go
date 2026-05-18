@@ -208,7 +208,7 @@ func (scanner *Scanner) Scan(ctx context.Context) ([]ScannedFile, []model.Skippe
 
 		files = append(files, ScannedFile{
 			Path:     path,
-			RelPath:  relPath,
+			RelPath:  filepath.ToSlash(relPath),
 			Size:     info.Size(),
 			ModTime:  info.ModTime().Unix(),
 			Language: language,
