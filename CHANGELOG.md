@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.3] - 2026-05-18
+
+### Feature
+- search support the kind of var,annotation
+- support qualified name lookup in query_symbol
+
+### Fix
+- Rewrite FalkorDB TraverseCallChain to batch BFS with declared_type filtering
+- Add DISPATCHES support to LadybugDB/KuzuDB traverseBFS
+- Delete PruneDeclaredTypeDispatches (now handled at traversal time)
+- Fix dry mode pruning of inherited methods without overrides
+- Fix Java parser to resolve ParentQualified from imports
+- Fix buildQualifiedParentMap same-name class disambiguation
+
 ## [1.0.2] - 2026-05-15
 
 ### Feature
