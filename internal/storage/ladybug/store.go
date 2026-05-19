@@ -104,6 +104,7 @@ func (store *Store) Migrate(_ context.Context) error {
 		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_CLASS (FROM Class TO Annotation, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_IFACE (FROM Interface TO Annotation, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS UNRESOLVED_CALL (FROM Function TO Function, hint_type STRING, line INT32, receiver_expr STRING, candidate_count INT32, MANY_MANY)`,
+		`CREATE REL TABLE IF NOT EXISTS USES (FROM Function TO Variable, line INT32, ref_kind STRING, MANY_MANY)`,
 	}
 	stmts = append(stmts, relStmts...)
 
@@ -473,6 +474,7 @@ var allRelTypes = []struct {
 	{"HAS_ANNOTATION_IFACE", constants.KindInterface, constants.KindAnnotation},
 	{"DISPATCHES", constants.KindFunction, constants.KindFunction},
 	{"UNRESOLVED_CALL", constants.KindFunction, constants.KindFunction},
+	{"USES", constants.KindFunction, constants.KindVariable},
 }
 
 // DeleteNodesByFile removes all nodes associated with a file path.
@@ -587,7 +589,7 @@ func (store *Store) QueryNodeByID(_ context.Context, id string) (*model.Node, er
 
 // QueryNodeByQualifiedName returns a single node by its qualified name.
 func (store *Store) QueryNodeByQualifiedName(_ context.Context, qualifiedName string) (*model.Node, error) {
-	for _, table := range constants.BaseSymbolKinds {
+	for _, table := range constants.QualifiedNameKinds {
 		returnClause := model.QueryReturnClause(table)
 		colNames := append([]string{"id"}, model.ColumnNames(table)...)
 
@@ -666,14 +668,19 @@ func (store *Store) QueryEdges(_ context.Context, nodeID string, nodeKind string
 		return nil, fmt.Errorf("ladybug: unknown relation kind: %s", kind)
 	}
 
+	returnCols := "a.id, b.id"
+	if kind == model.RelUses {
+		returnCols = "a.id, b.id, r.line, r.ref_kind"
+	}
+
 	var query string
 	switch direction {
 	case model.Outgoing:
-		query = fmt.Sprintf("MATCH (a:%s)-[r:%s]->(b:%s) WHERE a.id = $id RETURN a.id, b.id", sourceLabel, relTable, targetLabel)
+		query = fmt.Sprintf("MATCH (a:%s)-[r:%s]->(b:%s) WHERE a.id = $id RETURN %s", sourceLabel, relTable, targetLabel, returnCols)
 	case model.Incoming:
-		query = fmt.Sprintf("MATCH (a:%s)-[r:%s]->(b:%s) WHERE b.id = $id RETURN a.id, b.id", sourceLabel, relTable, targetLabel)
+		query = fmt.Sprintf("MATCH (a:%s)-[r:%s]->(b:%s) WHERE b.id = $id RETURN %s", sourceLabel, relTable, targetLabel, returnCols)
 	default:
-		query = fmt.Sprintf("MATCH (a:%s)-[r:%s]-(b:%s) WHERE a.id = $id RETURN a.id, b.id", sourceLabel, relTable, targetLabel)
+		query = fmt.Sprintf("MATCH (a:%s)-[r:%s]-(b:%s) WHERE a.id = $id RETURN %s", sourceLabel, relTable, targetLabel, returnCols)
 	}
 
 	result, err := store.exec(query, map[string]any{"id": nodeID})
@@ -687,11 +694,21 @@ func (store *Store) QueryEdges(_ context.Context, nodeID string, nodeKind string
 		row, _ := result.Next()
 		sourceID, _ := row.GetValue(0)
 		targetID, _ := row.GetValue(1)
-		edges = append(edges, model.Edge{
-			SourceID: fmt.Sprint(sourceID),
-			TargetID: fmt.Sprint(targetID),
-			Kind:     kind,
-		})
+		edge := model.Edge{
+			SourceID:   fmt.Sprint(sourceID),
+			TargetID:   fmt.Sprint(targetID),
+			Kind:       kind,
+			Properties: make(map[string]any),
+		}
+		if kind == model.RelUses {
+			if line, _ := row.GetValue(2); line != nil {
+				edge.Properties["line"] = line
+			}
+			if refKind, _ := row.GetValue(3); refKind != nil {
+				edge.Properties["ref_kind"] = fmt.Sprint(refKind)
+			}
+		}
+		edges = append(edges, edge)
 	}
 	return edges, nil
 }
@@ -1239,8 +1256,20 @@ func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]sto
 	var results []storage.SearchResult
 
 	// Function / Class / Interface: search by name and qualified_name.
-	for _, table := range constants.BaseSymbolKinds {
-		cypherQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.name CONTAINS $query OR n.qualified_name CONTAINS $query RETURN n.id, n.name, n.file_path, n.qualified_name, n.start_line, n.end_line LIMIT %d", table, limit)
+	for _, table := range constants.QualifiedNameKinds {
+		var startLineCol, endLineCol string
+		if table == constants.KindVariable {
+			startLineCol = "n.line"
+			endLineCol = "n.line AS end_line"
+		} else {
+			startLineCol = "n.start_line"
+			endLineCol = "n.end_line"
+		}
+		limitClause := ""
+		if limit > 0 {
+			limitClause = fmt.Sprintf(" LIMIT %d", limit)
+		}
+		cypherQuery := fmt.Sprintf("MATCH (n:%s) WHERE n.name CONTAINS $query OR n.qualified_name CONTAINS $query RETURN n.id, n.name, n.file_path, n.qualified_name, %s, %s%s", table, startLineCol, endLineCol, limitClause)
 		result, err := store.exec(cypherQuery, map[string]any{"query": query})
 		if err != nil {
 			continue
@@ -1273,9 +1302,13 @@ func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]sto
 
 	// Class / Interface: search by fields JSON attribute (field name or field type).
 	for _, nodeKind := range []string{"Class", "Interface"} {
+		limitClause := ""
+		if limit > 0 {
+			limitClause = fmt.Sprintf(" LIMIT %d", limit)
+		}
 		cypherQuery := fmt.Sprintf(
 			"MATCH (n:%s) WHERE n.fields CONTAINS $query "+
-				"RETURN n.id, n.file_path, n.qualified_name, n.start_line, n.end_line, n.fields LIMIT %d", nodeKind, limit)
+				"RETURN n.id, n.file_path, n.qualified_name, n.start_line, n.end_line, n.fields%s", nodeKind, limitClause)
 		result, err := store.exec(cypherQuery, map[string]any{"query": query})
 		if err != nil {
 			continue
@@ -1303,7 +1336,11 @@ func (store *Store) SearchFTS(_ context.Context, query string, limit int) ([]sto
 
 	// Annotation: search by params.
 	{
-		cypherQuery := fmt.Sprintf("MATCH (n:Annotation) WHERE n.params CONTAINS $query RETURN n.id, n.name, n.file_path, n.line LIMIT %d", limit)
+		limitClause := ""
+		if limit > 0 {
+			limitClause = fmt.Sprintf(" LIMIT %d", limit)
+		}
+		cypherQuery := fmt.Sprintf("MATCH (n:Annotation) WHERE n.params CONTAINS $query RETURN n.id, n.name, n.file_path, n.line%s", limitClause)
 		result, err := store.exec(cypherQuery, map[string]any{"query": query})
 		if err == nil {
 			for result.HasNext() {
@@ -1515,6 +1552,8 @@ func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLa
 		return "REMOTE_CALLS_EXT", constants.KindFunction, constants.KindExternalService
 	case model.RelUnresolvedCall:
 		return "UNRESOLVED_CALL", constants.KindFunction, constants.KindFunction
+	case model.RelUses:
+		return "USES", constants.KindFunction, constants.KindVariable
 	case model.RelHasAnnotation:
 		switch sourceKind {
 		case constants.KindClass:

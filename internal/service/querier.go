@@ -1588,3 +1588,63 @@ func (querier *Querier) QueryCrossChain(ctx context.Context, functionName string
 
 	return result, nil
 }
+
+// QueryUsages returns all references to the given enum constant via USES edges.
+func (querier *Querier) QueryUsages(ctx context.Context, symbolQualifiedName string, limit int) ([]model.UsageResult, error) {
+	// Step 1: Find the Variable node by qualified_name
+	variableNode, err := querier.graphStore.QueryNodeByQualifiedName(ctx, symbolQualifiedName)
+	if err != nil {
+		return nil, err
+	}
+	if variableNode == nil {
+		return nil, fmt.Errorf("constant not found: %s", symbolQualifiedName)
+	}
+	if variableNode.Kind != constants.KindVariable {
+		return nil, fmt.Errorf("symbol is not a variable: %s (kind: %s)", symbolQualifiedName, variableNode.Kind)
+	}
+
+	// Step 2: Query incoming USES edges from Function nodes
+	edges, err := querier.graphStore.QueryEdges(ctx, variableNode.ID, constants.KindFunction, model.RelUses, model.Incoming)
+	if err != nil {
+		return nil, err
+	}
+	if len(edges) == 0 {
+		return []model.UsageResult{}, nil
+	}
+
+	// Step 3: Extract source node IDs and query Function nodes
+	sourceIDs := make([]string, 0, len(edges))
+	edgeMap := make(map[string]model.Edge)
+	for _, edge := range edges {
+		sourceIDs = append(sourceIDs, edge.SourceID)
+		edgeMap[edge.SourceID] = edge
+	}
+
+	functionNodes, err := querier.graphStore.QueryNodesByIDs(ctx, sourceIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 4: Assemble UsageResult with edge properties
+	results := make([]model.UsageResult, 0, len(functionNodes))
+	for _, functionNode := range functionNodes {
+		edge, ok := edgeMap[functionNode.ID]
+		if !ok {
+			continue
+		}
+		refLine, _ := model.ToInt(edge.Properties["line"])
+		refKind, _ := edge.Properties["ref_kind"].(string)
+		results = append(results, model.UsageResult{
+			Function: functionNode,
+			RefLine:  refLine,
+			RefKind:  refKind,
+		})
+	}
+
+	// Step 5: Apply limit if specified
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+
+	return results, nil
+}

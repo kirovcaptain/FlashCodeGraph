@@ -185,6 +185,12 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 	resolveTypeNames(env, env.Imports)
 }
 
+// LookupInEnv returns the type name for (scope, varName) from the TypeEnv.
+// Checks both scoped key and class-level key (for fields).
+func LookupInEnv(env *model.TypeEnv, scope, varName string) string {
+	return lookupInEnv(env, scope, varName)
+}
+
 func lookupInEnv(env *model.TypeEnv, scope, varName string) string {
 	key := scopedKey(scope, varName)
 	if info, exists := env.Bindings[key]; exists {

@@ -720,3 +720,258 @@ public class Outer {
 	}
 	t.Log("✅ 同名内部类合成 accessor ID 唯一性验证通过")
 }
+
+// TestExtract_EnumConstants verifies enum constant extraction as Variable symbols.
+func TestExtract_EnumConstants(t *testing.T) {
+	code := `package com.example;
+public enum OrderStatus {
+    PENDING,
+    ACTIVE(1),
+    CANCELLED("desc");
+    private final String label;
+    public String getLabel() { return label; }
+}`
+	result := parseJavaFile(t, code, "OrderStatus.java")
+
+	// Verify 3 enum constants as Variable symbols
+	enumConstants := []string{"PENDING", "ACTIVE", "CANCELLED"}
+	foundConstants := make(map[string]bool)
+	for _, sym := range result.Symbols {
+		if sym.Kind == "Variable" && sym.IsStatic && sym.IsFinal {
+			for _, name := range enumConstants {
+				if sym.Name == name {
+					foundConstants[name] = true
+					expectedQN := "com.example.OrderStatus." + name
+					if sym.QualifiedName != expectedQN {
+						t.Errorf("constant %s: expected qualified_name=%s, got %s", name, expectedQN, sym.QualifiedName)
+					}
+				}
+			}
+		}
+	}
+	for _, name := range enumConstants {
+		if !foundConstants[name] {
+			t.Errorf("missing enum constant Variable: %s", name)
+		}
+	}
+
+	// Verify getLabel method exists
+	hasGetLabel := false
+	for _, sym := range result.Symbols {
+		if sym.Kind == "Function" && sym.Name == "getLabel" {
+			hasGetLabel = true
+		}
+	}
+	if !hasGetLabel {
+		t.Error("missing getLabel method")
+	}
+	t.Log("✅ Enum constants extracted as Variable symbols")
+}
+
+// TestExtract_InterfaceConstants verifies interface constant extraction with implicit modifiers.
+func TestExtract_InterfaceConstants(t *testing.T) {
+	code := `package com.example;
+public interface PayChannelType {
+    int ALIPAY = 1;
+    int WECHAT = 2;
+    int UNIONPAY = 3;
+}`
+	result := parseJavaFile(t, code, "PayChannelType.java")
+
+	// Debug: print all symbols
+	t.Logf("Total symbols: %d", len(result.Symbols))
+	for _, sym := range result.Symbols {
+		t.Logf("Symbol: Kind=%s Name=%s QualifiedName=%s IsStatic=%v IsFinal=%v Visibility=%s",
+			sym.Kind, sym.Name, sym.QualifiedName, sym.IsStatic, sym.IsFinal, sym.Visibility)
+	}
+
+	// Debug: print TypeHints
+	t.Logf("Total TypeHints: %d", len(result.TypeHints))
+	for _, hint := range result.TypeHints {
+		t.Logf("TypeHint: VarName=%s TypeName=%s Scope=%s", hint.VarName, hint.TypeName, hint.Scope)
+	}
+
+	constants := []string{"ALIPAY", "WECHAT", "UNIONPAY"}
+	foundConstants := make(map[string]bool)
+	for _, sym := range result.Symbols {
+		if sym.Kind == "Variable" {
+			for _, name := range constants {
+				if sym.Name == name {
+					foundConstants[name] = true
+					if !sym.IsStatic || !sym.IsFinal {
+						t.Errorf("interface constant %s: expected IsStatic=true IsFinal=true, got IsStatic=%v IsFinal=%v", name, sym.IsStatic, sym.IsFinal)
+					}
+					if sym.Visibility != "public" {
+						t.Errorf("interface constant %s: expected Visibility=public, got %s", name, sym.Visibility)
+					}
+					expectedQN := "com.example.PayChannelType." + name
+					if sym.QualifiedName != expectedQN {
+						t.Errorf("constant %s: expected qualified_name=%s, got %s", name, expectedQN, sym.QualifiedName)
+					}
+				}
+			}
+		}
+	}
+	for _, name := range constants {
+		if !foundConstants[name] {
+			t.Errorf("missing interface constant Variable: %s", name)
+		}
+	}
+	if len(foundConstants) == 3 {
+		t.Log("✅ Interface constants extracted with implicit public static final")
+	}
+}
+
+// TestExtract_ClassStaticFinalFields verifies class static final field extraction.
+func TestExtract_ClassStaticFinalFields(t *testing.T) {
+	code := `package com.example;
+public class Constants {
+    public static final int MAX_RETRY = 3;
+    public static final String DEFAULT_ENCODING = "UTF-8";
+    private int instanceField = 0;
+}`
+	result := parseJavaFile(t, code, "Constants.java")
+
+	// Verify static final fields as Variable symbols
+	staticFinalFields := map[string]bool{"MAX_RETRY": false, "DEFAULT_ENCODING": false}
+	for _, sym := range result.Symbols {
+		if sym.Kind == "Variable" && sym.IsStatic && sym.IsFinal {
+			if _, exists := staticFinalFields[sym.Name]; exists {
+				staticFinalFields[sym.Name] = true
+			}
+		}
+	}
+	for name, found := range staticFinalFields {
+		if !found {
+			t.Errorf("missing static final field Variable: %s", name)
+		}
+	}
+
+	// Verify instanceField is NOT a static final Variable
+	for _, sym := range result.Symbols {
+		if sym.Name == "instanceField" && sym.Kind == "Variable" && sym.IsStatic && sym.IsFinal {
+			t.Error("instanceField should not be static final Variable")
+		}
+	}
+	t.Log("✅ Class static final fields extracted as Variable symbols")
+}
+
+// TestExtract_PatternA_FieldAccess verifies Pattern A constant reference extraction.
+func TestExtract_PatternA_FieldAccess(t *testing.T) {
+	code := `package com.example;
+public class OrderService {
+    void process(OrderStatus status) {
+        if (status == OrderStatus.PENDING) { doA(); }
+        int channel = PayChannelType.ALIPAY;
+        return OrderStatus.ACTIVE;
+    }
+}`
+	result := parseJavaFile(t, code, "OrderService.java")
+
+	expectedRefs := []struct {
+		objectExpr string
+		constName  string
+	}{
+		{"OrderStatus", "PENDING"},
+		{"PayChannelType", "ALIPAY"},
+		{"OrderStatus", "ACTIVE"},
+	}
+
+	if len(result.ConstRefs) < len(expectedRefs) {
+		t.Errorf("expected at least %d ConstRefs, got %d", len(expectedRefs), len(result.ConstRefs))
+	}
+
+	foundRefs := make(map[string]bool)
+	for _, ref := range result.ConstRefs {
+		if ref.RefKind == "field_access" {
+			key := ref.ObjectExpr + "." + ref.ConstName
+			foundRefs[key] = true
+		}
+	}
+
+	for _, expected := range expectedRefs {
+		key := expected.objectExpr + "." + expected.constName
+		if !foundRefs[key] {
+			t.Errorf("missing field_access ref: %s", key)
+		}
+	}
+	t.Log("✅ Pattern A field_access references extracted")
+}
+
+// TestExtract_PatternA_NestedFieldAccess verifies nested field_access extraction.
+func TestExtract_PatternA_NestedFieldAccess(t *testing.T) {
+	code := `package com.example;
+public class Service {
+    void process() {
+        int type = CoinGoodsSubType.Type.EQUITY;
+    }
+}`
+	result := parseJavaFile(t, code, "Service.java")
+
+	found := false
+	for _, ref := range result.ConstRefs {
+		if ref.RefKind == "field_access" && ref.ObjectExpr == "CoinGoodsSubType.Type" && ref.ConstName == "EQUITY" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("missing nested field_access ref: CoinGoodsSubType.Type.EQUITY")
+	}
+	t.Log("✅ Pattern A nested field_access extracted")
+}
+
+// TestExtract_PatternB_SwitchVariable verifies Pattern B switch-case extraction with variable condition.
+func TestExtract_PatternB_SwitchVariable(t *testing.T) {
+	code := `package com.example;
+public class PaymentService {
+    void handle(OrderStatus status) {
+        switch (status) {
+            case PENDING: doA(); break;
+            case ACTIVE: doB(); break;
+        }
+    }
+}`
+	result := parseJavaFile(t, code, "PaymentService.java")
+
+	expectedCases := []string{"PENDING", "ACTIVE"}
+	foundCases := make(map[string]bool)
+	for _, ref := range result.ConstRefs {
+		if ref.RefKind == "switch_case" && ref.SwitchConditionKind == "variable" && ref.SwitchVariableName == "status" {
+			foundCases[ref.ConstName] = true
+		}
+	}
+
+	for _, caseName := range expectedCases {
+		if !foundCases[caseName] {
+			t.Errorf("missing switch_case ref: %s", caseName)
+		}
+	}
+	t.Log("✅ Pattern B switch-case with variable condition extracted")
+}
+
+// TestExtract_PatternB_SwitchMethodCall verifies Pattern B with method call condition.
+func TestExtract_PatternB_SwitchMethodCall(t *testing.T) {
+	code := `package com.example;
+public class PaymentService {
+    void handle(Order order) {
+        switch (order.getStatus()) {
+            case PENDING: doA(); break;
+        }
+    }
+}`
+	result := parseJavaFile(t, code, "PaymentService.java")
+
+	found := false
+	for _, ref := range result.ConstRefs {
+		if ref.RefKind == "switch_case" && ref.SwitchConditionKind == "method_call" &&
+			ref.SwitchMethodReceiver == "order" && ref.SwitchMethodName == "getStatus" && ref.ConstName == "PENDING" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("missing switch_case ref with method_call condition")
+	}
+	t.Log("✅ Pattern B switch-case with method call condition extracted")
+}

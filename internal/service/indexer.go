@@ -648,7 +648,7 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	}
 
 	// Phase B + C: Type inference, call/heritage/override resolution, cross-file propagation
-	callRelations, heritageRelations, overrideRelations, callHints, err := indexer.resolveCallsAndHeritage(
+	callRelations, heritageRelations, overrideRelations, usesRelations, callHints, err := indexer.resolveCallsAndHeritage(
 		ctx, resolverInstance, parseResults, symbolTable, allCalls, allHeritage, importRelations)
 	if err != nil {
 		return nil, err
@@ -670,7 +670,7 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 
 	// D-3: Write external nodes, relation edges, and unresolved hints
 	if err := indexer.writeResolvedRelations(ctx, scanCtx, symbolTable,
-		callRelations, heritageRelations, overrideRelations, implementsRelations, callHints); err != nil {
+		callRelations, heritageRelations, overrideRelations, implementsRelations, usesRelations, callHints); err != nil {
 		return nil, err
 	}
 	return callRelations, nil
@@ -696,7 +696,7 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 	allCalls []model.RawCall,
 	allHeritage []model.RawHeritage,
 	importRelations []model.ResolvedRelation,
-) ([]model.ResolvedRelation, []model.ResolvedRelation, []model.ResolvedRelation, []model.UnresolvedHint, error) {
+) ([]model.ResolvedRelation, []model.ResolvedRelation, []model.ResolvedRelation, []model.ResolvedRelation, []model.UnresolvedHint, error) {
 
 	// Step 1: Local type inference — build per-file TypeEnv from constructor calls and type annotations.
 	// Example: "UserService svc = new UserService()" → svc maps to type UserService.
@@ -789,7 +789,17 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 		}
 	}
 
-	return callRelations, heritageRelations, overrideRelations, callHints, nil
+	// Step 8: Resolve static constant references into USES edges.
+	var allConstRefs []model.RawConstRef
+	for _, parseResult := range parseResults {
+		allConstRefs = append(allConstRefs, parseResult.ConstRefs...)
+	}
+	var usesRelations []model.ResolvedRelation
+	if len(allConstRefs) > 0 {
+		usesRelations = resolverInstance.ResolveConstRefs(allConstRefs, envs)
+	}
+
+	return callRelations, heritageRelations, overrideRelations, usesRelations, callHints, nil
 }
 
 // writeResolvedRelations writes external nodes and all relation edges to the graph.
@@ -857,7 +867,7 @@ func (indexer *Indexer) writeResolvedRelations(
 	ctx context.Context,
 	scanCtx *scanContext,
 	symbolTable *resolver.SymbolTable,
-	callRelations, heritageRelations, overrideRelations, implementsRelations []model.ResolvedRelation,
+	callRelations, heritageRelations, overrideRelations, implementsRelations, usesRelations []model.ResolvedRelation,
 	callHints []model.UnresolvedHint,
 ) error {
 	// Step 1: Write external dependency virtual nodes — creates Function nodes for symbols
@@ -884,10 +894,11 @@ func (indexer *Indexer) writeResolvedRelations(
 	}
 	indexer.progress.EmitSub(PhaseResolving, SubExternalNodes, fmt.Sprintf("%d nodes", len(externalNodes)))
 
-	// Step 2: Write all resolved relation edges (CALLS + EXTENDS + IMPLEMENTS + OVERRIDES).
+	// Step 2: Write all resolved relation edges (CALLS + EXTENDS + IMPLEMENTS + OVERRIDES + USES).
 	allRelations := append(callRelations, heritageRelations...)
 	allRelations = append(allRelations, overrideRelations...)
 	allRelations = append(allRelations, implementsRelations...)
+	allRelations = append(allRelations, usesRelations...)
 	indexer.dump.OnAllRelations(heritageRelations, overrideRelations, implementsRelations)
 
 	indexer.progress.EmitSub(PhaseResolving, SubRelationEdges, "")
@@ -1117,6 +1128,18 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"annotations":    symbol.Annotations,
 					"fields":         string(fieldsJSON),
 				}
+			case constants.KindVariable:
+				props = map[string]any{
+					"name":           symbol.Name,
+					"qualified_name": symbol.QualifiedName,
+					"file_path":      symbol.FilePath,
+					"line":           symbol.StartLine,
+					"var_type":       "",
+					"visibility":     symbol.Visibility,
+					"is_final":       symbol.IsFinal,
+					"is_static":      symbol.IsStatic,
+					"is_exported":    symbol.IsExported,
+				}
 			default:
 				props = map[string]any{
 					"name":           symbol.Name,
@@ -1187,6 +1210,9 @@ func (indexer *Indexer) writeRelations(ctx context.Context, relations []model.Re
 			}
 			if v, ok := relation.Metadata["polymorphic"]; ok && v == "true" {
 				edge.Properties["polymorphic"] = true
+			}
+			if v, ok := relation.Metadata["ref_kind"]; ok && v != "" {
+				edge.Properties["ref_kind"] = v
 			}
 		}
 		edges = append(edges, edge)

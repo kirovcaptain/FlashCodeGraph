@@ -86,6 +86,24 @@ type RawMiddleware struct {
 	Line     int    `json:"line"`
 }
 
+// RawConstRef represents a reference to a static constant (enum/interface/class) found in a method body.
+type RawConstRef struct {
+	// Pattern A (RefKind="field_access")
+	ObjectExpr string `json:"object_expr,omitempty"`
+
+	// Pattern B (RefKind="switch_case")
+	SwitchConditionKind  string `json:"switch_condition_kind,omitempty"`
+	SwitchVariableName   string `json:"switch_variable_name,omitempty"`
+	SwitchMethodReceiver string `json:"switch_method_receiver,omitempty"`
+	SwitchMethodName     string `json:"switch_method_name,omitempty"`
+
+	ConstName  string `json:"const_name"`
+	CallerName string `json:"caller_name"`
+	FilePath   string `json:"file_path"`
+	Line       int    `json:"line"`
+	RefKind    string `json:"ref_kind"`
+}
+
 // TypeBinding represents a Tier 0/1 type hint from AST.
 type TypeBinding struct {
 	VarName       string   `json:"var_name"`
@@ -126,6 +144,7 @@ type ParseResult struct {
 	Fields              []FieldDeclaration   `json:"fields,omitempty"`
 	TypeHints           []TypeBinding       `json:"type_hints"`
 	PendingAssignments  []PendingAssignment  `json:"pending_assignments,omitempty"`
+	ConstRefs           []RawConstRef        `json:"const_refs,omitempty"`
 	Errors      []ParseError    `json:"errors,omitempty"`
 }
 

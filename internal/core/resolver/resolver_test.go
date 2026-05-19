@@ -2263,3 +2263,276 @@ func TestFilterByArgCount_BackwardCompat(t *testing.T) {
 		t.Errorf("argCount=1: expected 0 matches, got %d", len(result))
 	}
 }
+
+// TestResolveConstRefs_EnumConstant verifies Pattern A enum constant resolution.
+func TestResolveConstRefs_EnumConstant(t *testing.T) {
+	table := NewSymbolTable()
+	table.Add(model.Symbol{
+		ID:            "enum1",
+		Name:          "OrderStatus",
+		QualifiedName: "com.example.OrderStatus",
+		Kind:          "Class",
+		ClassType:     "enum",
+	})
+	table.Add(model.Symbol{
+		ID:            "const1",
+		Name:          "PENDING",
+		QualifiedName: "com.example.OrderStatus.PENDING",
+		Kind:          "Variable",
+		IsStatic:      true,
+		IsFinal:       true,
+	})
+	table.Add(model.Symbol{
+		ID:            "func1",
+		Name:          "process",
+		QualifiedName: "com.example.Service.process",
+		Kind:          "Function",
+	})
+
+	resolver := newTestResolver(table)
+	refs := []model.RawConstRef{
+		{
+			ObjectExpr: "OrderStatus",
+			ConstName:  "PENDING",
+			CallerName: "com.example.Service.process",
+			RefKind:    "field_access",
+			Line:       10,
+		},
+	}
+
+	relations := resolver.ResolveConstRefs(refs, nil)
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	rel := relations[0]
+	if rel.SourceID != "func1" || rel.TargetID != "const1" || rel.Kind != model.RelUses {
+		t.Errorf("unexpected relation: SourceID=%s TargetID=%s Kind=%s", rel.SourceID, rel.TargetID, rel.Kind)
+	}
+	if rel.Line != 10 {
+		t.Errorf("expected Line=10, got %d", rel.Line)
+	}
+	if rel.Metadata["ref_kind"] != "field_access" {
+		t.Errorf("expected ref_kind=field_access, got %s", rel.Metadata["ref_kind"])
+	}
+	t.Log("✅ Pattern A enum constant resolved")
+}
+
+// TestResolveConstRefs_InterfaceConstant verifies Pattern A interface constant resolution.
+func TestResolveConstRefs_InterfaceConstant(t *testing.T) {
+	table := NewSymbolTable()
+	table.Add(model.Symbol{
+		ID:            "iface1",
+		Name:          "PayChannelType",
+		QualifiedName: "com.example.PayChannelType",
+		Kind:          "Interface",
+		ClassType:     "interface",
+	})
+	table.Add(model.Symbol{
+		ID:            "const1",
+		Name:          "ALIPAY",
+		QualifiedName: "com.example.PayChannelType.ALIPAY",
+		Kind:          "Variable",
+		IsStatic:      true,
+		IsFinal:       true,
+	})
+	table.Add(model.Symbol{
+		ID:            "func1",
+		Name:          "pay",
+		QualifiedName: "com.example.Service.pay",
+		Kind:          "Function",
+	})
+
+	resolver := newTestResolver(table)
+	refs := []model.RawConstRef{
+		{
+			ObjectExpr: "PayChannelType",
+			ConstName:  "ALIPAY",
+			CallerName: "com.example.Service.pay",
+			RefKind:    "field_access",
+			Line:       15,
+		},
+	}
+
+	relations := resolver.ResolveConstRefs(refs, nil)
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	rel := relations[0]
+	if rel.SourceID != "func1" || rel.TargetID != "const1" {
+		t.Errorf("unexpected relation: SourceID=%s TargetID=%s", rel.SourceID, rel.TargetID)
+	}
+	t.Log("✅ Pattern A interface constant resolved")
+}
+
+// TestResolveConstRefs_NonStaticFinalSkipped verifies non-static-final fields are skipped.
+func TestResolveConstRefs_NonStaticFinalSkipped(t *testing.T) {
+	table := NewSymbolTable()
+	table.Add(model.Symbol{
+		ID:            "class1",
+		Name:          "User",
+		QualifiedName: "com.example.User",
+		Kind:          "Class",
+		ClassType:     "class",
+	})
+	table.Add(model.Symbol{
+		ID:            "field1",
+		Name:          "name",
+		QualifiedName: "com.example.User.name",
+		Kind:          "Variable",
+		IsStatic:      false,
+		IsFinal:       false,
+	})
+	table.Add(model.Symbol{
+		ID:            "func1",
+		Name:          "process",
+		QualifiedName: "com.example.Service.process",
+		Kind:          "Function",
+	})
+
+	resolver := newTestResolver(table)
+	refs := []model.RawConstRef{
+		{
+			ObjectExpr: "User",
+			ConstName:  "name",
+			CallerName: "com.example.Service.process",
+			RefKind:    "field_access",
+		},
+	}
+
+	relations := resolver.ResolveConstRefs(refs, nil)
+	if len(relations) != 0 {
+		t.Errorf("expected 0 relations (non-static-final should be skipped), got %d", len(relations))
+	}
+	t.Log("✅ Non-static-final field skipped")
+}
+
+// TestResolveConstRefs_SwitchVariable verifies Pattern B with variable condition.
+func TestResolveConstRefs_SwitchVariable(t *testing.T) {
+	table := NewSymbolTable()
+	table.Add(model.Symbol{
+		ID:            "enum1",
+		Name:          "OrderStatus",
+		QualifiedName: "com.example.OrderStatus",
+		Kind:          "Class",
+		ClassType:     "enum",
+	})
+	table.Add(model.Symbol{
+		ID:            "const1",
+		Name:          "PENDING",
+		QualifiedName: "com.example.OrderStatus.PENDING",
+		Kind:          "Variable",
+		IsStatic:      true,
+		IsFinal:       true,
+	})
+	table.Add(model.Symbol{
+		ID:            "func1",
+		Name:          "handle",
+		QualifiedName: "com.example.Service.handle",
+		Kind:          "Function",
+	})
+
+	envs := map[string]*model.TypeEnv{
+		"Service.java": {
+			Bindings: map[string]*model.TypeInfo{
+				"com.example.Service.handle:status": {TypeName: "com.example.OrderStatus"},
+			},
+		},
+	}
+
+	resolver := newTestResolver(table)
+	refs := []model.RawConstRef{
+		{
+			SwitchConditionKind: "variable",
+			SwitchVariableName:  "status",
+			ConstName:           "PENDING",
+			CallerName:          "com.example.Service.handle",
+			FilePath:            "Service.java",
+			RefKind:             "switch_case",
+			Line:                20,
+		},
+	}
+
+	relations := resolver.ResolveConstRefs(refs, envs)
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	rel := relations[0]
+	if rel.SourceID != "func1" || rel.TargetID != "const1" {
+		t.Errorf("unexpected relation: SourceID=%s TargetID=%s", rel.SourceID, rel.TargetID)
+	}
+	if rel.Metadata["ref_kind"] != "switch_case" {
+		t.Errorf("expected ref_kind=switch_case, got %s", rel.Metadata["ref_kind"])
+	}
+	t.Log("✅ Pattern B switch variable resolved")
+}
+
+// TestResolveConstRefs_SwitchMethodCall verifies Pattern B with method call condition.
+func TestResolveConstRefs_SwitchMethodCall(t *testing.T) {
+	table := NewSymbolTable()
+	table.Add(model.Symbol{
+		ID:            "enum1",
+		Name:          "OrderStatus",
+		QualifiedName: "com.example.OrderStatus",
+		Kind:          "Class",
+		ClassType:     "enum",
+	})
+	table.Add(model.Symbol{
+		ID:            "const1",
+		Name:          "PENDING",
+		QualifiedName: "com.example.OrderStatus.PENDING",
+		Kind:          "Variable",
+		IsStatic:      true,
+		IsFinal:       true,
+	})
+	table.Add(model.Symbol{
+		ID:            "class1",
+		Name:          "Order",
+		QualifiedName: "com.example.Order",
+		Kind:          "Class",
+	})
+	table.Add(model.Symbol{
+		ID:            "method1",
+		Name:          "getStatus",
+		QualifiedName: "com.example.Order.getStatus",
+		Kind:          "Function",
+		ReturnTypes:   []string{"com.example.OrderStatus"},
+	})
+	table.Add(model.Symbol{
+		ID:            "func1",
+		Name:          "handle",
+		QualifiedName: "com.example.Service.handle",
+		Kind:          "Function",
+	})
+
+	envs := map[string]*model.TypeEnv{
+		"Service.java": {
+			Bindings: map[string]*model.TypeInfo{
+				"com.example.Service.handle:order": {TypeName: "com.example.Order"},
+			},
+		},
+	}
+
+	resolver := newTestResolver(table)
+	refs := []model.RawConstRef{
+		{
+			SwitchConditionKind:  "method_call",
+			SwitchMethodReceiver: "order",
+			SwitchMethodName:     "getStatus",
+			ConstName:            "PENDING",
+			CallerName:           "com.example.Service.handle",
+			FilePath:             "Service.java",
+			RefKind:              "switch_case",
+			Line:                 25,
+		},
+	}
+
+	relations := resolver.ResolveConstRefs(refs, envs)
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	rel := relations[0]
+	if rel.SourceID != "func1" || rel.TargetID != "const1" {
+		t.Errorf("unexpected relation: SourceID=%s TargetID=%s", rel.SourceID, rel.TargetID)
+	}
+	t.Log("✅ Pattern B switch method call resolved")
+}

@@ -36,6 +36,7 @@ var (
 	callchainMode    string
 	impactDepth      int
 	impactMinConf    float64
+	usagesLimit      int
 	traceMethod      string
 	traceDepth       int
 	traceMode        string
@@ -51,7 +52,7 @@ func init() {
 		RunE:  runQuery,
 	}
 	queryCmd.Flags().StringVar(&queryKinds, "kinds", "", "Filter by kinds (comma-separated: Function,Class,Interface)")
-	queryCmd.Flags().IntVar(&queryLimit, "limit", 20, "Max results")
+	queryCmd.Flags().IntVar(&queryLimit, "limit", 0, "Max results (0 = no limit)")
 	queryCmd.Flags().StringVar(&queryAnnotation, "annotation", "", "Filter by annotation name (e.g. Service)")
 	queryCmd.Flags().StringVar(&queryParams, "params", "", "Filter by annotation params (substring match)")
 	queryCmd.Flags().StringVar(&queryLayer, "layer", "", "Filter by layer (controller/service/repository/model)")
@@ -117,8 +118,19 @@ func init() {
 		Args:  cobra.ExactArgs(1),
 		RunE:  runSearch,
 	}
-	searchCmd.Flags().IntVar(&queryLimit, "limit", 20, "Max results")
+	searchCmd.Flags().IntVar(&queryLimit, "limit", 0, "Max results (0 = no limit)")
 	rootCmd.AddCommand(searchCmd)
+
+	// fcg usages <constant-qualified-name>
+	usagesCmd := &cobra.Command{
+		Use:     "usages <constant-qualified-name>",
+		GroupID: "query",
+		Short:   "Query all references to a static constant (enum/interface/class constant)",
+		Args:    cobra.ExactArgs(1),
+		RunE:    runUsages,
+	}
+	usagesCmd.Flags().IntVar(&usagesLimit, "limit", 0, "Max results (0 = no limit)")
+	rootCmd.AddCommand(usagesCmd)
 }
 
 // warnIfIndexStale checks if the project index is outdated and prints a warning to stderr.
@@ -635,5 +647,40 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("  %-12s %-40s %s\n", result.Kind, name, result.Path)
 	}
+	return nil
+}
+
+func runUsages(cmd *cobra.Command, args []string) error {
+	querier, store, err := createQuerier()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	symbolQualifiedName := args[0]
+	results, err := querier.QueryUsages(context.Background(), symbolQualifiedName, usagesLimit)
+	if err != nil {
+		return err
+	}
+
+	if len(results) == 0 {
+		fmt.Printf("No usages found for constant: %s\n", symbolQualifiedName)
+		return nil
+	}
+
+	fmt.Printf("Usages of constant %s:\n\n", symbolQualifiedName)
+	for _, usage := range results {
+		functionName, _ := usage.Function.Properties["qualified_name"].(string)
+		if functionName == "" {
+			functionName, _ = usage.Function.Properties["name"].(string)
+		}
+		filePath, _ := usage.Function.Properties["file_path"].(string)
+		refKind := usage.RefKind
+		if refKind == "" {
+			refKind = "unknown"
+		}
+		fmt.Printf("  %-50s %s:%d [%s]\n", functionName, filePath, usage.RefLine, refKind)
+	}
+	fmt.Printf("\nTotal: %d usage(s)\n", len(results))
 	return nil
 }

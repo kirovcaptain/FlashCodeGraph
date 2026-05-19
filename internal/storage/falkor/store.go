@@ -221,10 +221,10 @@ func (store *Store) Migrate(ctx context.Context) error {
 	for _, label := range constants.BaseSymbolKinds {
 		store.query(ctx, "CREATE INDEX ON :"+label+"(file_path)")
 	}
-	for _, label := range []string{constants.KindFunction, constants.KindClass, constants.KindInterface, constants.KindAnnotation} {
+	for _, label := range []string{constants.KindFunction, constants.KindClass, constants.KindInterface, constants.KindVariable, constants.KindAnnotation} {
 		store.query(ctx, "CREATE INDEX ON :"+label+"(name)")
 	}
-	for _, label := range constants.BaseSymbolKinds {
+	for _, label := range constants.QualifiedNameKinds {
 		store.query(ctx, "CREATE INDEX ON :"+label+"(qualified_name)")
 	}
 	for _, label := range constants.AllNodeKinds {
@@ -446,6 +446,8 @@ func edgeLabels(kind model.RelationKind, sourceKind string) (string, string) {
 		}
 	case model.RelStep:
 		return constants.KindProcess, constants.KindFunction
+	case model.RelUses:
+		return constants.KindFunction, constants.KindVariable
 	default:
 		return constants.KindFunction, constants.KindFunction
 	}
@@ -552,7 +554,7 @@ func (store *Store) QueryNodeByID(ctx context.Context, id string) (*model.Node, 
 
 // QueryNodeByQualifiedName returns a single node by its qualified name.
 func (store *Store) QueryNodeByQualifiedName(ctx context.Context, qualifiedName string) (*model.Node, error) {
-	for _, label := range constants.BaseSymbolKinds {
+	for _, label := range constants.QualifiedNameKinds {
 		returnClause := model.QueryReturnClause(label)
 		cypher := "MATCH (n:" + label + " {qualified_name: $qualifiedName}) RETURN " + returnClause + " LIMIT 1"
 		rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"qualifiedName", qualifiedName}})
@@ -648,14 +650,34 @@ func (store *Store) QueryEdges(ctx context.Context, nodeID string, nodeKind stri
 	if label == "" {
 		label = constants.KindFunction
 	}
+
+	// USES edges have custom properties (line, ref_kind) — use dedicated query path
+	if relKind == model.RelUses {
+		var cypher string
+		switch direction {
+		case model.Outgoing:
+			cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]->(b) RETURN a.id, b.id, r.line, r.ref_kind"
+		case model.Incoming:
+			cypher = "MATCH (a)-[r:" + relType + "]->(b {id: $nodeID}) RETURN a.id, b.id, r.line, r.ref_kind"
+		default:
+			cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]-(b) RETURN a.id, b.id, r.line, r.ref_kind"
+		}
+		rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeID", nodeID}})
+		if err != nil {
+			return nil, err
+		}
+		return parseUsesEdgeResults(rows), nil
+	}
+
+	returnCols := "a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, type(r)"
 	var cypher string
 	switch direction {
 	case model.Outgoing:
-		cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]->(b) RETURN a.id, b.id"
+		cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]->(b) RETURN " + returnCols
 	case model.Incoming:
-		cypher = "MATCH (a)-[r:" + relType + "]->(b {id: $nodeID}) RETURN a.id, b.id"
+		cypher = "MATCH (a)-[r:" + relType + "]->(b {id: $nodeID}) RETURN " + returnCols
 	default:
-		cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]-(b) RETURN a.id, b.id"
+		cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]-(b) RETURN " + returnCols
 	}
 
 	rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeID", nodeID}})
@@ -1370,8 +1392,16 @@ func (store *Store) QueryNodesByProperty(ctx context.Context, kind string, key s
 func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) ([]storage.SearchResult, error) {
 	// Phase 1: Function / Class / Interface (name + qualified_name) and Annotation (params) via UNION.
 	var unionParts []string
-	for _, label := range constants.BaseSymbolKinds {
-		returnCols := fmt.Sprintf("n.id AS id, '%s' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name, n.start_line AS start_line, n.end_line AS end_line", label)
+	for _, label := range constants.QualifiedNameKinds {
+		var startLineExpr, endLineExpr string
+		if label == constants.KindVariable {
+			startLineExpr = "n.line AS start_line"
+			endLineExpr = "n.line AS end_line"
+		} else {
+			startLineExpr = "n.start_line AS start_line"
+			endLineExpr = "n.end_line AS end_line"
+		}
+		returnCols := fmt.Sprintf("n.id AS id, '%s' AS kind, n.name AS name, n.file_path AS file_path, n.qualified_name AS qualified_name, %s, %s", label, startLineExpr, endLineExpr)
 		unionParts = append(unionParts,
 			"MATCH (n:"+label+") WHERE n.name CONTAINS $searchText RETURN "+returnCols)
 		unionParts = append(unionParts,
@@ -1381,7 +1411,10 @@ func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) 
 		"MATCH (n:Annotation) WHERE n.params CONTAINS $searchText "+
 			"RETURN n.id AS id, 'Annotation' AS kind, n.name AS name, n.file_path AS file_path, '' AS qualified_name, n.line AS start_line, n.line AS end_line")
 
-	unionCypher := strings.Join(unionParts, " UNION ") + fmt.Sprintf(" LIMIT %d", limit)
+	unionCypher := strings.Join(unionParts, " UNION ")
+	if limit > 0 {
+		unionCypher += fmt.Sprintf(" LIMIT %d", limit)
+	}
 	rows, err := store.queryWithParams(ctx, unionCypher, []cypherParam{{"searchText", queryText}})
 	if err != nil {
 		return nil, err
@@ -1399,10 +1432,14 @@ func (store *Store) SearchFTS(ctx context.Context, queryText string, limit int) 
 func (store *Store) searchClassAndInterfaceFields(ctx context.Context, queryText string, limit int) ([]storage.SearchResult, error) {
 	var results []storage.SearchResult
 	for _, nodeKind := range []string{"Class", "Interface"} {
+		limitClause := ""
+		if limit > 0 {
+			limitClause = fmt.Sprintf(" LIMIT %d", limit)
+		}
 		cypher := fmt.Sprintf(
 			"MATCH (n:%s) WHERE n.fields CONTAINS $searchText "+
-				"RETURN n.id, n.file_path, n.qualified_name, n.start_line, n.end_line, n.fields LIMIT %d",
-			nodeKind, limit)
+				"RETURN n.id, n.file_path, n.qualified_name, n.start_line, n.end_line, n.fields%s",
+			nodeKind, limitClause)
 		rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"searchText", queryText}})
 		if err != nil {
 			continue
@@ -1481,7 +1518,7 @@ func (store *Store) GetStats(ctx context.Context) (*model.GraphStats, error) {
 
 	// Edge counts
 	edgeTypes := []string{"CALLS", "EXTENDS", "IMPLEMENTS", "OVERRIDES", "IMPORTS",
-		"HANDLES", "EXECUTES", "REMOTE_CALLS", "CONTAINS", "HAS_ANNOTATION", "STEP", "UNRESOLVED_CALL"}
+		"HANDLES", "EXECUTES", "REMOTE_CALLS", "CONTAINS", "HAS_ANNOTATION", "STEP", "UNRESOLVED_CALL", "USES"}
 	for _, rel := range edgeTypes {
 		rows, err := store.query(ctx, "MATCH ()-[r:"+rel+"]->() RETURN count(r)")
 		if err != nil {
@@ -1699,6 +1736,41 @@ func parseFullNodeResults(rows []interface{}) []model.Node {
 }
 
 
+
+func parseUsesEdgeResults(rows []interface{}) []model.Edge {
+	if len(rows) < 2 {
+		return nil
+	}
+	dataRows, ok := rows[1].([]interface{})
+	if !ok {
+		return nil
+	}
+	edges := make([]model.Edge, 0, len(dataRows))
+	for _, row := range dataRows {
+		cols, ok := row.([]interface{})
+		if !ok || len(cols) < 2 {
+			continue
+		}
+		edge := model.Edge{
+			SourceID:   asString(cols[0]),
+			TargetID:   asString(cols[1]),
+			Kind:       model.RelUses,
+			Properties: make(map[string]any),
+		}
+		if len(cols) >= 3 && cols[2] != nil {
+			if l, ok := asInt(cols[2]); ok {
+				edge.Properties["line"] = l
+			}
+		}
+		if len(cols) >= 4 && cols[3] != nil {
+			if rk, ok := cols[3].(string); ok {
+				edge.Properties["ref_kind"] = rk
+			}
+		}
+		edges = append(edges, edge)
+	}
+	return edges
+}
 
 func parseEdgeResults(rows []interface{}, defaultKind ...model.RelationKind) []model.Edge {
 	if len(rows) < 2 {

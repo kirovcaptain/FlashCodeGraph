@@ -1355,4 +1355,152 @@ func makeMultiRelations(sourceID string, candidates []model.Symbol, call model.R
 	return relations
 }
 
+// ResolveConstRefs resolves raw constant references into USES relationships.
+func (resolver *Resolver) ResolveConstRefs(refs []model.RawConstRef, envs map[string]*model.TypeEnv) []model.ResolvedRelation {
+	var relations []model.ResolvedRelation
+
+	for _, ref := range refs {
+		callerSymbols := resolver.symbolTable.FindByQualifiedName(ref.CallerName)
+		if len(callerSymbols) == 0 {
+			continue
+		}
+		callerID := callerSymbols[0].ID
+
+		enumQualifiedName := resolver.resolveStaticConstantClassName(ref, envs)
+		if enumQualifiedName == "" {
+			continue
+		}
+
+		constQualifiedName := enumQualifiedName + "." + ref.ConstName
+		constSymbols := resolver.symbolTable.FindByQualifiedName(constQualifiedName)
+		if len(constSymbols) == 0 {
+			continue
+		}
+
+		constSymbol := constSymbols[0]
+		if constSymbol.Kind != constants.KindVariable || !constSymbol.IsStatic || !constSymbol.IsFinal {
+			continue
+		}
+
+		relations = append(relations, model.ResolvedRelation{
+			SourceID:   callerID,
+			TargetID:   constSymbol.ID,
+			Kind:       model.RelUses,
+			SourceKind: constants.KindFunction,
+			Line:       ref.Line,
+			Metadata:   map[string]string{"ref_kind": ref.RefKind},
+		})
+	}
+
+	return relations
+}
+
+// resolveStaticConstantClassName resolves the class qualified name for a RawConstRef.
+func (resolver *Resolver) resolveStaticConstantClassName(ref model.RawConstRef, envs map[string]*model.TypeEnv) string {
+	switch ref.RefKind {
+	case "field_access":
+		if strings.Contains(ref.ObjectExpr, ".") {
+			innerName := lastSegment(ref.ObjectExpr)
+			candidates := resolver.symbolTable.FindByName(innerName)
+			for _, candidate := range candidates {
+				if (candidate.Kind == constants.KindClass || candidate.Kind == constants.KindInterface) &&
+					(candidate.ClassType == constants.ClassTypeEnum ||
+						candidate.ClassType == constants.ClassTypeInterface ||
+						candidate.ClassType == constants.ClassTypeClass) &&
+					(strings.HasSuffix(candidate.QualifiedName, "."+ref.ObjectExpr) ||
+						candidate.QualifiedName == ref.ObjectExpr) {
+					return candidate.QualifiedName
+				}
+			}
+		} else {
+			candidates := resolver.symbolTable.FindByName(ref.ObjectExpr)
+			for _, candidate := range candidates {
+				if (candidate.Kind == constants.KindClass || candidate.Kind == constants.KindInterface) &&
+					(candidate.ClassType == constants.ClassTypeEnum ||
+						candidate.ClassType == constants.ClassTypeInterface ||
+						candidate.ClassType == constants.ClassTypeClass) {
+					return candidate.QualifiedName
+				}
+			}
+		}
+
+	case "switch_case":
+		env := envs[ref.FilePath]
+		typeName := resolver.resolveSwitchConditionType(ref, env)
+		if typeName == "" {
+			return ""
+		}
+		shortName := lastSegment(typeName)
+		candidates := resolver.symbolTable.FindByName(shortName)
+		for _, candidate := range candidates {
+			if (candidate.Kind == constants.KindClass || candidate.Kind == constants.KindInterface) &&
+				(candidate.ClassType == constants.ClassTypeEnum ||
+					candidate.ClassType == constants.ClassTypeInterface ||
+					candidate.ClassType == constants.ClassTypeClass) {
+				if typeName == candidate.QualifiedName || strings.HasSuffix(candidate.QualifiedName, "."+typeName) {
+					return candidate.QualifiedName
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// resolveSwitchConditionType returns the type name for the switch condition expression.
+func (resolver *Resolver) resolveSwitchConditionType(ref model.RawConstRef, env *model.TypeEnv) string {
+	switch ref.SwitchConditionKind {
+	case "variable":
+		if env == nil {
+			return ""
+		}
+		return typeinfer.LookupInEnv(env, ref.CallerName, ref.SwitchVariableName)
+
+	case "method_call":
+		if ref.SwitchMethodReceiver != "" && env != nil {
+			receiverTypeName := typeinfer.LookupInEnv(env, ref.CallerName, ref.SwitchMethodReceiver)
+			if receiverTypeName != "" {
+				method := resolver.FindMethodInHierarchy(lastSegment(receiverTypeName), ref.SwitchMethodName, resolver.heritage)
+				if method != nil && len(method.ReturnTypes) > 0 {
+					return method.ReturnTypes[0]
+				}
+			}
+		}
+		return resolver.inferConstantReturnTypeByMethodName(ref.SwitchMethodName)
+	}
+	return ""
+}
+
+// inferConstantReturnTypeByMethodName returns the class type if every method with the given
+// name returns the same enum/interface/class type; returns "" if ambiguous or none found.
+func (resolver *Resolver) inferConstantReturnTypeByMethodName(methodName string) string {
+	candidates := resolver.symbolTable.FindByName(methodName)
+	var uniqueReturnType string
+	for _, candidate := range candidates {
+		if candidate.Kind != constants.KindFunction || len(candidate.ReturnTypes) == 0 {
+			continue
+		}
+		returnType := candidate.ReturnTypes[0]
+		typeCandidates := resolver.symbolTable.FindByName(lastSegment(returnType))
+		isConstantClass := false
+		for _, tc := range typeCandidates {
+			if tc.Kind == constants.KindClass &&
+				(tc.ClassType == constants.ClassTypeEnum ||
+					tc.ClassType == constants.ClassTypeInterface ||
+					tc.ClassType == constants.ClassTypeClass) {
+				isConstantClass = true
+				break
+			}
+		}
+		if !isConstantClass {
+			continue
+		}
+		if uniqueReturnType == "" {
+			uniqueReturnType = returnType
+		} else if uniqueReturnType != returnType {
+			return ""
+		}
+	}
+	return uniqueReturnType
+}
+
 

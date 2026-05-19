@@ -28,6 +28,9 @@ var AllNodeKinds = []string{
 // BaseSymbolKinds is the list of base code symbol kinds (Function, Class, Interface).
 var BaseSymbolKinds = []string{KindFunction, KindClass, KindInterface}
 
+// QualifiedNameKinds includes all node kinds that have a qualified_name property.
+var QualifiedNameKinds = []string{KindFunction, KindClass, KindInterface, KindVariable}
+
 // ParserKind — fine-grained parser output, mapped to Kind before storage.
 const (
 	ParserKindFunction      = "function"
@@ -79,6 +82,8 @@ func ParserKindToNodeKind(parserKind string) string {
 		return KindInterface
 	case ParserKindAbstractClass, ParserKindEnum:
 		return KindClass
+	case ParserKindVariable:
+		return KindVariable
 	default:
 		return parserKind
 	}

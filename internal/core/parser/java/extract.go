@@ -30,6 +30,15 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 			extractClass(node, content, file.RelPath, packageName, result)
 			className := astutil.NodeFieldText(node, "name", content)
 			currentClass = className
+			var classType string
+			switch node.Kind() {
+			case "interface_declaration":
+				classType = constants.ClassTypeInterface
+			case "enum_declaration":
+				classType = constants.ClassTypeEnum
+			default:
+				classType = constants.ClassTypeClass
+			}
 			// Extract class annotations for route prefix
 			var classAnnotations []model.StructuredAnnotation
 			for i := uint(0); i < node.ChildCount(); i++ {
@@ -39,7 +48,7 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 					break
 				}
 			}
-			extractClassBody(node, content, file.RelPath, packageName, className, classAnnotations, result)
+			extractClassBody(node, content, file.RelPath, packageName, className, classType, classAnnotations, result)
 
 			// Feign client detection
 			if HasFeignClient(classAnnotations) {
@@ -247,7 +256,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 }
 
 // extractJavaClassBody walks the class body for methods and fields.
-func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, packageName, className string, classAnnotations []model.StructuredAnnotation, result *model.ParseResult) {
+func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, packageName, className, classType string, classAnnotations []model.StructuredAnnotation, result *model.ParseResult) {
 	body := classNode.ChildByFieldName("body")
 	if body == nil {
 		return
@@ -264,8 +273,8 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 		switch child.Kind() {
 		case "method_declaration", "constructor_declaration":
 			extractMethod(child, content, filePath, packageName, className, classAnnotations, result)
-		case "field_declaration":
-			extractField(child, content, filePath, packageName, className, result)
+		case "field_declaration", "constant_declaration":
+			extractField(child, content, filePath, packageName, className, classType, result)
 			ExtractDubboReference(child, content, packageName, className, filePath, result)
 			ExtractGrpcClientField(child, content, packageName, className, filePath, result)
 			// Collect field info for Lombok
@@ -279,6 +288,25 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 					}
 				}
 			}
+		case "enum_constant":
+			nameNode := child.ChildByFieldName("name")
+			if nameNode == nil {
+				continue
+			}
+			constantName := nameNode.Utf8Text(content)
+			qualifiedConstantName := packageName + "." + className + "." + constantName
+			result.Symbols = append(result.Symbols, model.Symbol{
+				ID:            astutil.GenerateSymbolID(filePath, qualifiedConstantName, int(child.StartPosition().Row)+1),
+				Name:          constantName,
+				QualifiedName: qualifiedConstantName,
+				Kind:          constants.KindVariable,
+				FilePath:      filePath,
+				StartLine:     int(child.StartPosition().Row) + 1,
+				EndLine:       int(child.EndPosition().Row) + 1,
+				IsStatic:      true,
+				IsFinal:       true,
+				IsExported:    true,
+			})
 		case "class_declaration", "interface_declaration", "enum_declaration":
 			// Inner class — recurse
 			innerName := astutil.NodeFieldText(child, "name", content)
@@ -291,7 +319,16 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 						break
 					}
 				}
-				extractClassBody(child, content, filePath, packageName+"."+className, innerName, innerAnnotations, result)
+				var innerClassType string
+				switch child.Kind() {
+				case "interface_declaration":
+					innerClassType = constants.ClassTypeInterface
+				case "enum_declaration":
+					innerClassType = constants.ClassTypeEnum
+				default:
+					innerClassType = constants.ClassTypeClass
+				}
+				extractClassBody(child, content, filePath, packageName+"."+className, innerName, innerClassType, innerAnnotations, result)
 			}
 		case "enum_body_declarations":
 			// Enum methods/fields are inside enum_body_declarations (after the semicolon)
@@ -304,12 +341,21 @@ func extractClassBody(classNode *tree_sitter.Node, content []byte, filePath, pac
 				case "method_declaration", "constructor_declaration":
 					extractMethod(inner, content, filePath, packageName, className, classAnnotations, result)
 				case "field_declaration":
-					extractField(inner, content, filePath, packageName, className, result)
+					extractField(inner, content, filePath, packageName, className, classType, result)
 				case "class_declaration", "interface_declaration", "enum_declaration":
 					innerName := astutil.NodeFieldText(inner, "name", content)
 					if innerName != "" {
 						extractClass(inner, content, filePath, packageName+"."+className, result)
-						extractClassBody(inner, content, filePath, packageName+"."+className, innerName, nil, result)
+						var innerClassType string
+						switch inner.Kind() {
+						case "interface_declaration":
+							innerClassType = constants.ClassTypeInterface
+						case "enum_declaration":
+							innerClassType = constants.ClassTypeEnum
+						default:
+							innerClassType = constants.ClassTypeClass
+						}
+						extractClassBody(inner, content, filePath, packageName+"."+className, innerName, innerClassType, nil, result)
 					}
 				}
 			}
@@ -566,17 +612,20 @@ func generateLombokAccessors(classAnnotations []model.StructuredAnnotation, fiel
 	}
 }
 
-func extractField(node *tree_sitter.Node, content []byte, filePath, packageName, className string, result *model.ParseResult) {
+func extractField(node *tree_sitter.Node, content []byte, filePath, packageName, className, classType string, result *model.ParseResult) {
 	typeNode := node.ChildByFieldName("type")
 	fieldType := ""
 	if typeNode != nil {
 		fieldType = ExtractTypeName(typeNode, content)
 	}
 
-	// Extract modifiers for visibility, static, final
-	isStatic := false
-	isFinal := false
+	// Interface fields are implicitly public static final
+	isStatic := classType == constants.ClassTypeInterface
+	isFinal := classType == constants.ClassTypeInterface
 	visibility := "package"
+	if classType == constants.ClassTypeInterface {
+		visibility = "public"
+	}
 	var fieldAnnotations []model.StructuredAnnotation
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -597,11 +646,6 @@ func extractField(node *tree_sitter.Node, content []byte, filePath, packageName,
 			}
 			fieldAnnotations = ExtractAnnotations(child, content)
 		}
-	}
-
-	// Skip static final constants
-	if isStatic && isFinal {
-		// Still emit TypeHints for constants (existing behavior), but no FieldDeclaration
 	}
 
 	// Find variable declarators
@@ -634,6 +678,23 @@ func extractField(node *tree_sitter.Node, content []byte, filePath, packageName,
 					Tier:     0,
 					Scope:    classQualifiedName,
 					FilePath: filePath,
+				})
+			}
+
+			// Static final fields emit Variable Symbol for constant tracking
+			if isStatic && isFinal {
+				result.Symbols = append(result.Symbols, model.Symbol{
+					ID:            astutil.GenerateSymbolID(filePath, qualifiedName, int(node.StartPosition().Row)+1),
+					Name:          fieldName,
+					QualifiedName: qualifiedName,
+					Kind:          constants.KindVariable,
+					FilePath:      filePath,
+					StartLine:     int(node.StartPosition().Row) + 1,
+					EndLine:       int(node.EndPosition().Row) + 1,
+					IsStatic:      true,
+					IsFinal:       true,
+					IsExported:    visibility == "public",
+					Visibility:    visibility,
 				})
 			}
 
@@ -726,8 +787,110 @@ func extractCalls(bodyNode *tree_sitter.Node, content []byte, filePath, callerNa
 				}
 			}
 		}
+		// Pattern A: field_access → static constant reference (e.g. OrderStatus.PENDING, CoinGoodsSubType.Type.EQUITY)
+		if node.Kind() == "field_access" {
+			objectNode := node.ChildByFieldName("object")
+			fieldNode := node.ChildByFieldName("field")
+			if objectNode != nil && fieldNode != nil {
+				constName := fieldNode.Utf8Text(content)
+				var objectExpr string
+				if objectNode.Kind() == "identifier" {
+					objectExpr = objectNode.Utf8Text(content)
+				} else if objectNode.Kind() == "field_access" {
+					innerObject := objectNode.ChildByFieldName("object")
+					innerField := objectNode.ChildByFieldName("field")
+					if innerObject != nil && innerField != nil && innerObject.Kind() == "identifier" {
+						objectExpr = innerObject.Utf8Text(content) + "." + innerField.Utf8Text(content)
+					}
+				}
+				if objectExpr != "" {
+					result.ConstRefs = append(result.ConstRefs, model.RawConstRef{
+						ObjectExpr: objectExpr,
+						ConstName:  constName,
+						CallerName: scope,
+						FilePath:   filePath,
+						Line:       int(node.StartPosition().Row) + 1,
+						RefKind:    "field_access",
+					})
+				}
+			}
+			return true
+		}
+		// Pattern B: switch statement/expression → extract bare identifiers from case labels
+		if node.Kind() == "switch_statement" || node.Kind() == "switch_expression" {
+			extractSwitchCaseConstRefs(node, content, filePath, scope, result)
+			return true
+		}
 		return true
 	})
+}
+
+// extractSwitchCaseConstRefs extracts enum constant references from switch-case labels.
+func extractSwitchCaseConstRefs(switchNode *tree_sitter.Node, content []byte, filePath, scope string, result *model.ParseResult) {
+	condNode := switchNode.ChildByFieldName("condition")
+	if condNode == nil {
+		return
+	}
+	condInner := condNode
+	if condNode.Kind() == "parenthesized_expression" && condNode.ChildCount() >= 2 {
+		condInner = condNode.Child(1)
+	}
+	if condInner == nil || !condInner.IsNamed() {
+		return
+	}
+
+	var switchConditionKind, switchVariableName, switchMethodReceiver, switchMethodName string
+	switch condInner.Kind() {
+	case "identifier":
+		switchConditionKind = "variable"
+		switchVariableName = condInner.Utf8Text(content)
+	case "method_invocation":
+		nameNode := condInner.ChildByFieldName("name")
+		objectNode := condInner.ChildByFieldName("object")
+		if nameNode == nil {
+			return
+		}
+		switchConditionKind = "method_call"
+		switchMethodName = nameNode.Utf8Text(content)
+		if objectNode != nil && objectNode.Kind() == "identifier" {
+			switchMethodReceiver = objectNode.Utf8Text(content)
+		}
+	default:
+		return
+	}
+
+	bodyNode := switchNode.ChildByFieldName("body")
+	if bodyNode == nil {
+		return
+	}
+	for i := uint(0); i < bodyNode.ChildCount(); i++ {
+		group := bodyNode.Child(i)
+		if !group.IsNamed() {
+			continue
+		}
+		for j := uint(0); j < group.ChildCount(); j++ {
+			label := group.Child(j)
+			if !label.IsNamed() || label.Kind() != "switch_label" {
+				continue
+			}
+			for k := uint(0); k < label.ChildCount(); k++ {
+				child := label.Child(k)
+				if child.IsNamed() && child.Kind() == "identifier" {
+					result.ConstRefs = append(result.ConstRefs, model.RawConstRef{
+						SwitchConditionKind:  switchConditionKind,
+						SwitchVariableName:   switchVariableName,
+						SwitchMethodReceiver: switchMethodReceiver,
+						SwitchMethodName:     switchMethodName,
+						ConstName:            child.Utf8Text(content),
+						CallerName:           scope,
+						FilePath:             filePath,
+						Line:                 int(child.StartPosition().Row) + 1,
+						RefKind:              "switch_case",
+					})
+				}
+			}
+		}
+	}
 }
 
 // extractLocalVarTypeHint generates Tier 0 TypeHints from local variable declarations with explicit types.

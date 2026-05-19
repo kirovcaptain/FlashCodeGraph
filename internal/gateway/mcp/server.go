@@ -278,6 +278,14 @@ func (srv *Server) registerTools() {
 		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
 		mcp.WithString("locations", mcp.Required(), mcp.Description("JSON array of {\"file\":\"relative/path\",\"line\":N} objects")),
 	), srv.handleLocateFunction)
+
+	srv.mcpServer.AddTool(mcp.NewTool("query_usages",
+		mcp.WithDescription("Query all references to a static constant (enum constant, interface constant, or class static final field). Returns the functions that reference it, along with line numbers and reference kinds (field_access or switch_case)."),
+		mcp.WithString("symbol", mcp.Required(), mcp.Description("Qualified name of the constant (e.g. 'com.example.Status.ACTIVE')")),
+		mcp.WithNumber("limit", mcp.Description("Max results (default: no limit)")),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
+		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected if omitted)")),
+	), srv.handleQueryUsages)
 }
 
 // registerResources registers MCP resources.
@@ -1218,6 +1226,29 @@ func (srv *Server) handleLocateFunction(ctx context.Context, request mcp.CallToo
 	}
 
 	resp := listResponse[model.LocateResult]{Branch: resolvedBranch, Data: results}
+	out, _ := json.Marshal(resp)
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func (srv *Server) handleQueryUsages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	symbolQualifiedName, _ := request.GetArguments()["symbol"].(string)
+	repoPath, _ := request.GetArguments()["path"].(string)
+	branchName, _ := request.GetArguments()["branch"].(string)
+	limitFloat, _ := request.GetArguments()["limit"].(float64)
+	limit := int(limitFloat)
+
+	querier, store, resolvedBranch, err := srv.createQuerier(repoPath, branchName)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer store.Close()
+
+	results, err := querier.QueryUsages(ctx, symbolQualifiedName, limit)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	resp := listResponse[model.UsageResult]{Branch: resolvedBranch, Data: results}
 	out, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(out)), nil
 }

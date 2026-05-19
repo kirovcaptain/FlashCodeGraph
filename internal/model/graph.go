@@ -29,6 +29,7 @@ const (
 	RelStep        RelationKind = "STEP"
 	RelHasAnnotation RelationKind = "HAS_ANNOTATION"
 	RelUnresolvedCall RelationKind = "UNRESOLVED_CALL"
+	RelUses           RelationKind = "USES"
 )
 
 // Direction for graph traversal.
@@ -214,14 +215,23 @@ type LocateResult struct {
 	EndLine   int    `json:"end_line"`
 }
 
-// ToInt converts a numeric value to int, handling float64 (from JSON) and int64 (from DB drivers).
+// UsageResult represents a single reference to a static constant.
+type UsageResult struct {
+	Function Node   `json:"function"`
+	RefLine  int    `json:"ref_line"`
+	RefKind  string `json:"ref_kind"`
+}
+
+// ToInt converts a numeric value to int, handling float64 (from JSON) and int64/int32 (from DB drivers).
 func ToInt(value any) (int, bool) {
 	switch number := value.(type) {
 	case int:
 		return number, true
-	case float64:
+	case int32:
 		return int(number), true
 	case int64:
+		return int(number), true
+	case float64:
 		return int(number), true
 	}
 	return 0, false

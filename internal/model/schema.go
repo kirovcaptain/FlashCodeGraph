@@ -77,6 +77,7 @@ var NodeColumns = map[string][]ColumnDef{
 	},
 	"Variable": {
 		{"name", "STRING"},
+		{"qualified_name", "STRING"},
 		{"file_path", "STRING"},
 		{"line", "INT32"},
 		{"var_type", "STRING"},
