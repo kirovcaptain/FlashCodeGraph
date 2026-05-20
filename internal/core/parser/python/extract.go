@@ -34,10 +34,19 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 	})
 }
 
-// extractPythonImportFrom handles "from x import y".
+// rawImportEntry holds a parsed import symbol with its local name.
+type rawImportEntry struct {
+	symbolName string
+	localName  string
+}
+
+// extractImportFrom handles "from x import y" and "from .x import y".
+// In __init__.py files, relative imports are marked as re-exports.
 func extractImportFrom(node *tree_sitter.Node, content []byte, filePath string, result *model.ParseResult) {
 	modulePath := ""
-	var symbolNames []string
+	var importEntries []rawImportEntry
+	isInitFile := strings.HasSuffix(filePath, "__init__.py")
+	isWildcard := false
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -46,31 +55,63 @@ func extractImportFrom(node *tree_sitter.Node, content []byte, filePath string, 
 			if modulePath == "" {
 				modulePath = child.Utf8Text(content)
 			} else {
-				symbolNames = append(symbolNames, child.Utf8Text(content))
+				name := child.Utf8Text(content)
+				importEntries = append(importEntries, rawImportEntry{
+					symbolName: name,
+					localName:  name,
+				})
 			}
 		case "identifier":
 			// "from x import a" — imported name may be identifier, not dotted_name
 			if modulePath != "" {
-				symbolNames = append(symbolNames, child.Utf8Text(content))
+				name := child.Utf8Text(content)
+				importEntries = append(importEntries, rawImportEntry{
+					symbolName: name,
+					localName:  name,
+				})
 			}
 		case "aliased_import":
-			// "from x import User as U" — extract original name, not alias
 			nameNode := child.ChildByFieldName("name")
+			aliasNode := child.ChildByFieldName("alias")
 			if nameNode != nil && modulePath != "" {
-				symbolNames = append(symbolNames, nameNode.Utf8Text(content))
+				entry := rawImportEntry{symbolName: nameNode.Utf8Text(content)}
+				if aliasNode != nil {
+					entry.localName = aliasNode.Utf8Text(content)
+				} else {
+					entry.localName = entry.symbolName
+				}
+				importEntries = append(importEntries, entry)
 			}
+		case "wildcard_import":
+			isWildcard = true
 		}
 	}
 
-	for _, symbolName := range symbolNames {
+	// Only mark as re-export if file is __init__.py and import is relative
+	isReexport := isInitFile && strings.HasPrefix(modulePath, ".")
+
+	if isWildcard {
 		result.Imports = append(result.Imports, model.RawImport{
 			ModulePath: modulePath,
-			SymbolName: symbolName,
 			FilePath:   filePath,
 			Line:       int(node.StartPosition().Row) + 1,
+			IsReexport: isReexport,
+			IsWildcard: true,
+		})
+		return
+	}
+
+	for _, entry := range importEntries {
+		result.Imports = append(result.Imports, model.RawImport{
+			ModulePath: modulePath,
+			SymbolName: entry.symbolName,
+			LocalName:  entry.localName,
+			FilePath:   filePath,
+			Line:       int(node.StartPosition().Row) + 1,
+			IsReexport: isReexport,
 		})
 	}
-	if len(symbolNames) == 0 && modulePath != "" {
+	if len(importEntries) == 0 && modulePath != "" {
 		result.Imports = append(result.Imports, model.RawImport{
 			ModulePath: modulePath,
 			FilePath:   filePath,

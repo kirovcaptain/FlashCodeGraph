@@ -63,7 +63,7 @@ func TestPropagateExports_SingleLayerNamedReexport(t *testing.T) {
 
 	indexer := &Indexer{}
 	allFiles := []string{"src/models/User.ts", "src/models/index.ts"}
-	indexer.propagateExports(parseResults, symbolTable, allFiles, nil)
+	indexer.propagateExports(parseResults, symbolTable, allFiles, "", "typescript")
 
 	// reExportIndex should map "src.models.User" (barrel's package + localName) to sym-user
 	targetID, exists := symbolTable.GetReExport("src.models.User")
@@ -99,7 +99,7 @@ func TestPropagateExports_RenameReexport(t *testing.T) {
 
 	indexer := &Indexer{}
 	allFiles := []string{"src/internal/Logger.ts", "src/public-api.ts"}
-	indexer.propagateExports(parseResults, symbolTable, allFiles, nil)
+	indexer.propagateExports(parseResults, symbolTable, allFiles, "", "typescript")
 
 	targetID, exists := symbolTable.GetReExport("src.public-api.Logger")
 	if !exists {
@@ -142,7 +142,7 @@ func TestPropagateExports_MultiLayerChain_ReverseOrder(t *testing.T) {
 
 	indexer := &Indexer{}
 	allFiles := []string{"pkg/index.ts", "pkg/models/index.ts", "pkg/models/User.ts"}
-	indexer.propagateExports(parseResults, symbolTable, allFiles, nil)
+	indexer.propagateExports(parseResults, symbolTable, allFiles, "", "typescript")
 
 	// pkg/models/index.ts should resolve
 	targetID, exists := symbolTable.GetReExport("pkg.models.User")
@@ -194,7 +194,7 @@ func TestPropagateExports_WildcardReexport(t *testing.T) {
 
 	indexer := &Indexer{}
 	allFiles := []string{"src/utils/date.ts", "src/utils/string.ts", "src/utils/index.ts"}
-	indexer.propagateExports(parseResults, symbolTable, allFiles, nil)
+	indexer.propagateExports(parseResults, symbolTable, allFiles, "", "typescript")
 
 	if id, exists := symbolTable.GetReExport("src.utils.formatDate"); !exists || id != "sym-format-date" {
 		t.Errorf("expected 'src.utils.formatDate' → 'sym-format-date', got exists=%v id=%q", exists, id)
@@ -231,7 +231,7 @@ func TestPropagateExports_LocalPriorityOverNamed(t *testing.T) {
 
 	indexer := &Indexer{}
 	allFiles := []string{"barrel/index.ts", "sub/User.ts"}
-	indexer.propagateExports(parseResults, symbolTable, allFiles, nil)
+	indexer.propagateExports(parseResults, symbolTable, allFiles, "", "typescript")
 
 	// Local definition should win (Pass 1 registers first)
 	targetID, exists := symbolTable.GetReExport("barrel.User")
@@ -264,7 +264,7 @@ func TestPropagateExports_CircularReexport(t *testing.T) {
 
 	indexer := &Indexer{}
 	allFiles := []string{"a/index.ts", "b/index.ts"}
-	indexer.propagateExports(parseResults, symbolTable, allFiles, nil)
+	indexer.propagateExports(parseResults, symbolTable, allFiles, "", "typescript")
 
 	// Neither should be registered (no definition exists)
 	if symbolTable.HasReExport("a.Ghost") {
@@ -303,7 +303,7 @@ func TestPropagateExports_ImportFileMap(t *testing.T) {
 
 	indexer := &Indexer{}
 	allFiles := []string{"pkg/models/User.ts", "pkg/models/index.ts", "app.ts"}
-	importFileMap := indexer.propagateExports(parseResults, symbolTable, allFiles, nil)
+	importFileMap := indexer.propagateExports(parseResults, symbolTable, allFiles, "", "typescript")
 
 	// app.ts importing User from ./pkg/models should map to pkg/models/index.ts
 	key := resolver.ImportFileKey{FilePath: "app.ts", SymbolName: "User"}
@@ -313,5 +313,197 @@ func TestPropagateExports_ImportFileMap(t *testing.T) {
 	}
 	if targetFile != "pkg/models/index.ts" {
 		t.Errorf("expected 'pkg/models/index.ts', got %q", targetFile)
+	}
+}
+
+func TestDerivePackage_Python(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"models/__init__.py", "models"},
+		{"pkg/models/__init__.py", "pkg.models"},
+		{"models/user.py", "models.user"},
+		{"__init__.py", "__init__"},
+		{"src/utils/date_utils.py", "src.utils.date_utils"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := derivePackage(tt.input)
+			if result != tt.expected {
+				t.Errorf("derivePackage(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestResolveTargetFile_PythonRelative(t *testing.T) {
+	fileIndex := map[string]string{
+		"models/user.py": "models/user.py",
+		"pkg/core.py":    "pkg/core.py",
+	}
+
+	tests := []struct {
+		name       string
+		modulePath string
+		fromFile   string
+		expected   string
+	}{
+		{".user → same dir py", ".user", "models/__init__.py", "models/user.py"},
+		{"..core → parent dir", "..core", "pkg/sub/__init__.py", "pkg/core.py"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := resolveTargetFile(tt.modulePath, tt.fromFile, fileIndex, nil, "python")
+			if result != tt.expected {
+				t.Errorf("resolveTargetFile(%q, %q) = %q, want %q", tt.modulePath, tt.fromFile, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestResolveTargetFile_PythonPackagePriority(t *testing.T) {
+	// When both utils.py and utils/__init__.py exist, package wins
+	fileIndex := map[string]string{
+		"utils/__init__.py": "utils/__init__.py",
+		"utils.py":          "utils.py",
+	}
+	result := resolveTargetFile(".utils", "__init__.py", fileIndex, nil, "python")
+	if result != "utils/__init__.py" {
+		t.Errorf("expected 'utils/__init__.py', got %q", result)
+	}
+}
+
+func TestResolveTargetFile_PythonAbsolute(t *testing.T) {
+	fileIndex := map[string]string{
+		"models/__init__.py":     "models/__init__.py",
+		"pkg/models/__init__.py": "pkg/models/__init__.py",
+		"helper.py":             "helper.py",
+	}
+
+	tests := []struct {
+		name       string
+		modulePath string
+		expected   string
+	}{
+		{"models → __init__.py", "models", "models/__init__.py"},
+		{"pkg.models → __init__.py", "pkg.models", "pkg/models/__init__.py"},
+		{"helper → .py", "helper", "helper.py"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := resolveTargetFile(tt.modulePath, "app.py", fileIndex, nil, "python")
+			if result != tt.expected {
+				t.Errorf("resolveTargetFile(%q) = %q, want %q", tt.modulePath, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestPropagateExports_PythonNamedReexport(t *testing.T) {
+	symbolTable := resolver.NewSymbolTable()
+	symbolTable.Add(model.Symbol{
+		ID: "sym-user", Name: "User", QualifiedName: "models.user.User",
+		Kind: "class", FilePath: "models/user.py", IsExported: true,
+	})
+
+	parseResults := []model.ParseResult{
+		{
+			FilePath: "models/user.py",
+			Symbols:  []model.Symbol{{ID: "sym-user", Name: "User", IsExported: true}},
+		},
+		{
+			FilePath: "models/__init__.py",
+			Imports: []model.RawImport{
+				{ModulePath: ".user", SymbolName: "User", LocalName: "User", FilePath: "models/__init__.py", IsReexport: true},
+			},
+		},
+	}
+
+	indexer := &Indexer{}
+	allFiles := []string{"models/user.py", "models/__init__.py"}
+	indexer.propagateExports(parseResults, symbolTable, allFiles, "", "python")
+
+	targetID, exists := symbolTable.GetReExport("models.User")
+	if !exists {
+		t.Fatal("expected reExportIndex entry for 'models.User'")
+	}
+	if targetID != "sym-user" {
+		t.Errorf("expected 'sym-user', got %q", targetID)
+	}
+}
+
+func TestPropagateExports_PythonRenameReexport(t *testing.T) {
+	symbolTable := resolver.NewSymbolTable()
+	symbolTable.Add(model.Symbol{
+		ID: "sym-logger", Name: "InternalLogger", QualifiedName: "internal.logger.InternalLogger",
+		Kind: "class", FilePath: "internal/logger.py", IsExported: true,
+	})
+
+	parseResults := []model.ParseResult{
+		{
+			FilePath: "internal/logger.py",
+			Symbols:  []model.Symbol{{ID: "sym-logger", Name: "InternalLogger", IsExported: true}},
+		},
+		{
+			FilePath: "internal/__init__.py",
+			Imports: []model.RawImport{
+				{ModulePath: ".logger", SymbolName: "InternalLogger", LocalName: "Logger", FilePath: "internal/__init__.py", IsReexport: true},
+			},
+		},
+	}
+
+	indexer := &Indexer{}
+	allFiles := []string{"internal/logger.py", "internal/__init__.py"}
+	indexer.propagateExports(parseResults, symbolTable, allFiles, "", "python")
+
+	targetID, exists := symbolTable.GetReExport("internal.Logger")
+	if !exists {
+		t.Fatal("expected reExportIndex entry for 'internal.Logger'")
+	}
+	if targetID != "sym-logger" {
+		t.Errorf("expected 'sym-logger', got %q", targetID)
+	}
+}
+
+func TestPropagateExports_PythonWildcard(t *testing.T) {
+	symbolTable := resolver.NewSymbolTable()
+	symbolTable.Add(model.Symbol{
+		ID: "sym-format", Name: "format_date", QualifiedName: "utils.date_utils.format_date",
+		Kind: "function", FilePath: "utils/date_utils.py", IsExported: true,
+	})
+
+	parseResults := []model.ParseResult{
+		{
+			FilePath: "utils/date_utils.py",
+			Symbols:  []model.Symbol{{ID: "sym-format", Name: "format_date", IsExported: true}},
+		},
+		{
+			FilePath: "utils/__init__.py",
+			Imports: []model.RawImport{
+				{ModulePath: ".date_utils", FilePath: "utils/__init__.py", IsReexport: true, IsWildcard: true},
+			},
+		},
+	}
+
+	indexer := &Indexer{}
+	allFiles := []string{"utils/date_utils.py", "utils/__init__.py"}
+	indexer.propagateExports(parseResults, symbolTable, allFiles, "", "python")
+
+	targetID, exists := symbolTable.GetReExport("utils.format_date")
+	if !exists {
+		t.Fatal("expected reExportIndex entry for 'utils.format_date'")
+	}
+	if targetID != "sym-format" {
+		t.Errorf("expected 'sym-format', got %q", targetID)
+	}
+}
+
+func TestPropagateExports_JavaSkipped(t *testing.T) {
+	symbolTable := resolver.NewSymbolTable()
+	indexer := &Indexer{}
+	result := indexer.propagateExports(nil, symbolTable, nil, "", "java")
+	if result != nil {
+		t.Error("expected nil for Java project")
 	}
 }

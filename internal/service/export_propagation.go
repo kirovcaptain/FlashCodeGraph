@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
@@ -19,13 +20,16 @@ type ImportPathIndex map[string]string
 // Index files (index.ts/index.js) use their directory name instead of "index".
 // Examples:
 //
-//	"pkg-a/index.ts"       → "pkg-a"
-//	"pkg-a/models/User.ts" → "pkg-a.models.User"
-//	"src/utils/index.tsx"  → "src.utils"
-//	"index.ts"             → "index"
+//	"pkg-a/index.ts"           → "pkg-a"
+//	"pkg-a/models/User.ts"    → "pkg-a.models.User"
+//	"src/utils/index.tsx"      → "src.utils"
+//	"index.ts"                 → "index"
+//	"models/__init__.py"       → "models"
+//	"pkg/models/__init__.py"   → "pkg.models"
+//	"models/user.py"           → "models.user"
 func derivePackage(filePath string) string {
 	base := filePath
-	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
+	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx", ".py"} {
 		base = strings.TrimSuffix(base, ext)
 	}
 	base = strings.ReplaceAll(base, "\\", "/")
@@ -33,6 +37,12 @@ func derivePackage(filePath string) string {
 		base = strings.TrimSuffix(base, "/index")
 		if base == "" {
 			return "index"
+		}
+	}
+	if strings.HasSuffix(base, "/__init__") || base == "__init__" {
+		base = strings.TrimSuffix(base, "/__init__")
+		if base == "" {
+			return "__init__"
 		}
 	}
 	return strings.ReplaceAll(base, "/", ".")
@@ -81,36 +91,109 @@ func stripTypeScriptExtension(filePath string) string {
 }
 
 // resolveTargetFile resolves an import module path to an actual file path.
-// Tries importPathIndex first (for alias paths), then fileIndex (for relative paths).
-func resolveTargetFile(modulePath, fromFile string, fileIndex map[string]string, importPathIndex ImportPathIndex) string {
-	// Try alias index first
+// Dispatches to language-specific resolution based on the language parameter.
+func resolveTargetFile(modulePath, fromFile string, fileIndex map[string]string, importPathIndex ImportPathIndex, language string) string {
+	// Try alias index first (tsconfig paths)
 	if importPathIndex != nil {
 		if resolved, exists := importPathIndex[modulePath]; exists {
 			return resolved
 		}
 	}
 
-	// Resolve relative path
-	if strings.HasPrefix(modulePath, ".") {
-		dir := filepath.Dir(fromFile)
-		resolved := filepath.Join(dir, modulePath)
-		resolved = strings.ReplaceAll(resolved, "\\", "/")
-		// Try with extensions
-		for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
-			if _, exists := fileIndex[resolved+ext]; exists {
-				return resolved + ext
-			}
-		}
-		// Try as directory with index file
-		for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
-			indexPath := resolved + "/index" + ext
-			if _, exists := fileIndex[indexPath]; exists {
-				return indexPath
-			}
+	if !strings.HasPrefix(modulePath, ".") {
+		switch language {
+		case constants.LangPython:
+			return resolvePythonAbsoluteImport(modulePath, fileIndex)
+		default:
+			return resolveByBasename(modulePath, fileIndex)
 		}
 	}
 
-	// Fallback: basename matching (existing logic)
+	switch language {
+	case constants.LangPython:
+		return resolvePythonRelativeImport(modulePath, fromFile, fileIndex)
+	case constants.LangTypeScript, constants.LangJavaScript:
+		return resolveTypeScriptRelativeImport(modulePath, fromFile, fileIndex)
+	default:
+		return ""
+	}
+}
+
+// resolveTypeScriptRelativeImport resolves "./xxx" or "../xxx" style TS/JS imports.
+func resolveTypeScriptRelativeImport(modulePath, fromFile string, fileIndex map[string]string) string {
+	dir := filepath.Dir(fromFile)
+	resolved := filepath.Join(dir, modulePath)
+	resolved = strings.ReplaceAll(resolved, "\\", "/")
+	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
+		if _, exists := fileIndex[resolved+ext]; exists {
+			return resolved + ext
+		}
+	}
+	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
+		indexPath := resolved + "/index" + ext
+		if _, exists := fileIndex[indexPath]; exists {
+			return indexPath
+		}
+	}
+	return ""
+}
+
+// resolvePythonRelativeImport resolves ".user" or "..core" style Python relative imports.
+func resolvePythonRelativeImport(modulePath, fromFile string, fileIndex map[string]string) string {
+	// Count leading dots for parent traversal
+	dots := 0
+	for _, ch := range modulePath {
+		if ch == '.' {
+			dots++
+		} else {
+			break
+		}
+	}
+	remainder := modulePath[dots:]
+
+	// Navigate up: first dot = current package dir, each extra dot = one level up
+	dir := filepath.Dir(fromFile)
+	dir = strings.ReplaceAll(dir, "\\", "/")
+	for i := 1; i < dots; i++ {
+		dir = filepath.Dir(dir)
+		dir = strings.ReplaceAll(dir, "\\", "/")
+	}
+
+	// Convert dotted module to path: "models.user" → "models/user"
+	modulePart := strings.ReplaceAll(remainder, ".", "/")
+	resolved := dir + "/" + modulePart
+	if dir == "." {
+		resolved = modulePart
+	}
+	resolved = strings.ReplaceAll(resolved, "\\", "/")
+
+	// Package (__init__.py) takes priority over module (.py)
+	if _, exists := fileIndex[resolved+"/__init__.py"]; exists {
+		return resolved + "/__init__.py"
+	}
+	if _, exists := fileIndex[resolved+".py"]; exists {
+		return resolved + ".py"
+	}
+	return ""
+}
+
+// resolvePythonAbsoluteImport resolves "models" or "pkg.models" style Python absolute imports.
+func resolvePythonAbsoluteImport(modulePath string, fileIndex map[string]string) string {
+	// Convert dots to slashes: "pkg.models" → "pkg/models"
+	modulePart := strings.ReplaceAll(modulePath, ".", "/")
+
+	// Package takes priority: try xxx/__init__.py first
+	if _, exists := fileIndex[modulePart+"/__init__.py"]; exists {
+		return modulePart + "/__init__.py"
+	}
+	if _, exists := fileIndex[modulePart+".py"]; exists {
+		return modulePart + ".py"
+	}
+	return resolveByBasename(modulePath, fileIndex)
+}
+
+// resolveByBasename attempts to match by the last segment of the module path.
+func resolveByBasename(modulePath string, fileIndex map[string]string) string {
 	lastSeg := modulePath
 	if idx := strings.LastIndex(modulePath, "/"); idx >= 0 {
 		lastSeg = modulePath[idx+1:]
@@ -153,7 +236,17 @@ func propagateWaiters(resolvedReExportName, symbolID string, symbolTable *resolv
 
 // propagateExports builds the reExportIndex and ImportFileMap by traversing all parse results.
 // Uses a single pass with dependency-triggered cascading for multi-layer barrel chains.
-func (indexer *Indexer) propagateExports(parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, allFiles []string, importPathIndex ImportPathIndex) ImportFileMap {
+func (indexer *Indexer) propagateExports(parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, allFiles []string, repoPath string, language string) ImportFileMap {
+	var importPathIndex ImportPathIndex
+	switch language {
+	case constants.LangTypeScript, constants.LangJavaScript:
+		importPathIndex = buildImportPathIndex(config.ParseTsconfig(repoPath), allFiles)
+	case constants.LangPython:
+		// no alias index needed
+	default:
+		return nil
+	}
+
 	// Build file index for relative path resolution
 	fileIndex := make(map[string]string) // filePath → filePath (for existence check)
 	for _, filePath := range allFiles {
@@ -168,9 +261,6 @@ func (indexer *Indexer) propagateExports(parseResults []model.ParseResult, symbo
 
 	// Pass 1: Register local exported symbols
 	for _, parseResult := range parseResults {
-		if !isTypeScriptFile(parseResult.FilePath) {
-			continue
-		}
 		barrelPackage := derivePackage(parseResult.FilePath)
 		for _, symbol := range parseResult.Symbols {
 			if symbol.IsExported {
@@ -184,11 +274,8 @@ func (indexer *Indexer) propagateExports(parseResults []model.ParseResult, symbo
 
 	// Pass 2+3: Process named re-exports and wildcards with dependency triggering
 	for _, parseResult := range parseResults {
-		if !isTypeScriptFile(parseResult.FilePath) {
-			continue
-		}
 		for _, importEntry := range parseResult.Imports {
-			targetFile := resolveTargetFile(importEntry.ModulePath, importEntry.FilePath, fileIndex, importPathIndex)
+			targetFile := resolveTargetFile(importEntry.ModulePath, importEntry.FilePath, fileIndex, importPathIndex, language)
 			if targetFile != "" && importEntry.SymbolName != "" {
 				importFileMap[resolver.ImportFileKey{FilePath: importEntry.FilePath, SymbolName: importEntry.SymbolName}] = targetFile
 			}
@@ -244,12 +331,4 @@ func (indexer *Indexer) propagateExports(parseResults []model.ParseResult, symbo
 
 	// Remaining entries in waitingFor are unresolvable (target outside project or broken chain)
 	return importFileMap
-}
-
-// isTypeScriptFile checks if a file is a TypeScript or JavaScript file.
-func isTypeScriptFile(filePath string) bool {
-	return strings.HasSuffix(filePath, ".ts") ||
-		strings.HasSuffix(filePath, ".tsx") ||
-		strings.HasSuffix(filePath, ".js") ||
-		strings.HasSuffix(filePath, ".jsx")
 }
