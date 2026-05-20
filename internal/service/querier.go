@@ -24,17 +24,25 @@ func NewQuerier(graphStore storage.GraphStore) *Querier {
 	return &Querier{graphStore: graphStore}
 }
 
-// QuerySymbol finds symbols by name.
-func (querier *Querier) QuerySymbol(ctx context.Context, name string, opts model.QueryOpts) ([]model.Node, error) {
-	return querier.graphStore.QueryNodesByName(ctx, name, opts)
+// QuerySymbol finds symbols by name with pagination.
+func (querier *Querier) QuerySymbol(ctx context.Context, name string, opts model.QueryOpts) ([]model.Node, int, error) {
+	allNodes, err := querier.graphStore.QueryNodesByName(ctx, name, model.QueryOpts{
+		Kinds:         opts.Kinds,
+		MinConfidence: opts.MinConfidence,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	page, total := paginate(allNodes, opts.Offset, opts.Limit)
+	return page, total, nil
 }
 
 // QueryByAnnotation returns symbols that have a specific annotation.
 // When params is non-empty, only annotations whose params contain the given substring are matched.
-func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string, params string, kind string, limit int) ([]model.Node, error) {
+func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string, params string, kind string, limit, offset int) ([]model.Node, int, error) {
 	annotationNodes, err := querier.graphStore.QueryNodesByName(ctx, annotation, model.QueryOpts{Kinds: []string{constants.KindAnnotation}})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var matchedAnnotationIDs []string
 	for _, annotationNode := range annotationNodes {
@@ -47,55 +55,41 @@ func (querier *Querier) QueryByAnnotation(ctx context.Context, annotation string
 		matchedAnnotationIDs = append(matchedAnnotationIDs, annotationNode.ID)
 	}
 	if len(matchedAnnotationIDs) == 0 {
-		return nil, nil
+		return []model.Node{}, 0, nil
 	}
-	// Find source nodes via HAS_ANNOTATION edges
-	var results []model.Node
-	var firstErr error
-	seen := map[string]bool{}
-	for _, annotationID := range matchedAnnotationIDs {
-		for _, sourceKind := range []string{constants.KindClass, constants.KindInterface, constants.KindFunction} {
-			edges, err := querier.graphStore.QueryEdges(ctx, annotationID, sourceKind, model.RelHasAnnotation, model.Incoming)
-			if err != nil {
-				if firstErr == nil { firstErr = err }
-				continue
-			}
-			for _, edge := range edges {
-				if seen[edge.SourceID] {
-					continue
-				}
-				seen[edge.SourceID] = true
-				node, err := querier.graphStore.QueryNodeByID(ctx, edge.SourceID)
-				if err != nil || node == nil {
-					continue
-				}
-				if kind != "" && node.Kind != kind {
-					continue
-				}
-				results = append(results, *node)
-				if limit > 0 && len(results) >= limit {
-					return results, nil
-				}
+	allNodes, err := querier.resolveAnnotatedNodes(ctx, matchedAnnotationIDs, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	if kind != "" {
+		filtered := allNodes[:0]
+		for _, node := range allNodes {
+			if node.Kind == kind {
+				filtered = append(filtered, node)
 			}
 		}
+		allNodes = filtered
 	}
-	if len(results) == 0 && firstErr != nil {
-		return nil, firstErr
-	}
-	return results, nil
+	page, total := paginate(allNodes, offset, limit)
+	return page, total, nil
 }
 
 // QueryByLayer returns symbols annotated with a specific layer (controller/service/repository/model).
-func (querier *Querier) QueryByLayer(ctx context.Context, layer string, limit int) ([]model.Node, error) {
+func (querier *Querier) QueryByLayer(ctx context.Context, layer string, limit, offset int) ([]model.Node, int, error) {
 	annotations, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindAnnotation, "layer", layer, storage.MatchExact, 0)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	annotationIDs := make([]string, len(annotations))
 	for idx, annotation := range annotations {
 		annotationIDs[idx] = annotation.ID
 	}
-	return querier.resolveAnnotatedNodes(ctx, annotationIDs, limit)
+	allNodes, err := querier.resolveAnnotatedNodes(ctx, annotationIDs, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	page, total := paginate(allNodes, offset, limit)
+	return page, total, nil
 }
 
 // QueryByAnnotationCategory returns symbols annotated with a specific category (security/behavior/etc).
@@ -902,9 +896,14 @@ func (querier *Querier) QueryClassMembers(ctx context.Context, className string,
 	return methods, nil, fields, classNodes[0].Kind, nil
 }
 
-// SearchFTS performs full-text search.
-func (querier *Querier) SearchFTS(ctx context.Context, query string, limit int) ([]storage.SearchResult, error) {
-	return querier.graphStore.SearchFTS(ctx, query, limit)
+// SearchFTS performs full-text search with pagination.
+func (querier *Querier) SearchFTS(ctx context.Context, query string, limit, offset int) ([]storage.SearchResult, int, error) {
+	allResults, err := querier.graphStore.SearchFTS(ctx, query, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	page, total := paginate(allResults, offset, limit)
+	return page, total, nil
 }
 
 // Overview returns project statistics.
@@ -917,7 +916,20 @@ func (querier *Querier) QueryEdges(ctx context.Context, nodeID, nodeKind string,
 	return querier.graphStore.QueryEdges(ctx, nodeID, nodeKind, relKind, direction)
 }
 
-// Report generates a data quality report for the graph.
+// paginate slices a full result set into a single page.
+// offset: number of items to skip; limit: max items to return (0 = no limit).
+func paginate[T any](all []T, offset, limit int) (page []T, total int) {
+	total = len(all)
+	if offset >= total {
+		return []T{}, total
+	}
+	end := total
+	if limit > 0 && offset+limit < total {
+		end = offset + limit
+	}
+	return all[offset:end], total
+}
+
 // propString safely extracts a string property, returning "" for nil/non-string values.
 func propString(props map[string]any, key string) string {
 	v, ok := props[key]
@@ -1590,26 +1602,26 @@ func (querier *Querier) QueryCrossChain(ctx context.Context, functionName string
 }
 
 // QueryUsages returns all references to the given enum constant via USES edges.
-func (querier *Querier) QueryUsages(ctx context.Context, symbolQualifiedName string, limit int) ([]model.UsageResult, error) {
+func (querier *Querier) QueryUsages(ctx context.Context, symbolQualifiedName string, limit, offset int) ([]model.UsageResult, int, error) {
 	// Step 1: Find the Variable node by qualified_name
 	variableNode, err := querier.graphStore.QueryNodeByQualifiedName(ctx, symbolQualifiedName)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if variableNode == nil {
-		return nil, fmt.Errorf("constant not found: %s", symbolQualifiedName)
+		return nil, 0, fmt.Errorf("constant not found: %s", symbolQualifiedName)
 	}
 	if variableNode.Kind != constants.KindVariable {
-		return nil, fmt.Errorf("symbol is not a variable: %s (kind: %s)", symbolQualifiedName, variableNode.Kind)
+		return nil, 0, fmt.Errorf("symbol is not a variable: %s (kind: %s)", symbolQualifiedName, variableNode.Kind)
 	}
 
 	// Step 2: Query incoming USES edges from Function nodes
 	edges, err := querier.graphStore.QueryEdges(ctx, variableNode.ID, constants.KindFunction, model.RelUses, model.Incoming)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if len(edges) == 0 {
-		return []model.UsageResult{}, nil
+		return []model.UsageResult{}, 0, nil
 	}
 
 	// Step 3: Extract source node IDs and query Function nodes
@@ -1622,11 +1634,11 @@ func (querier *Querier) QueryUsages(ctx context.Context, symbolQualifiedName str
 
 	functionNodes, err := querier.graphStore.QueryNodesByIDs(ctx, sourceIDs)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Step 4: Assemble UsageResult with edge properties
-	results := make([]model.UsageResult, 0, len(functionNodes))
+	allResults := make([]model.UsageResult, 0, len(functionNodes))
 	for _, functionNode := range functionNodes {
 		edge, ok := edgeMap[functionNode.ID]
 		if !ok {
@@ -1634,17 +1646,14 @@ func (querier *Querier) QueryUsages(ctx context.Context, symbolQualifiedName str
 		}
 		refLine, _ := model.ToInt(edge.Properties["line"])
 		refKind, _ := edge.Properties["ref_kind"].(string)
-		results = append(results, model.UsageResult{
+		allResults = append(allResults, model.UsageResult{
 			Function: functionNode,
 			RefLine:  refLine,
 			RefKind:  refKind,
 		})
 	}
 
-	// Step 5: Apply limit if specified
-	if limit > 0 && len(results) > limit {
-		results = results[:limit]
-	}
-
-	return results, nil
+	// Step 5: In-memory pagination
+	page, total := paginate(allResults, offset, limit)
+	return page, total, nil
 }

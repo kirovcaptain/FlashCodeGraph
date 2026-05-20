@@ -63,6 +63,7 @@ type QueryOpts struct {
 	Kinds         []string `json:"kinds,omitempty"`
 	MinConfidence float64  `json:"min_confidence,omitempty"`
 	Limit         int      `json:"limit,omitempty"`
+	Offset        int      `json:"offset,omitempty"`
 }
 
 // Subgraph is a partial graph result.

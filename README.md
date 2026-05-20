@@ -304,22 +304,25 @@ The MCP Server exposes the following tools for AI agent integration:
 | `list_projects` | List all indexed projects with paths, branches, and storage backends |
 | `index_repository` | Index a code repository to build the knowledge graph |
 | `check_index_status` | Check if index is up-to-date, returns added/modified/deleted file counts |
-| `query_symbol` | Find symbol by exact name, returns file path, kind, and properties |
+| `query_symbol` | Find symbol by exact name, returns file path, kind, and properties ⁽¹⁾ |
+| `search` | Fuzzy/partial name search across all symbols ⁽¹⁾ |
 | `query_call_chain` | Traverse call chain — callees or callers with depth/confidence/mode control. Returns `truncated_nodes` when depth truncates traversal |
 | `query_cross_chain` | Query cross-service call relationships — aggregated by target project, protocol, and routes |
 | `query_class_members` | List all fields and methods of a class or interface |
 | `query_dependencies` | Query IMPORTS/EXTENDS/IMPLEMENTS/CALLS edges for a symbol, returns edges with node info |
-| `query_by_annotation` | Find symbols by annotation name and optional params filter |
-| `query_by_layer` | Find symbols by architectural layer (controller/service/repository/model) |
+| `query_by_annotation` | Find symbols by annotation name and optional params filter ⁽¹⁾ |
+| `query_by_layer` | Find symbols by architectural layer (controller/service/repository/model) ⁽¹⁾ |
 | `query_routes` | List all HTTP routes in a project |
 | `query_route_chain` | Trace HTTP route from controller through service to repository |
-| `query_entry_points` | List detected entry points (HTTP endpoints, CLI commands, dead code) |
+| `query_entry_points` | List detected entry points (HTTP endpoints, CLI commands, dead code) ⁽¹⁾ |
 | `query_call_forest` | Query call forest from entry points with tree structure |
+| `query_usages` | Find all references to a static constant (enum, interface constant, class final field) ⁽¹⁾ |
 | `impact_analysis` | Find all direct and indirect callers affected by a symbol change |
-| `search` | Fuzzy/partial name search across all symbols |
 | `locate_function` | Map file+line locations to enclosing function/class (for grep → symbol resolution) |
 | `analyze_repository` | Run entry point detection and process tracing |
 | `overview` | Get project statistics (node/edge/file counts) |
+
+⁽¹⁾ Supports pagination — pass `offset` to skip results, response includes `total` count for paging.
 
 MCP resource: `fcg://overview` — project statistics as JSON.
 

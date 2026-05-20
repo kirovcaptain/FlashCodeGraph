@@ -149,6 +149,7 @@ func (srv *Server) registerTools() {
 		mcp.WithDescription("Find a symbol (function, class, interface) by exact name. Use this when you know the precise symbol name. Returns symbol details including file path and kind."),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Symbol name to search")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
+		mcp.WithNumber("offset", mcp.Description("Skip first N results for pagination (default 0)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected from current branch if omitted)")),
 	), srv.handleQuerySymbol)
@@ -185,6 +186,7 @@ func (srv *Server) registerTools() {
 		mcp.WithDescription("Search symbols by partial or fuzzy name match. Use this when you don't know the exact name — e.g. 'find anything related to order processing'."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Symbol name or keyword to search for (e.g. 'OrderService', 'createUser'). NOT a file path.")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
+		mcp.WithNumber("offset", mcp.Description("Skip first N results for pagination (default 0)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project root directory")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected from current branch if omitted)")),
 	), srv.handleSearch)
@@ -218,6 +220,7 @@ func (srv *Server) registerTools() {
 		mcp.WithString("params", mcp.Description("Filter by annotation params (substring match, e.g. 'completeSettlementJob')")),
 		mcp.WithString("kind", mcp.Description("Filter by symbol kind (Function, Class, Interface)")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
+		mcp.WithNumber("offset", mcp.Description("Skip first N results for pagination (default 0)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
 	), srv.handleQueryByAnnotation)
@@ -226,6 +229,7 @@ func (srv *Server) registerTools() {
 		mcp.WithDescription("Find symbols by architectural layer (controller/service/repository/model)"),
 		mcp.WithString("layer", mcp.Required(), mcp.Description("Layer name: controller, service, repository, model, component, config")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
+		mcp.WithNumber("offset", mcp.Description("Skip first N results for pagination (default 0)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
 	), srv.handleQueryByLayer)
@@ -258,6 +262,7 @@ func (srv *Server) registerTools() {
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the repository")),
 		mcp.WithString("type", mcp.Description("Filter by type: http_endpoint, cli_command, suspected_dead, unknown_entry")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 50)")),
+		mcp.WithNumber("offset", mcp.Description("Skip first N results for pagination (default 0)")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected if omitted)")),
 	), srv.handleQueryEntryPoints)
 
@@ -283,6 +288,7 @@ func (srv *Server) registerTools() {
 		mcp.WithDescription("Query all references to a static constant (enum constant, interface constant, or class static final field). Returns the functions that reference it, along with line numbers and reference kinds (field_access or switch_case)."),
 		mcp.WithString("symbol", mcp.Required(), mcp.Description("Qualified name of the constant (e.g. 'com.example.Status.ACTIVE')")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: no limit)")),
+		mcp.WithNumber("offset", mcp.Description("Skip first N results for pagination (default 0)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected if omitted)")),
 	), srv.handleQueryUsages)
@@ -386,6 +392,7 @@ func (srv *Server) handleQuerySymbol(ctx context.Context, request mcp.CallToolRe
 		return mcp.NewToolResultError("name is required"), nil
 	}
 	limit := intArg(request, "limit", 20)
+	offset := intArg(request, "offset", 0)
 
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
@@ -394,12 +401,12 @@ func (srv *Server) handleQuerySymbol(ctx context.Context, request mcp.CallToolRe
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	defer store.Close()
-	nodes, err := querier.QuerySymbol(ctx, name, model.QueryOpts{Limit: limit})
+	nodes, total, err := querier.QuerySymbol(ctx, name, model.QueryOpts{Limit: limit, Offset: offset})
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	resp := listResponse[model.Node]{Branch: resolvedBranch, Data: nodes}
+	resp := pagedResponse[model.Node]{Branch: resolvedBranch, Total: total, Offset: offset, Limit: limit, Data: nodes}
 	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
@@ -625,6 +632,7 @@ func (srv *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest
 		return mcp.NewToolResultError("query is required"), nil
 	}
 	limit := intArg(request, "limit", 20)
+	offset := intArg(request, "offset", 0)
 
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
@@ -633,12 +641,12 @@ func (srv *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	defer store.Close()
-	results, err := querier.SearchFTS(ctx, queryText, limit)
+	results, total, err := querier.SearchFTS(ctx, queryText, limit, offset)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	resp := listResponse[storage.SearchResult]{Branch: resolvedBranch, Data: results}
+	resp := pagedResponse[storage.SearchResult]{Branch: resolvedBranch, Total: total, Offset: offset, Limit: limit, Data: results}
 	resultJSON, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(resultJSON)), nil
 }
@@ -742,7 +750,7 @@ func (srv *Server) handleQueryDependencies(ctx context.Context, request mcp.Call
 	case model.RelImports, model.RelExtends, model.RelImplements:
 		queryKinds = []string{constants.KindClass, constants.KindInterface}
 	}
-	nodes, err := querier.QuerySymbol(ctx, symbolName, model.QueryOpts{Kinds: queryKinds, Limit: 10})
+	nodes, _, err := querier.QuerySymbol(ctx, symbolName, model.QueryOpts{Kinds: queryKinds, Limit: 10})
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -803,6 +811,7 @@ func (srv *Server) handleQueryByAnnotation(ctx context.Context, request mcp.Call
 	params, _ := request.GetArguments()["params"].(string)
 	kind, _ := request.GetArguments()["kind"].(string)
 	limit := intArg(request, "limit", 50)
+	offset := intArg(request, "offset", 0)
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
 
@@ -811,11 +820,11 @@ func (srv *Server) handleQueryByAnnotation(ctx context.Context, request mcp.Call
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	defer store.Close()
-	nodes, err := querier.QueryByAnnotation(ctx, annotation, params, kind, limit)
+	nodes, total, err := querier.QueryByAnnotation(ctx, annotation, params, kind, limit, offset)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	resp := listResponse[model.Node]{Branch: resolvedBranch, Data: nodes}
+	resp := pagedResponse[model.Node]{Branch: resolvedBranch, Total: total, Offset: offset, Limit: limit, Data: nodes}
 	data, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(data)), nil
 }
@@ -826,6 +835,7 @@ func (srv *Server) handleQueryByLayer(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultError("layer is required"), nil
 	}
 	limit := intArg(request, "limit", 50)
+	offset := intArg(request, "offset", 0)
 	path, _ := request.GetArguments()["path"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
 
@@ -834,11 +844,11 @@ func (srv *Server) handleQueryByLayer(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	defer store.Close()
-	nodes, err := querier.QueryByLayer(ctx, layer, limit)
+	nodes, total, err := querier.QueryByLayer(ctx, layer, limit, offset)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	resp := listResponse[model.Node]{Branch: resolvedBranch, Data: nodes}
+	resp := pagedResponse[model.Node]{Branch: resolvedBranch, Total: total, Offset: offset, Limit: limit, Data: nodes}
 	data, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(data)), nil
 }
@@ -1037,6 +1047,7 @@ func (srv *Server) handleQueryEntryPoints(ctx context.Context, request mcp.CallT
 	}
 	entryType, _ := request.GetArguments()["type"].(string)
 	limit := intArg(request, "limit", 50)
+	offset := intArg(request, "offset", 0)
 	branchName, _ := request.GetArguments()["branch"].(string)
 
 	_, store, resolvedBranch, err := srv.createQuerier(path, branchName)
@@ -1047,31 +1058,43 @@ func (srv *Server) handleQueryEntryPoints(ctx context.Context, request mcp.CallT
 
 	var nodes []model.Node
 	if entryType != "" {
-		nodes, err = store.QueryNodesByProperty(ctx, constants.KindFunction, "entry_type", entryType, storage.MatchExact, limit)
+		nodes, err = store.QueryNodesByProperty(ctx, constants.KindFunction, "entry_type", entryType, storage.MatchExact, 0)
 	} else {
-		nodes, err = store.QueryNodesByProperty(ctx, constants.KindFunction, "entry_type", "", storage.MatchNotEmpty, limit)
+		nodes, err = store.QueryNodesByProperty(ctx, constants.KindFunction, "entry_type", "", storage.MatchNotEmpty, 0)
 	}
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	results := make([]entryPointEntry, 0, len(nodes))
-	for _, n := range nodes {
-		name, _ := n.Properties["name"].(string)
-		qualifiedName, _ := n.Properties["qualified_name"].(string)
-		filePath, _ := n.Properties["file_path"].(string)
-		et, _ := n.Properties["entry_type"].(string)
-		results = append(results, entryPointEntry{
-			ID:            n.ID,
+	allResults := make([]entryPointEntry, 0, len(nodes))
+	for _, node := range nodes {
+		name, _ := node.Properties["name"].(string)
+		qualifiedName, _ := node.Properties["qualified_name"].(string)
+		filePath, _ := node.Properties["file_path"].(string)
+		entryTypeValue, _ := node.Properties["entry_type"].(string)
+		allResults = append(allResults, entryPointEntry{
+			ID:            node.ID,
 			Name:          name,
 			QualifiedName: qualifiedName,
 			FilePath:      filePath,
-			EntryType:     et,
-			Score:         n.Properties["entry_point_score"],
+			EntryType:     entryTypeValue,
+			Score:         node.Properties["entry_point_score"],
 		})
 	}
 
-	resp := listResponse[entryPointEntry]{Branch: resolvedBranch, Data: results}
+	total := len(allResults)
+	pageResults := allResults
+	if offset < total {
+		end := total
+		if limit > 0 && offset+limit < total {
+			end = offset + limit
+		}
+		pageResults = allResults[offset:end]
+	} else {
+		pageResults = []entryPointEntry{}
+	}
+
+	resp := pagedResponse[entryPointEntry]{Branch: resolvedBranch, Total: total, Offset: offset, Limit: limit, Data: pageResults}
 	data, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(data)), nil
 }
@@ -1236,6 +1259,7 @@ func (srv *Server) handleQueryUsages(ctx context.Context, request mcp.CallToolRe
 	branchName, _ := request.GetArguments()["branch"].(string)
 	limitFloat, _ := request.GetArguments()["limit"].(float64)
 	limit := int(limitFloat)
+	offset := intArg(request, "offset", 0)
 
 	querier, store, resolvedBranch, err := srv.createQuerier(repoPath, branchName)
 	if err != nil {
@@ -1243,12 +1267,12 @@ func (srv *Server) handleQueryUsages(ctx context.Context, request mcp.CallToolRe
 	}
 	defer store.Close()
 
-	results, err := querier.QueryUsages(ctx, symbolQualifiedName, limit)
+	results, total, err := querier.QueryUsages(ctx, symbolQualifiedName, limit, offset)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	resp := listResponse[model.UsageResult]{Branch: resolvedBranch, Data: results}
+	resp := pagedResponse[model.UsageResult]{Branch: resolvedBranch, Total: total, Offset: offset, Limit: limit, Data: results}
 	out, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(out)), nil
 }

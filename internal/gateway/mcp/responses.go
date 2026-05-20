@@ -12,6 +12,15 @@ type listResponse[T any] struct {
 	Data   []T    `json:"data"`
 }
 
+// pagedResponse wraps paginated list results with total count metadata.
+type pagedResponse[T any] struct {
+	Branch string `json:"branch,omitempty"`
+	Total  int    `json:"total"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+	Data   []T    `json:"data"`
+}
+
 // --- Index / Status ---
 
 type indexRepositoryResponse struct {

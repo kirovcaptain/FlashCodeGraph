@@ -240,7 +240,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 
 	// Annotation-based queries
 	if queryAnnotation != "" {
-		nodes, err := querier.QueryByAnnotation(ctx, queryAnnotation, queryParams, queryKinds, queryLimit)
+		nodes, _, err := querier.QueryByAnnotation(ctx, queryAnnotation, queryParams, queryKinds, queryLimit, 0)
 		if err != nil {
 			return err
 		}
@@ -248,7 +248,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	if queryLayer != "" {
-		nodes, err := querier.QueryByLayer(ctx, queryLayer, queryLimit)
+		nodes, _, err := querier.QueryByLayer(ctx, queryLayer, queryLimit, 0)
 		if err != nil {
 			return err
 		}
@@ -316,7 +316,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		opts.Kinds = strings.Split(queryKinds, ",")
 	}
 
-	nodes, err := querier.QuerySymbol(ctx, args[0], opts)
+	nodes, _, err := querier.QuerySymbol(ctx, args[0], opts)
 	if err != nil {
 		return err
 	}
@@ -629,7 +629,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	results, err := querier.SearchFTS(context.Background(), args[0], queryLimit)
+	results, _, err := querier.SearchFTS(context.Background(), args[0], queryLimit, 0)
 	if err != nil {
 		return err
 	}
@@ -658,7 +658,7 @@ func runUsages(cmd *cobra.Command, args []string) error {
 	defer store.Close()
 
 	symbolQualifiedName := args[0]
-	results, err := querier.QueryUsages(context.Background(), symbolQualifiedName, usagesLimit)
+	results, _, err := querier.QueryUsages(context.Background(), symbolQualifiedName, usagesLimit, 0)
 	if err != nil {
 		return err
 	}

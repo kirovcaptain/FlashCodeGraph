@@ -36,7 +36,7 @@ func NewUserService() *UserService { return &UserService{} }
 	querier := NewQuerier(store)
 
 	// Query by exact name
-	nodes, err := querier.QuerySymbol(ctx, "FindById", model.QueryOpts{})
+	nodes, _, err := querier.QuerySymbol(ctx, "FindById", model.QueryOpts{})
 	if err != nil {
 		t.Fatal("query:", err)
 	}
@@ -48,7 +48,7 @@ func NewUserService() *UserService { return &UserService{} }
 	}
 
 	// Query non-existent returns empty, not error
-	nodes, err = querier.QuerySymbol(ctx, "NonExistent", model.QueryOpts{})
+	nodes, _, err = querier.QuerySymbol(ctx, "NonExistent", model.QueryOpts{})
 	if err != nil {
 		t.Fatal("query:", err)
 	}
@@ -160,7 +160,7 @@ func DeleteUser() {}
 	querier := NewQuerier(store)
 
 	// "Find" should match FindUserById and FindOrderById, not DeleteUser
-	results, err := querier.SearchFTS(ctx, "Find", 10)
+	results, _, err := querier.SearchFTS(ctx, "Find", 10, 0)
 	if err != nil {
 		t.Fatal("search:", err)
 	}
@@ -219,7 +219,7 @@ func helper() {}
 	querier := NewQuerier(store)
 
 	// Query outgoing CALLS from main
-	nodes, _ := querier.QuerySymbol(ctx, "main", model.QueryOpts{Kinds: []string{"Function"}, Limit: 1})
+	nodes, _, _ := querier.QuerySymbol(ctx, "main", model.QueryOpts{Kinds: []string{"Function"}, Limit: 1})
 	if len(nodes) == 0 {
 		t.Fatal("main not found")
 	}
@@ -404,7 +404,7 @@ func TestQuerier_QueryByAnnotation(t *testing.T) {
 	ctx := context.Background()
 
 	// Find @Service annotated classes
-	nodes, err := querier.QueryByAnnotation(ctx, "Service", "", "", 50)
+	nodes, _, err := querier.QueryByAnnotation(ctx, "Service", "", "", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestQuerier_QueryByAnnotation(t *testing.T) {
 	}
 
 	// Find @RestController
-	nodes, err = querier.QueryByAnnotation(ctx, "RestController", "", "", 50)
+	nodes, _, err = querier.QueryByAnnotation(ctx, "RestController", "", "", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,7 @@ func TestQuerier_QueryByAnnotation(t *testing.T) {
 	}
 
 	// Find @Mapper
-	nodes, err = querier.QueryByAnnotation(ctx, "Mapper", "", "", 50)
+	nodes, _, err = querier.QueryByAnnotation(ctx, "Mapper", "", "", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +440,7 @@ func TestQuerier_QueryByAnnotation(t *testing.T) {
 	}
 
 	// Non-existent annotation returns empty
-	nodes, err = querier.QueryByAnnotation(ctx, "NonExistent", "", "", 50)
+	nodes, _, err = querier.QueryByAnnotation(ctx, "NonExistent", "", "", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func TestQuerier_QueryByLayer(t *testing.T) {
 	ctx := context.Background()
 
 	// Controller layer
-	nodes, err := querier.QueryByLayer(ctx, "controller", 50)
+	nodes, _, err := querier.QueryByLayer(ctx, "controller", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,7 @@ func TestQuerier_QueryByLayer(t *testing.T) {
 	}
 
 	// Service layer
-	nodes, err = querier.QueryByLayer(ctx, "service", 50)
+	nodes, _, err = querier.QueryByLayer(ctx, "service", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +481,7 @@ func TestQuerier_QueryByLayer(t *testing.T) {
 	}
 
 	// Repository layer
-	nodes, err = querier.QueryByLayer(ctx, "repository", 50)
+	nodes, _, err = querier.QueryByLayer(ctx, "repository", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +490,7 @@ func TestQuerier_QueryByLayer(t *testing.T) {
 	}
 
 	// Model layer
-	nodes, err = querier.QueryByLayer(ctx, "model", 50)
+	nodes, _, err = querier.QueryByLayer(ctx, "model", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -499,7 +499,7 @@ func TestQuerier_QueryByLayer(t *testing.T) {
 	}
 
 	// Non-existent layer
-	nodes, err = querier.QueryByLayer(ctx, "nonexistent", 50)
+	nodes, _, err = querier.QueryByLayer(ctx, "nonexistent", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +616,7 @@ func TestQuerier_QueryByAnnotation_WithKindFilter(t *testing.T) {
 	ctx := context.Background()
 
 	// @Transactional is on a function — filter by Class should return empty
-	nodes, err := querier.QueryByAnnotation(ctx, "Transactional", "", "Class", 50)
+	nodes, _, err := querier.QueryByAnnotation(ctx, "Transactional", "", "Class", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -625,7 +625,7 @@ func TestQuerier_QueryByAnnotation_WithKindFilter(t *testing.T) {
 	}
 
 	// @Transactional on Function should return results
-	nodes, err = querier.QueryByAnnotation(ctx, "Transactional", "", "Function", 50)
+	nodes, _, err = querier.QueryByAnnotation(ctx, "Transactional", "", "Function", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

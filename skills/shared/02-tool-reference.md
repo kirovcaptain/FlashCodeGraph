@@ -16,6 +16,7 @@
 | Trace API request chain | `query_route_chain` | manual read through layers |
 | Trace cross-service calls | `query_cross_chain` | manual grep + read across repos |
 | View full call trees from entries | `query_call_forest` | manual trace |
+| Find constant references | `query_usages` | grep for constant name |
 
 ## Decision Rules
 
@@ -31,6 +32,18 @@
 | HTTP route full chain | `query_route_chain` | grep for route path |
 | Cross-service dependencies | `query_cross_chain` | grep across repos |
 | All HTTP endpoints | `query_entry_points(type="http_endpoint")` | grep for @GetMapping etc. |
+| Constant/enum references | `query_usages` | grep for constant name |
+
+## Pagination
+
+These tools return paginated responses with `total`, `offset`, `limit`, and `data`:
+
+`query_symbol`, `search`, `query_by_annotation`, `query_by_layer`, `query_entry_points`, `query_usages`
+
+- Default `offset` is 0. Pass `offset` to skip results for the next page.
+- The `total` field shows the full result count before pagination — use it to detect when more results exist.
+- When `total` > `offset` + `limit`, there are more pages. Fetch the next page with `offset` = current `offset` + `limit`.
+- Always check `total` before concluding "only N results exist" — the default `limit` may truncate results.
 
 ## Mode Parameter
 
