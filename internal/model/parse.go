@@ -23,6 +23,9 @@ type RawImport struct {
 	Alias      string `json:"alias,omitempty"`
 	FilePath   string `json:"file_path"`
 	Line       int    `json:"line"`
+	IsReexport bool   `json:"is_reexport,omitempty"` // true for "export { X } from '...'" statements
+	LocalName  string `json:"local_name,omitempty"`  // exported name (may differ from SymbolName when renamed)
+	IsWildcard bool   `json:"is_wildcard,omitempty"` // true for "export * from '...'" statements
 }
 
 // RawHeritage represents an inheritance/implementation relationship from AST.

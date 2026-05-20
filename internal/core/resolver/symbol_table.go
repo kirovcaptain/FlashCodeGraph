@@ -19,6 +19,9 @@ type SymbolTable struct {
 	fieldsByOwner   map[string][]model.FieldInfo // classQN → fields
 	methodsMutex    sync.RWMutex
 	fieldsMutex     sync.RWMutex
+	// reExportIndex maps a re-export qualified name to the target symbol ID.
+	// Written during propagateExports (serial), read-only during ResolveCalls.
+	reExportIndex   map[string]string
 }
 
 type shard struct {
@@ -34,6 +37,7 @@ func NewSymbolTable() *SymbolTable {
 	table := &SymbolTable{
 		methodsByClass: make(map[string][]model.Symbol),
 		fieldsByOwner:  make(map[string][]model.FieldInfo),
+		reExportIndex:  make(map[string]string),
 	}
 	for i := range table.shards {
 		table.shards[i] = shard{
@@ -208,4 +212,52 @@ func (table *SymbolTable) FindFieldsByOwner(ownerQualifiedName string) []model.F
 	table.fieldsMutex.RLock()
 	defer table.fieldsMutex.RUnlock()
 	return table.fieldsByOwner[ownerQualifiedName]
+}
+
+// AddReExport registers a re-export qualified name pointing to a target symbol ID.
+// Called during propagateExports (serial phase); no lock needed.
+func (table *SymbolTable) AddReExport(reExportQualifiedName, targetSymbolID string) {
+	table.reExportIndex[reExportQualifiedName] = targetSymbolID
+}
+
+// HasReExport checks if a re-export qualified name is already registered.
+func (table *SymbolTable) HasReExport(reExportQualifiedName string) bool {
+	_, exists := table.reExportIndex[reExportQualifiedName]
+	return exists
+}
+
+// GetReExport returns the target symbol ID for a re-export qualified name.
+func (table *SymbolTable) GetReExport(reExportQualifiedName string) (string, bool) {
+	targetID, exists := table.reExportIndex[reExportQualifiedName]
+	return targetID, exists
+}
+
+// FindByQualifiedNameWithReExport extends FindByQualifiedName to also check reExportIndex.
+// If direct lookup fails, checks if the qualified name is a re-export alias and returns the target symbol.
+func (table *SymbolTable) FindByQualifiedNameWithReExport(qualifiedName string) []model.Symbol {
+	results := table.FindByQualifiedName(qualifiedName)
+	if len(results) > 0 {
+		return results
+	}
+	targetID, exists := table.reExportIndex[qualifiedName]
+	if !exists {
+		return nil
+	}
+	symbol := table.FindByID(targetID)
+	if symbol == nil {
+		return nil
+	}
+	return []model.Symbol{*symbol}
+}
+
+// FindExportedByFile returns all exported symbols defined in the given file.
+func (table *SymbolTable) FindExportedByFile(filePath string) []model.Symbol {
+	allInFile := table.FindByFile(filePath)
+	var exported []model.Symbol
+	for _, symbol := range allInFile {
+		if symbol.IsExported {
+			exported = append(exported, symbol)
+		}
+	}
+	return exported
 }

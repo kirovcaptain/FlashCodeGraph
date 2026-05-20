@@ -102,18 +102,115 @@ func extractImport(node *tree_sitter.Node, content []byte, filePath string, resu
 
 // extractTSExport unwraps export statements.
 func extractExport(node *tree_sitter.Node, content []byte, file scanner.ScannedFile, result *model.ParseResult) {
+	// Check if this is a re-export: export { X } from '...' or export * from '...'
+	sourceNode := node.ChildByFieldName("source")
+	if sourceNode != nil {
+		extractReexport(node, sourceNode, content, file, result)
+		return
+	}
+
+	// Check if this is an export default
+	isDefaultExport := false
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if !child.IsNamed() && child.Utf8Text(content) == "default" {
+			isDefaultExport = true
+			break
+		}
+	}
+
+	// Process exported declarations (existing logic)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
 		case "class_declaration", "abstract_class_declaration":
+			classSymbolIndex := len(result.Symbols)
 			extractClass(child, content, file, true, result)
+			if isDefaultExport && classSymbolIndex < len(result.Symbols) {
+				result.Symbols[classSymbolIndex].IsDefaultExport = true
+			}
 		case "interface_declaration":
 			extractInterface(child, content, file, true, result)
 		case "function_declaration":
+			funcSymbolIndex := len(result.Symbols)
 			extractFunction(child, content, file.RelPath, "", true, result)
+			if isDefaultExport && funcSymbolIndex < len(result.Symbols) {
+				result.Symbols[funcSymbolIndex].IsDefaultExport = true
+			}
 		case "lexical_declaration", "variable_declaration":
 			extractArrowFunctions(child, content, file.RelPath, result)
 		}
+	}
+}
+
+// extractReexport handles "export { X } from '...'" and "export * from '...'" statements.
+func extractReexport(node, sourceNode *tree_sitter.Node, content []byte, file scanner.ScannedFile, result *model.ParseResult) {
+	modulePath := extractStringContent(sourceNode, content)
+	if modulePath == "" {
+		return
+	}
+
+	// Look for export_clause (named re-export: export { X } from / export { X as Y } from)
+	exportClause := astutil.FindChildByKind(node, "export_clause")
+	if exportClause != nil {
+		for i := uint(0); i < exportClause.ChildCount(); i++ {
+			specifier := exportClause.Child(i)
+			if specifier.Kind() != "export_specifier" {
+				continue
+			}
+			nameNode := specifier.ChildByFieldName("name")
+			if nameNode == nil {
+				continue
+			}
+			importedName := nameNode.Utf8Text(content)
+			localName := importedName
+			aliasNode := specifier.ChildByFieldName("alias")
+			if aliasNode != nil {
+				localName = aliasNode.Utf8Text(content)
+			}
+			result.Imports = append(result.Imports, model.RawImport{
+				ModulePath: modulePath,
+				SymbolName: importedName,
+				LocalName:  localName,
+				FilePath:   file.RelPath,
+				Line:       int(node.StartPosition().Row) + 1,
+				IsReexport: true,
+			})
+		}
+		return
+	}
+
+	// No export_clause → wildcard: export * from '...'
+	result.Imports = append(result.Imports, model.RawImport{
+		ModulePath: modulePath,
+		FilePath:   file.RelPath,
+		Line:       int(node.StartPosition().Row) + 1,
+		IsReexport: true,
+		IsWildcard: true,
+	})
+}
+
+// extractStringContent extracts the text content from a string node (strips quotes).
+func extractStringContent(stringNode *tree_sitter.Node, content []byte) string {
+	for i := uint(0); i < stringNode.ChildCount(); i++ {
+		child := stringNode.Child(i)
+		if child.Kind() == "string_fragment" {
+			return child.Utf8Text(content)
+		}
+	}
+	// Fallback: strip surrounding quotes
+	text := stringNode.Utf8Text(content)
+	text = strings.TrimPrefix(text, "'")
+	text = strings.TrimPrefix(text, "\"")
+	text = strings.TrimSuffix(text, "'")
+	text = strings.TrimSuffix(text, "\"")
+	return text
+}
+
+// markLastSymbolAsDefaultExport marks the most recently added symbol as a default export.
+func markLastSymbolAsDefaultExport(result *model.ParseResult) {
+	if len(result.Symbols) > 0 {
+		result.Symbols[len(result.Symbols)-1].IsDefaultExport = true
 	}
 }
 

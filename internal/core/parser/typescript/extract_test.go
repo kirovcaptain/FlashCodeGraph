@@ -280,3 +280,162 @@ func TestExtract_TSAccessor(t *testing.T) {
 	}
 	t.Log("✅ TypeScript get/set accessor detection")
 }
+
+func TestExtract_NamedReexport(t *testing.T) {
+	code := []byte(`export { User } from './models/User';`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "index.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/index.ts", RelPath: "index.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	if len(result.Imports) != 1 {
+		t.Fatalf("expected 1 import, got %d", len(result.Imports))
+	}
+	imp := result.Imports[0]
+	if !imp.IsReexport {
+		t.Error("expected IsReexport=true")
+	}
+	if imp.SymbolName != "User" {
+		t.Errorf("expected SymbolName='User', got %q", imp.SymbolName)
+	}
+	if imp.LocalName != "User" {
+		t.Errorf("expected LocalName='User', got %q", imp.LocalName)
+	}
+	if imp.ModulePath != "./models/User" {
+		t.Errorf("expected ModulePath='./models/User', got %q", imp.ModulePath)
+	}
+}
+
+func TestExtract_RenameReexport(t *testing.T) {
+	code := []byte(`export { InternalLogger as Logger } from './internal/logger';`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "api.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/api.ts", RelPath: "api.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	if len(result.Imports) != 1 {
+		t.Fatalf("expected 1 import, got %d", len(result.Imports))
+	}
+	imp := result.Imports[0]
+	if imp.SymbolName != "InternalLogger" {
+		t.Errorf("expected SymbolName='InternalLogger', got %q", imp.SymbolName)
+	}
+	if imp.LocalName != "Logger" {
+		t.Errorf("expected LocalName='Logger', got %q", imp.LocalName)
+	}
+	if !imp.IsReexport {
+		t.Error("expected IsReexport=true")
+	}
+}
+
+func TestExtract_DefaultReexport(t *testing.T) {
+	code := []byte(`export { default as MyComponent } from './Component';`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "index.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/index.ts", RelPath: "index.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	if len(result.Imports) != 1 {
+		t.Fatalf("expected 1 import, got %d", len(result.Imports))
+	}
+	imp := result.Imports[0]
+	if imp.SymbolName != "default" {
+		t.Errorf("expected SymbolName='default', got %q", imp.SymbolName)
+	}
+	if imp.LocalName != "MyComponent" {
+		t.Errorf("expected LocalName='MyComponent', got %q", imp.LocalName)
+	}
+}
+
+func TestExtract_WildcardReexport(t *testing.T) {
+	code := []byte(`export * from './utils';`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "index.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/index.ts", RelPath: "index.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	if len(result.Imports) != 1 {
+		t.Fatalf("expected 1 import, got %d", len(result.Imports))
+	}
+	imp := result.Imports[0]
+	if !imp.IsReexport {
+		t.Error("expected IsReexport=true")
+	}
+	if !imp.IsWildcard {
+		t.Error("expected IsWildcard=true")
+	}
+	if imp.ModulePath != "./utils" {
+		t.Errorf("expected ModulePath='./utils', got %q", imp.ModulePath)
+	}
+}
+
+func TestExtract_MultipleSpecifiers(t *testing.T) {
+	code := []byte(`export { A, B as C } from './module';`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "index.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/index.ts", RelPath: "index.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	if len(result.Imports) != 2 {
+		t.Fatalf("expected 2 imports, got %d", len(result.Imports))
+	}
+	if result.Imports[0].SymbolName != "A" || result.Imports[0].LocalName != "A" {
+		t.Errorf("first specifier: expected A/A, got %s/%s", result.Imports[0].SymbolName, result.Imports[0].LocalName)
+	}
+	if result.Imports[1].SymbolName != "B" || result.Imports[1].LocalName != "C" {
+		t.Errorf("second specifier: expected B/C, got %s/%s", result.Imports[1].SymbolName, result.Imports[1].LocalName)
+	}
+}
+
+func TestExtract_ExportDefaultClass(t *testing.T) {
+	code := []byte(`export default class Foo { bar() {} }`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "foo.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/foo.ts", RelPath: "foo.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var fooSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "Foo" {
+			fooSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if fooSymbol == nil {
+		t.Fatal("expected symbol 'Foo'")
+	}
+	if !fooSymbol.IsDefaultExport {
+		t.Error("expected IsDefaultExport=true for Foo")
+	}
+	if !fooSymbol.IsExported {
+		t.Error("expected IsExported=true for Foo")
+	}
+}
+
+func TestExtract_NormalExportNotReexport(t *testing.T) {
+	code := []byte(`export class User { getName(): string { return ""; } }`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "user.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/user.ts", RelPath: "user.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	for _, imp := range result.Imports {
+		if imp.IsReexport {
+			t.Error("normal export should not produce IsReexport imports")
+		}
+	}
+}

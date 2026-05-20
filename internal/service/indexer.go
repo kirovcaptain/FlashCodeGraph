@@ -647,6 +647,11 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 		return nil, err
 	}
 
+	// Phase A2: Export propagation — build reExportIndex and ImportFileMap for TS/JS barrel resolution
+	importPathIndex := buildImportPathIndex(config.ParseTsconfig(scanCtx.absPath), allFilePaths)
+	importFileMap := indexer.propagateExports(parseResults, symbolTable, allFilePaths, importPathIndex)
+	resolverInstance.SetImportFileMap(importFileMap)
+
 	// Phase B + C: Type inference, call/heritage/override resolution, cross-file propagation
 	callRelations, heritageRelations, overrideRelations, usesRelations, callHints, err := indexer.resolveCallsAndHeritage(
 		ctx, resolverInstance, parseResults, symbolTable, allCalls, allHeritage, importRelations)

@@ -32,6 +32,13 @@ type Resolver struct {
 	heritageByChild      map[string][]model.RawHeritage // childName → heritage entries
 	globalBindings       map[string]string             // classQN:fieldName → typeName
 	chainedReceiverCache map[string]string             // expr:callerName:filePath → resolved type
+	importFileMap        map[ImportFileKey]string       // (filePath, symbolName) → resolved target file
+}
+
+// ImportFileKey identifies an import by its source file and symbol name.
+type ImportFileKey struct {
+	FilePath   string
+	SymbolName string
 }
 
 // NewResolver creates a Resolver with the given SymbolTable and optional language-specific helpers.
@@ -44,6 +51,12 @@ func NewResolver(symbolTable *SymbolTable, helpers ...map[string]LanguageHelper)
 		r.langHelpers = helpers[0]
 	}
 	return r
+}
+
+// SetImportFileMap sets the import file map for re-export resolution.
+// Must be called before ResolveCalls.
+func (resolver *Resolver) SetImportFileMap(importFileMap map[ImportFileKey]string) {
+	resolver.importFileMap = importFileMap
 }
 
 // helperFor returns the language-specific helper for a call based on file extension.
@@ -620,23 +633,81 @@ func (resolver *Resolver) resolveImportedCall(call model.RawCall, envs map[strin
 		return nil, false
 	}
 	// Find import matching ReceiverExpr
-	var receiverFQN string
-	for _, imp := range env.Imports {
-		if imp.SymbolName == call.ReceiverExpr {
-			receiverFQN = imp.ModulePath
+	var matchedImport *model.RawImport
+	for i := range env.Imports {
+		if env.Imports[i].SymbolName == call.ReceiverExpr {
+			matchedImport = &env.Imports[i]
 			break
 		}
 	}
-	if receiverFQN == "" {
+	if matchedImport == nil {
 		return nil, false // no import match, caller should continue
 	}
 
+	// Try re-export resolution via importFileMap + reExportIndex
+	if resolver.importFileMap != nil {
+		if relations, resolved := resolver.resolveViaReExportIndex(call, matchedImport, callerID); resolved {
+			return relations, true
+		}
+	}
+
+	// Legacy path: compose FQN from module path
+	return resolver.resolveImportedCallLegacy(call, matchedImport.ModulePath, callerID, langHelper, envs)
+}
+
+// resolveViaReExportIndex attempts to resolve a call using the reExportIndex two-step lookup.
+// Step 1: importFileMap → target file → derivePackage → reExportIndex → real symbol
+// Step 2: find method on the real class
+func (resolver *Resolver) resolveViaReExportIndex(call model.RawCall, matchedImport *model.RawImport, callerID string) ([]model.ResolvedRelation, bool) {
+	key := ImportFileKey{FilePath: call.FilePath, SymbolName: matchedImport.SymbolName}
+	targetFile, exists := resolver.importFileMap[key]
+	if !exists {
+		return nil, false
+	}
+
+	targetPackage := derivePackageForResolver(targetFile)
+	reExportQualifiedName := targetPackage + "." + matchedImport.SymbolName
+	classSymbols := resolver.symbolTable.FindByQualifiedNameWithReExport(reExportQualifiedName)
+	if len(classSymbols) == 0 {
+		return nil, false
+	}
+
+	realClass := classSymbols[0]
+	// Find method on the real class
+	candidates := resolver.symbolTable.FindByName(call.CalledName)
+	matched := filterByOwnerClass(candidates, realClass.Name)
+
+	if len(matched) == 1 {
+		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "import_reexport_exact", 1)}, true
+	}
+	if len(matched) > 1 {
+		argMatched := filterByArgCount(matched, call.ArgCount)
+		if len(argMatched) == 1 {
+			return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "import_reexport_arg", 1)}, true
+		}
+		return makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "import_reexport_multi"), true
+	}
+
+	// Try inheritance chain on the real class
+	if len(resolver.heritage) > 0 {
+		if resolvedMethod := resolver.FindMethodInHierarchy(realClass.QualifiedName, call.CalledName, resolver.heritage); resolvedMethod != nil {
+			relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "import_reexport_hierarchy", 1)
+			relation.Metadata["declared_type"] = realClass.QualifiedName
+			return []model.ResolvedRelation{relation}, true
+		}
+	}
+
+	return nil, false
+}
+
+// resolveImportedCallLegacy is the original import resolution logic using module path FQN composition.
+func (resolver *Resolver) resolveImportedCallLegacy(call model.RawCall, receiverFQN string, callerID string, langHelper LanguageHelper, envs map[string]*model.TypeEnv) ([]model.ResolvedRelation, bool) {
 	// Compose full qualified name and search SymbolTable
-	composedQN := receiverFQN + "." + call.CalledName
+	composedQualifiedName := receiverFQN + "." + call.CalledName
 	candidates := resolver.symbolTable.FindByName(call.CalledName)
 	var matched []model.Symbol
 	for _, candidate := range candidates {
-		if candidate.QualifiedName == composedQN || strings.HasSuffix(candidate.QualifiedName, composedQN) {
+		if candidate.QualifiedName == composedQualifiedName || strings.HasSuffix(candidate.QualifiedName, composedQualifiedName) {
 			matched = append(matched, candidate)
 		}
 	}
@@ -671,18 +742,34 @@ func (resolver *Resolver) resolveImportedCall(call model.RawCall, envs map[strin
 	}
 
 	// Import matched but symbol not found — external dependency, create virtual node
-	externalQN := receiverFQN + "." + call.CalledName
-	externalID := "external:" + externalQN
+	externalQualifiedName := receiverFQN + "." + call.CalledName
+	externalID := "external:" + externalQualifiedName
 	resolver.symbolTable.AddBatch([]model.Symbol{{
 		ID:            externalID,
 		Name:          call.CalledName,
-		QualifiedName: externalQN,
+		QualifiedName: externalQualifiedName,
 		Kind:          constants.KindFunction,
 		FilePath:      constants.FilePathExternal,
 	}})
 	return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, true
 }
 
+// derivePackageForResolver converts a file path to a dot-separated package name.
+// Mirrors the logic in service/export_propagation.go for use in the resolver package.
+func derivePackageForResolver(filePath string) string {
+	base := filePath
+	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
+		base = strings.TrimSuffix(base, ext)
+	}
+	base = strings.ReplaceAll(base, "\\", "/")
+	if strings.HasSuffix(base, "/index") || base == "index" {
+		base = strings.TrimSuffix(base, "/index")
+		if base == "" {
+			return "index"
+		}
+	}
+	return strings.ReplaceAll(base, "/", ".")
+}
 
 // resolveChainedReceiver resolves "obj.method()" or "obj.method().method2()" receiver chains.
 // Returns the type of the final method's return value.
