@@ -2536,3 +2536,54 @@ func TestResolveConstRefs_SwitchMethodCall(t *testing.T) {
 	}
 	t.Log("✅ Pattern B switch method call resolved")
 }
+
+func TestResolveCalls_PythonBarrelReExport(t *testing.T) {
+	// Scenario: app.py does "from models import User", calls User.find_by_id()
+	// models/__init__.py re-exports User from models/user.py
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "sym-user-class", Name: "User", QualifiedName: "models.user.User", Kind: "Class", FilePath: "models/user.py", IsExported: true},
+		{ID: "sym-find-by-id", Name: "find_by_id", QualifiedName: "models.user.User.find_by_id", Kind: "Function", FilePath: "models/user.py", IsExported: true},
+		{ID: "sym-app-main", Name: "app_main", QualifiedName: "app.app_main", Kind: "Function", FilePath: "app.py"},
+	})
+
+	// Register re-export: models.User → sym-user-class
+	table.AddReExport("models.User", "sym-user-class")
+
+	// Set up importFileMap: {app.py, User} → models/__init__.py
+	importFileMap := map[ImportFileKey]string{
+		{FilePath: "app.py", SymbolName: "User"}: "models/__init__.py",
+	}
+
+	resolver := newTestResolver(table)
+	resolver.SetImportFileMap(importFileMap)
+
+	envs := map[string]*model.TypeEnv{
+		"app.py": {
+			Imports: []model.RawImport{
+				{ModulePath: "models", SymbolName: "User", FilePath: "app.py"},
+			},
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:   "find_by_id",
+		CallerName:   "app.app_main",
+		FilePath:     "app.py",
+		ReceiverExpr: "User",
+		ArgCount:     1,
+		Language:     "python",
+	}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	t.Logf("relations count: %d", len(relations))
+	for i, rel := range relations {
+		t.Logf("  [%d] target=%s resolvedBy=%s", i, rel.TargetID, rel.ResolvedBy)
+	}
+	if len(relations) == 0 {
+		t.Fatal("expected at least 1 relation, got 0")
+	}
+	if relations[0].TargetID != "sym-find-by-id" {
+		t.Errorf("expected target 'sym-find-by-id', got %q", relations[0].TargetID)
+	}
+}

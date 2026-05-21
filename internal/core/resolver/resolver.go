@@ -8,6 +8,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/typeinfer"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/util"
 )
 
 // Base confidence scores by match type — defined in constants/confidence.go.
@@ -665,7 +666,7 @@ func (resolver *Resolver) resolveViaReExportIndex(call model.RawCall, matchedImp
 		return nil, false
 	}
 
-	targetPackage := derivePackageForResolver(targetFile)
+	targetPackage := util.DerivePackage(targetFile)
 	reExportQualifiedName := targetPackage + "." + matchedImport.SymbolName
 	classSymbols := resolver.symbolTable.FindByQualifiedNameWithReExport(reExportQualifiedName)
 	if len(classSymbols) == 0 {
@@ -752,23 +753,6 @@ func (resolver *Resolver) resolveImportedCallLegacy(call model.RawCall, receiver
 		FilePath:      constants.FilePathExternal,
 	}})
 	return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, true
-}
-
-// derivePackageForResolver converts a file path to a dot-separated package name.
-// Mirrors the logic in service/export_propagation.go for use in the resolver package.
-func derivePackageForResolver(filePath string) string {
-	base := filePath
-	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
-		base = strings.TrimSuffix(base, ext)
-	}
-	base = strings.ReplaceAll(base, "\\", "/")
-	if strings.HasSuffix(base, "/index") || base == "index" {
-		base = strings.TrimSuffix(base, "/index")
-		if base == "" {
-			return "index"
-		}
-	}
-	return strings.ReplaceAll(base, "/", ".")
 }
 
 // resolveChainedReceiver resolves "obj.method()" or "obj.method().method2()" receiver chains.

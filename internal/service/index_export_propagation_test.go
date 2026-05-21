@@ -5,6 +5,7 @@ import (
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/util"
 )
 
 func TestDerivePackage(t *testing.T) {
@@ -22,9 +23,9 @@ func TestDerivePackage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := derivePackage(tt.input)
+			result := util.DerivePackage(tt.input)
 			if result != tt.expected {
-				t.Errorf("derivePackage(%q) = %q, want %q", tt.input, result, tt.expected)
+				t.Errorf("util.DerivePackage(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -329,9 +330,9 @@ func TestDerivePackage_Python(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := derivePackage(tt.input)
+			result := util.DerivePackage(tt.input)
 			if result != tt.expected {
-				t.Errorf("derivePackage(%q) = %q, want %q", tt.input, result, tt.expected)
+				t.Errorf("util.DerivePackage(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -505,5 +506,63 @@ func TestPropagateExports_JavaSkipped(t *testing.T) {
 	result := indexer.propagateExports(nil, symbolTable, nil, "", "java")
 	if result != nil {
 		t.Error("expected nil for Java project")
+	}
+}
+
+func TestPropagateExports_PythonEndToEnd_ImportFileMap(t *testing.T) {
+	// Simulate: app.py does "from models import User", models/__init__.py re-exports from .user
+	symbolTable := resolver.NewSymbolTable()
+	symbolTable.Add(model.Symbol{
+		ID: "sym-user-class", Name: "User", QualifiedName: "models.user.User",
+		Kind: "class", FilePath: "models/user.py", IsExported: true,
+	})
+	symbolTable.Add(model.Symbol{
+		ID: "sym-find-by-id", Name: "find_by_id", QualifiedName: "models.user.User.find_by_id",
+		Kind: "function", FilePath: "models/user.py", IsExported: true,
+	})
+
+	parseResults := []model.ParseResult{
+		{
+			FilePath: "models/user.py",
+			Symbols:  []model.Symbol{{ID: "sym-user-class", Name: "User", IsExported: true}},
+		},
+		{
+			FilePath: "models/__init__.py",
+			Imports: []model.RawImport{
+				{ModulePath: ".user", SymbolName: "User", LocalName: "User", FilePath: "models/__init__.py", IsReexport: true},
+			},
+		},
+		{
+			FilePath: "app.py",
+			Imports: []model.RawImport{
+				{ModulePath: "models", SymbolName: "User", FilePath: "app.py"},
+			},
+		},
+	}
+
+	indexer := &Indexer{}
+	allFiles := []string{"models/user.py", "models/__init__.py", "app.py"}
+	importFileMap := indexer.propagateExports(parseResults, symbolTable, allFiles, "", "python")
+
+	// Verify importFileMap has app.py:User → models/__init__.py
+	key := resolver.ImportFileKey{FilePath: "app.py", SymbolName: "User"}
+	targetFile, exists := importFileMap[key]
+	if !exists {
+		t.Fatal("importFileMap missing key {app.py, User}")
+	}
+	t.Logf("importFileMap[{app.py, User}] = %q", targetFile)
+
+	// Verify reExportIndex has models.User
+	reExportID, exists := symbolTable.GetReExport("models.User")
+	if !exists {
+		t.Fatal("reExportIndex missing 'models.User'")
+	}
+	t.Logf("reExportIndex['models.User'] = %q", reExportID)
+
+	// Verify DerivePackage(targetFile) + ".User" matches reExportIndex key
+	derivedKey := util.DerivePackage(targetFile) + ".User"
+	t.Logf("DerivePackage(%q) + '.User' = %q", targetFile, derivedKey)
+	if _, exists := symbolTable.GetReExport(derivedKey); !exists {
+		t.Errorf("reExportIndex lookup failed for derived key %q", derivedKey)
 	}
 }

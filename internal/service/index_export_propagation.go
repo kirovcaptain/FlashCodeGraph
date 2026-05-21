@@ -8,6 +8,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/util"
 )
 
 // ImportFileMap maps (filePath, symbolName) → resolved target file path.
@@ -15,38 +16,6 @@ type ImportFileMap map[resolver.ImportFileKey]string
 
 // ImportPathIndex maps alias import paths (e.g., "@models/User") to real file paths.
 type ImportPathIndex map[string]string
-
-// derivePackage converts a file path to a dot-separated package name.
-// Index files (index.ts/index.js) use their directory name instead of "index".
-// Examples:
-//
-//	"pkg-a/index.ts"           → "pkg-a"
-//	"pkg-a/models/User.ts"    → "pkg-a.models.User"
-//	"src/utils/index.tsx"      → "src.utils"
-//	"index.ts"                 → "index"
-//	"models/__init__.py"       → "models"
-//	"pkg/models/__init__.py"   → "pkg.models"
-//	"models/user.py"           → "models.user"
-func derivePackage(filePath string) string {
-	base := filePath
-	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx", ".py"} {
-		base = strings.TrimSuffix(base, ext)
-	}
-	base = strings.ReplaceAll(base, "\\", "/")
-	if strings.HasSuffix(base, "/index") || base == "index" {
-		base = strings.TrimSuffix(base, "/index")
-		if base == "" {
-			return "index"
-		}
-	}
-	if strings.HasSuffix(base, "/__init__") || base == "__init__" {
-		base = strings.TrimSuffix(base, "/__init__")
-		if base == "" {
-			return "__init__"
-		}
-	}
-	return strings.ReplaceAll(base, "/", ".")
-}
 
 // buildImportPathIndex creates a mapping from tsconfig path aliases to real file paths.
 // Only triggered for TS/JS projects. Returns nil if no tsconfig paths are configured.
@@ -261,7 +230,7 @@ func (indexer *Indexer) propagateExports(parseResults []model.ParseResult, symbo
 
 	// Pass 1: Register local exported symbols
 	for _, parseResult := range parseResults {
-		barrelPackage := derivePackage(parseResult.FilePath)
+		barrelPackage := util.DerivePackage(parseResult.FilePath)
 		for _, symbol := range parseResult.Symbols {
 			if symbol.IsExported {
 				localReExportName := barrelPackage + "." + symbol.Name
@@ -286,7 +255,7 @@ func (indexer *Indexer) propagateExports(parseResults []model.ParseResult, symbo
 
 			if importEntry.IsWildcard {
 				// Wildcard: register all exported symbols from target file
-				barrelPackage := derivePackage(importEntry.FilePath)
+				barrelPackage := util.DerivePackage(importEntry.FilePath)
 				exportedSymbols := symbolTable.FindExportedByFile(targetFile)
 				for _, symbol := range exportedSymbols {
 					reExportName := barrelPackage + "." + symbol.Name
@@ -302,7 +271,7 @@ func (indexer *Indexer) propagateExports(parseResults []model.ParseResult, symbo
 			if localName == "" {
 				localName = importEntry.SymbolName
 			}
-			reExportName := derivePackage(importEntry.FilePath) + "." + localName
+			reExportName := util.DerivePackage(importEntry.FilePath) + "." + localName
 
 			if symbolTable.HasReExport(reExportName) {
 				continue
@@ -317,7 +286,7 @@ func (indexer *Indexer) propagateExports(parseResults []model.ParseResult, symbo
 			}
 
 			// Target file is also a barrel → check its reExportIndex
-			targetReExportName := derivePackage(targetFile) + "." + importEntry.SymbolName
+			targetReExportName := util.DerivePackage(targetFile) + "." + importEntry.SymbolName
 			if targetID, exists := symbolTable.GetReExport(targetReExportName); exists {
 				symbolTable.AddReExport(reExportName, targetID)
 				propagateWaiters(reExportName, targetID, symbolTable, waitingFor)
