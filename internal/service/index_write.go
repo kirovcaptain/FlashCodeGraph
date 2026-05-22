@@ -292,6 +292,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"end_line":       symbol.EndLine,
 					"params":         marshalParams(symbol.Params),
 					"return_types":   symbol.ReturnTypes,
+					"type_params":    symbol.TypeParams,
 					"annotations":    symbol.Annotations,
 					"is_exported":    symbol.IsExported,
 					"is_abstract":    symbol.IsAbstract,
@@ -317,6 +318,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"annotations":    symbol.Annotations,
 					"complexity":     symbol.Complexity,
 					"params":         marshalParams(symbol.Params),
+					"type_params":    symbol.TypeParams,
 					"fields":         string(fieldsJSON),
 				}
 			case constants.KindInterface:

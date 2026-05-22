@@ -62,7 +62,7 @@ func SelectMostSpecific(candidates []model.Symbol, argTypes []string) *model.Sym
 				valid = false
 				break
 			}
-			if isSingleLetterGeneric(paramType) {
+			if isGenericTypeParam(candidate, paramType) {
 				score += 100
 				continue
 			}
@@ -89,6 +89,19 @@ func SelectMostSpecific(candidates []model.Symbol, argTypes []string) *model.Sym
 		return &candidates[bestIdx]
 	}
 	return nil
+}
+
+// isGenericTypeParam returns true if paramType is a generic type parameter of the candidate.
+func isGenericTypeParam(candidate model.Symbol, paramType string) bool {
+	if len(candidate.TypeParams) > 0 {
+		for _, typeParam := range candidate.TypeParams {
+			if typeParam == paramType {
+				return true
+			}
+		}
+		return false
+	}
+	return isSingleLetterGeneric(paramType)
 }
 
 func isSingleLetterGeneric(typeName string) bool {

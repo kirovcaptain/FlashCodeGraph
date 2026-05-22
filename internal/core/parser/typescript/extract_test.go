@@ -791,3 +791,134 @@ func TestExtract_NewExpressionInBlockScope(t *testing.T) {
 	}
 	t.Logf("✅ new_expression block scope: ServiceA scope=%q, ServiceB scope=%q", scopesByType["ServiceA"], scopesByType["ServiceB"])
 }
+
+func TestExtractFunction_TypeParams(t *testing.T) {
+	tests := []struct {
+		name           string
+		code           string
+		funcName       string
+		expectedParams []string
+	}{
+		{
+			name:           "single generic function",
+			code:           `function identity<T>(arg: T): T { return arg; }`,
+			funcName:       "identity",
+			expectedParams: []string{"T"},
+		},
+		{
+			name:           "multiple generic parameters",
+			code:           `function merge<T, U>(a: T, b: U): T & U { return {...a, ...b}; }`,
+			funcName:       "merge",
+			expectedParams: []string{"T", "U"},
+		},
+		{
+			name:           "generic with extends constraint",
+			code:           `function find<T extends Entity>(id: string): T { return null as any; }`,
+			funcName:       "find",
+			expectedParams: []string{"T"},
+		},
+		{
+			name:           "no generic parameters",
+			code:           `function save(user: User): void {}`,
+			funcName:       "save",
+			expectedParams: nil,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			root, cleanup := parse([]byte(testCase.code))
+			defer cleanup()
+			result := &model.ParseResult{}
+			file := scanner.ScannedFile{RelPath: "test.ts", Language: "typescript"}
+			Extract(root, []byte(testCase.code), file, result)
+
+			var found *model.Symbol
+			for i := range result.Symbols {
+				if result.Symbols[i].Name == testCase.funcName {
+					found = &result.Symbols[i]
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("function %q not found in symbols", testCase.funcName)
+			}
+			if len(found.TypeParams) != len(testCase.expectedParams) {
+				t.Fatalf("TypeParams length: got %d, want %d (got %v)", len(found.TypeParams), len(testCase.expectedParams), found.TypeParams)
+			}
+			for i, expected := range testCase.expectedParams {
+				if found.TypeParams[i] != expected {
+					t.Errorf("TypeParams[%d]: got %q, want %q", i, found.TypeParams[i], expected)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractMethod_TypeParams(t *testing.T) {
+	code := []byte(`class Service {
+    transform<T>(input: T): T { return input; }
+    save(user: User): void {}
+}`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "service.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var transformSymbol *model.Symbol
+	var saveSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "transform" {
+			transformSymbol = &result.Symbols[i]
+		}
+		if result.Symbols[i].Name == "save" {
+			saveSymbol = &result.Symbols[i]
+		}
+	}
+	if transformSymbol == nil {
+		t.Fatal("transform method not found")
+	}
+	if len(transformSymbol.TypeParams) != 1 || transformSymbol.TypeParams[0] != "T" {
+		t.Errorf("transform TypeParams: got %v, want [T]", transformSymbol.TypeParams)
+	}
+	if saveSymbol == nil {
+		t.Fatal("save method not found")
+	}
+	if len(saveSymbol.TypeParams) != 0 {
+		t.Errorf("save TypeParams: got %v, want nil", saveSymbol.TypeParams)
+	}
+}
+
+func TestExtractAmbientDeclaration_TypeParams(t *testing.T) {
+	code := []byte(`declare function useQuery<T>(): QueryResult<T>;
+declare function useState<S>(initial: S): [S, (s: S) => void];`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "types.d.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var useQuerySymbol *model.Symbol
+	var useStateSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "useQuery" {
+			useQuerySymbol = &result.Symbols[i]
+		}
+		if result.Symbols[i].Name == "useState" {
+			useStateSymbol = &result.Symbols[i]
+		}
+	}
+	if useQuerySymbol == nil {
+		t.Fatal("useQuery not found")
+	}
+	if len(useQuerySymbol.TypeParams) != 1 || useQuerySymbol.TypeParams[0] != "T" {
+		t.Errorf("useQuery TypeParams: got %v, want [T]", useQuerySymbol.TypeParams)
+	}
+	if useStateSymbol == nil {
+		t.Fatal("useState not found")
+	}
+	if len(useStateSymbol.TypeParams) != 1 || useStateSymbol.TypeParams[0] != "S" {
+		t.Errorf("useState TypeParams: got %v, want [S]", useStateSymbol.TypeParams)
+	}
+}

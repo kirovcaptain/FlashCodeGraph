@@ -102,6 +102,9 @@ func extractTypeDeclaration(node *tree_sitter.Node, content []byte, file scanner
 func extractStruct(specNode, structNode *tree_sitter.Node, content []byte, file scanner.ScannedFile, packageName, structName string, result *model.ParseResult) {
 	qualifiedName := packageName + "." + structName
 
+	// Extract struct-level generic type parameters: type Pair[K, V any] → ["K", "V"]
+	typeParams := extractTypeParams(specNode, content)
+
 	result.Symbols = append(result.Symbols, model.Symbol{
 		ID:            astutil.GenerateSymbolID(file.RelPath, qualifiedName, int(specNode.StartPosition().Row)+1),
 		Name:          structName,
@@ -111,6 +114,7 @@ func extractStruct(specNode, structNode *tree_sitter.Node, content []byte, file 
 		FilePath:      file.RelPath,
 		StartLine:     int(specNode.StartPosition().Row) + 1,
 		EndLine:       int(specNode.EndPosition().Row) + 1,
+		TypeParams:    typeParams,
 		IsExported:    isExported(structName),
 	})
 
@@ -350,6 +354,9 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, packageNa
 		extractCalls(body, content, filePath, funcName, className, packageName, result)
 	}
 
+	// Extract function-level generic type parameters: [T any, U comparable] → ["T", "U"]
+	typeParams := extractTypeParams(node, content)
+
 	result.Symbols = append(result.Symbols, model.Symbol{
 		ID:            astutil.GenerateSymbolID(filePath, qualifiedName, int(node.StartPosition().Row)+1),
 		Name:          funcName,
@@ -360,6 +367,7 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, packageNa
 		EndLine:       int(node.EndPosition().Row) + 1,
 		Params:        paramTypes,
 		ReturnTypes:   returnTypes,
+		TypeParams:    typeParams,
 		IsExported:    isExported(funcName),
 		Complexity:    complexity,
 	})
@@ -430,6 +438,9 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 		extractCalls(body, content, filePath, funcName, receiverName, packageName, result)
 	}
 
+	// Extract method-level generic type parameters: [T any, U comparable] → ["T", "U"]
+	typeParams := extractTypeParams(node, content)
+
 	result.Symbols = append(result.Symbols, model.Symbol{
 		ID:            astutil.GenerateSymbolID(filePath, qualifiedName, int(node.StartPosition().Row)+1),
 		Name:          funcName,
@@ -440,6 +451,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 		EndLine:       int(node.EndPosition().Row) + 1,
 		Params:        paramTypes,
 		ReturnTypes:   returnTypes,
+		TypeParams:    typeParams,
 		IsExported:    isExported(funcName),
 		Complexity:    complexity,
 	})
@@ -661,6 +673,26 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 }
 
 // Helper functions
+
+// extractTypeParams extracts generic type parameter names from a node's type_parameters child.
+// For Go: [T any, U comparable] → ["T", "U"] (only names, not constraints).
+func extractTypeParams(node *tree_sitter.Node, content []byte) []string {
+	typeParametersNode := node.ChildByFieldName("type_parameters")
+	if typeParametersNode == nil {
+		return nil
+	}
+	var typeParams []string
+	for i := uint(0); i < typeParametersNode.ChildCount(); i++ {
+		typeParamDecl := typeParametersNode.Child(i)
+		if typeParamDecl.Kind() == "type_parameter_declaration" {
+			nameChild := typeParamDecl.ChildByFieldName("name")
+			if nameChild != nil {
+				typeParams = append(typeParams, nameChild.Utf8Text(content))
+			}
+		}
+	}
+	return typeParams
+}
 
 func extractTypeName(node *tree_sitter.Node, content []byte) string {
 	switch node.Kind() {

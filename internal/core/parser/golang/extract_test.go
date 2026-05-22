@@ -228,3 +228,93 @@ type GraphStore interface {
 	}
 	t.Fatal("QueryEdges method not found")
 }
+
+func TestExtractFunction_TypeParams(t *testing.T) {
+	tests := []struct {
+		name           string
+		code           string
+		funcName       string
+		expectedParams []string
+	}{
+		{
+			name: "single generic function",
+			code: `package main
+func Identity[T any](v T) T { return v }`,
+			funcName:       "Identity",
+			expectedParams: []string{"T"},
+		},
+		{
+			name: "multiple generic parameters",
+			code: `package main
+func Map[T any, U any](s []T, f func(T) U) []U { return nil }`,
+			funcName:       "Map",
+			expectedParams: []string{"T", "U"},
+		},
+		{
+			name: "generic with constraint",
+			code: `package main
+func Max[T interface{ ~int | ~float64 }](a, b T) T { return a }`,
+			funcName:       "Max",
+			expectedParams: []string{"T"},
+		},
+		{
+			name: "no generic parameters",
+			code: `package main
+func Save(user User) error { return nil }`,
+			funcName:       "Save",
+			expectedParams: nil,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			root, cleanup := parse([]byte(testCase.code))
+			defer cleanup()
+			result := &model.ParseResult{}
+			file := scanner.ScannedFile{RelPath: "main.go", Language: "go"}
+			Extract(root, []byte(testCase.code), file, result)
+
+			var found *model.Symbol
+			for i := range result.Symbols {
+				if result.Symbols[i].Name == testCase.funcName {
+					found = &result.Symbols[i]
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("function %q not found in symbols", testCase.funcName)
+			}
+			if len(found.TypeParams) != len(testCase.expectedParams) {
+				t.Fatalf("TypeParams length: got %d, want %d (got %v)", len(found.TypeParams), len(testCase.expectedParams), found.TypeParams)
+			}
+			for i, expected := range testCase.expectedParams {
+				if found.TypeParams[i] != expected {
+					t.Errorf("TypeParams[%d]: got %q, want %q", i, found.TypeParams[i], expected)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractMethod_TypeParams_Go(t *testing.T) {
+	// Note: Go methods on generic types don't have their own type_parameter_list;
+	// the type params are on the struct definition. This test verifies no false positives.
+	code := []byte(`package main
+type Store[T any] struct{}
+func (s *Store[T]) Get(id string) T { var zero T; return zero }
+func (s *Store[T]) Save(item T) error { return nil }
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "store.go", Language: "go"}
+	Extract(root, code, file, result)
+
+	for _, symbol := range result.Symbols {
+		if symbol.Name == "Get" || symbol.Name == "Save" {
+			if len(symbol.TypeParams) != 0 {
+				t.Errorf("method %q should have no TypeParams (they belong to struct), got %v", symbol.Name, symbol.TypeParams)
+			}
+		}
+	}
+}

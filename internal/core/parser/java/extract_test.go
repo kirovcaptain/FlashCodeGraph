@@ -975,3 +975,109 @@ public class PaymentService {
 	}
 	t.Log("✅ Pattern B switch-case with method call condition extracted")
 }
+
+func TestExtractMethod_TypeParams(t *testing.T) {
+	tests := []struct {
+		name           string
+		code           string
+		methodName     string
+		expectedParams []string
+	}{
+		{
+			name: "single generic parameter",
+			code: `package com.example;
+class Foo {
+    public <T> T getBean(Class<T> clazz) { return null; }
+}`,
+			methodName:     "getBean",
+			expectedParams: []string{"T"},
+		},
+		{
+			name: "multiple generic parameters",
+			code: `package com.example;
+class Foo {
+    public <K, V> V transform(K key, V def) { return def; }
+}`,
+			methodName:     "transform",
+			expectedParams: []string{"K", "V"},
+		},
+		{
+			name: "generic with bounds",
+			code: `package com.example;
+class Foo {
+    public <T extends Comparable<T>> T max(T a, T b) { return a; }
+}`,
+			methodName:     "max",
+			expectedParams: []string{"T"},
+		},
+		{
+			name: "no generic parameters",
+			code: `package com.example;
+class Foo {
+    public void save(String name) {}
+}`,
+			methodName:     "save",
+			expectedParams: nil,
+		},
+		{
+			name: "constructor has no generics",
+			code: `package com.example;
+class Foo {
+    public Foo() {}
+}`,
+			methodName:     "Foo",
+			expectedParams: nil,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := parseJavaFile(t, testCase.code, "Foo.java")
+			var found *model.Symbol
+			for i := range result.Symbols {
+				if result.Symbols[i].Name == testCase.methodName && result.Symbols[i].Kind == "Function" {
+					found = &result.Symbols[i]
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("method %q not found in symbols", testCase.methodName)
+			}
+			if len(found.TypeParams) != len(testCase.expectedParams) {
+				t.Fatalf("TypeParams length: got %d, want %d (got %v)", len(found.TypeParams), len(testCase.expectedParams), found.TypeParams)
+			}
+			for i, expected := range testCase.expectedParams {
+				if found.TypeParams[i] != expected {
+					t.Errorf("TypeParams[%d]: got %q, want %q", i, found.TypeParams[i], expected)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractClass_TypeParams_OnlyName(t *testing.T) {
+	code := `package com.example;
+class Repo<T extends Entity, ID extends Serializable> {
+    public void save(T entity) {}
+}`
+	result := parseJavaFile(t, code, "Repo.java")
+	var classSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Kind == "Class" {
+			classSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if classSymbol == nil {
+		t.Fatal("class symbol not found")
+	}
+	expected := []string{"T", "ID"}
+	if len(classSymbol.TypeParams) != len(expected) {
+		t.Fatalf("TypeParams length: got %d, want %d (got %v)", len(classSymbol.TypeParams), len(expected), classSymbol.TypeParams)
+	}
+	for i, expectedName := range expected {
+		if classSymbol.TypeParams[i] != expectedName {
+			t.Errorf("TypeParams[%d]: got %q, want %q", i, classSymbol.TypeParams[i], expectedName)
+		}
+	}
+}

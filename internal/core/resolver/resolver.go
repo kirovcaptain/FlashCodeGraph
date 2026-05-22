@@ -1360,7 +1360,7 @@ func filterByArgTypes(candidates []model.Symbol, argTypes []string, langHelper L
 				excluded = true
 				break
 			}
-			if isSingleLetterGeneric(paramType) {
+			if isGenericTypeParam(candidate, paramType) {
 				continue
 			}
 			paramType = strings.TrimSuffix(paramType, "...")
@@ -1414,6 +1414,21 @@ func filterByArgTypes(candidates []model.Symbol, argTypes []string, langHelper L
 		}
 	}
 	return remaining
+}
+
+// isGenericTypeParam returns true if paramType is a generic type parameter of the candidate.
+// Uses precise TypeParams when available; falls back to single-letter heuristic for external symbols.
+func isGenericTypeParam(candidate model.Symbol, paramType string) bool {
+	if len(candidate.TypeParams) > 0 {
+		for _, typeParam := range candidate.TypeParams {
+			if typeParam == paramType {
+				return true
+			}
+		}
+		return false
+	}
+	// Fallback for external symbols without source (TypeParams is nil)
+	return isSingleLetterGeneric(paramType)
 }
 
 func isSingleLetterGeneric(typeName string) bool {

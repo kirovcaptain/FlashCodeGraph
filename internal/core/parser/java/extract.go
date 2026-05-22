@@ -219,19 +219,8 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 
 	annotationsJSON, _ := json.Marshal(annotations)
 
-	// Extract generic type parameters: class Foo<T, U> → ["T", "U"]
-	var typeParams []string
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "type_parameters" {
-			for j := uint(0); j < child.ChildCount(); j++ {
-				tp := child.Child(j)
-				if tp.Kind() == "type_parameter" {
-					typeParams = append(typeParams, tp.Utf8Text(content))
-				}
-			}
-		}
-	}
+	// Extract generic type parameters: class Foo<T, U extends Bar> → ["T", "U"]
+	typeParams := extractTypeParams(node, content)
 
 	// Determine node Kind from classType
 	nodeKind := constants.KindClass
@@ -447,6 +436,9 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 	isConstructor := node.Kind() == "constructor_declaration"
 	var annotations []model.StructuredAnnotation
 
+	// Extract method-level generic type parameters: <T, U extends Foo> → ["T", "U"]
+	typeParams := extractTypeParams(node, content)
+
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "modifiers" {
@@ -487,6 +479,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 		EndLine:       int(node.EndPosition().Row) + 1,
 		Params:        paramTypes,
 		ReturnTypes:   returnTypes,
+		TypeParams:    typeParams,
 		IsStatic:      isStatic,
 		IsExported:    isExported,
 		IsConstructor: isConstructor,
@@ -1235,6 +1228,29 @@ func buildTypeEnv(hints []model.TypeBinding, className string, imports []model.R
 		}
 	}
 	return env
+}
+
+// extractTypeParams extracts generic type parameter names from a node's type_parameters child.
+// For Java: <T, U extends Foo> → ["T", "U"] (only names, not bounds).
+func extractTypeParams(node *tree_sitter.Node, content []byte) []string {
+	typeParametersNode := node.ChildByFieldName("type_parameters")
+	if typeParametersNode == nil {
+		return nil
+	}
+	var typeParams []string
+	for i := uint(0); i < typeParametersNode.ChildCount(); i++ {
+		typeParamNode := typeParametersNode.Child(i)
+		if typeParamNode.Kind() == "type_parameter" {
+			for k := uint(0); k < typeParamNode.ChildCount(); k++ {
+				child := typeParamNode.Child(k)
+				if child.Kind() == "type_identifier" {
+					typeParams = append(typeParams, child.Utf8Text(content))
+					break
+				}
+			}
+		}
+	}
+	return typeParams
 }
 
 // extractTypeName extracts a type name, handling generics.

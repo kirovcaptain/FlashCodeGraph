@@ -2852,3 +2852,60 @@ func TestResolveCalls_DefaultReExport_ShouldResolveInternal(t *testing.T) {
 	}
 	t.Log("✅ default re-export: MyComp.render() resolved to DefaultComponent.render")
 }
+
+func TestIsGenericTypeParam(t *testing.T) {
+	tests := []struct {
+		name       string
+		typeParams []string
+		paramType  string
+		expected   bool
+	}{
+		{
+			name:       "precise match in TypeParams",
+			typeParams: []string{"T", "U"},
+			paramType:  "T",
+			expected:   true,
+		},
+		{
+			name:       "not in TypeParams",
+			typeParams: []string{"T"},
+			paramType:  "R",
+			expected:   false,
+		},
+		{
+			name:       "fallback single letter when TypeParams empty",
+			typeParams: nil,
+			paramType:  "T",
+			expected:   true,
+		},
+		{
+			name:       "fallback multi-letter not matched when TypeParams empty",
+			typeParams: nil,
+			paramType:  "KEY",
+			expected:   false,
+		},
+		{
+			name:       "precise match multi-letter generic",
+			typeParams: []string{"KEY", "VALUE"},
+			paramType:  "KEY",
+			expected:   true,
+		},
+		{
+			name:       "single letter not in TypeParams is not generic",
+			typeParams: []string{"T"},
+			paramType:  "R",
+			expected:   false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidate := model.Symbol{TypeParams: testCase.typeParams}
+			result := isGenericTypeParam(candidate, testCase.paramType)
+			if result != testCase.expected {
+				t.Errorf("isGenericTypeParam(TypeParams=%v, %q) = %v, want %v",
+					testCase.typeParams, testCase.paramType, result, testCase.expected)
+			}
+		})
+	}
+}
