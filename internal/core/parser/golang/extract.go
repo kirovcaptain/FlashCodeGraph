@@ -3,11 +3,11 @@ package golang
 import (
 	"strings"
 
-	tree_sitter "github.com/tree-sitter/go-tree-sitter"
-	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
-	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/astutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 // extractGo extracts symbols from Go AST.
@@ -642,7 +642,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 			}
 
 			if calledName != "" {
-				fc := astutil.DetectFlowContext(node, content)
+				flowContext := astutil.DetectFlowContext(node, content)
 				result.Calls = append(result.Calls, model.RawCall{
 					CalledName:   calledName,
 					CallerName:   fullCaller,
@@ -651,8 +651,8 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 					Line:         int(node.StartPosition().Row) + 1,
 					ArgCount:     argCount,
 					ReceiverExpr: receiverExpr,
-					FlowContext:  fc.Kind,
-					FlowLine:    fc.Line,
+					FlowContext:  flowContext.Kind,
+					FlowLine:     flowContext.Line,
 				})
 			}
 		}
@@ -753,7 +753,6 @@ func extractParamList(paramsNode *tree_sitter.Node, content []byte) []model.Para
 	}
 	return params
 }
-
 
 func countComplexity(node *tree_sitter.Node, content []byte) int {
 	complexity := 1

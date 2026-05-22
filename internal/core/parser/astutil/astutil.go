@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -99,7 +100,18 @@ func DetectFlowContext(node *tree_sitter.Node, content []byte) FlowContext {
 		case "elif_clause":
 			contexts = append(contexts, FlowContext{"elif", int(n.StartPosition().Row) + 1})
 		case "try_statement", "try_with_resources_statement":
-			contexts = append(contexts, FlowContext{"try", int(n.StartPosition().Row) + 1})
+			// Only add "try" if we haven't already added "catch" or "finally"
+			// (catch/finally are children of try_statement, so skip the parent)
+			alreadyInCatchOrFinally := false
+			for _, ctx := range contexts {
+				if ctx.Kind == "catch" || ctx.Kind == "finally" {
+					alreadyInCatchOrFinally = true
+					break
+				}
+			}
+			if !alreadyInCatchOrFinally {
+				contexts = append(contexts, FlowContext{"try", int(n.StartPosition().Row) + 1})
+			}
 		case "catch_clause", "except_clause":
 			contexts = append(contexts, FlowContext{"catch", int(n.StartPosition().Row) + 1})
 		case "finally_clause":
@@ -139,7 +151,7 @@ done:
 	line := contexts[len(contexts)-1].Line
 	for i := len(contexts) - 1; i >= 0; i-- {
 		if combined != "" {
-			combined += " > "
+			combined += " - "
 		}
 		combined += contexts[i].Kind
 	}
@@ -151,4 +163,64 @@ func isDescendant(child, ancestor *tree_sitter.Node) bool {
 	aEnd := ancestor.EndByte()
 	cStart := child.StartByte()
 	return cStart >= aStart && cStart < aEnd
+}
+
+// BlockScope describes the block-level scope of a node within a function.
+type BlockScope struct {
+	ScopeKey     string            // e.g. "UserService.process#L3"
+	ScopeParents map[string]string // new parent relationships discovered
+}
+
+// DetectBlockScope walks up from a node to determine its block-level scope key.
+// Stops at function boundaries. Returns the callerName unchanged if not inside any block.
+func DetectBlockScope(node *tree_sitter.Node, callerName string) BlockScope {
+	var blockLines []int
+	for current := node.Parent(); current != nil; current = current.Parent() {
+		switch current.Kind() {
+		case "if_statement", "if_expression":
+			alternative := current.ChildByFieldName("alternative")
+			if alternative != nil && isDescendant(node, alternative) {
+				blockLines = append(blockLines, int(alternative.StartPosition().Row)+1)
+			} else {
+				consequence := current.ChildByFieldName("consequence")
+				if consequence != nil {
+					blockLines = append(blockLines, int(consequence.StartPosition().Row)+1)
+				} else {
+					blockLines = append(blockLines, int(current.StartPosition().Row)+1)
+				}
+			}
+		case "elif_clause":
+			blockLines = append(blockLines, int(current.StartPosition().Row)+1)
+		case "try_statement", "try_with_resources_statement":
+			body := current.ChildByFieldName("body")
+			if body != nil && isDescendant(node, body) {
+				blockLines = append(blockLines, int(body.StartPosition().Row)+1)
+			}
+		case "catch_clause", "except_clause", "finally_clause":
+			blockLines = append(blockLines, int(current.StartPosition().Row)+1)
+		case "for_statement", "for_range_statement", "enhanced_for_statement",
+			"while_statement", "do_statement", "for_in_statement":
+			blockLines = append(blockLines, int(current.StartPosition().Row)+1)
+		case "switch_case", "case_clause", "expression_case", "type_case", "default_case":
+			blockLines = append(blockLines, int(current.StartPosition().Row)+1)
+		case "with_statement":
+			blockLines = append(blockLines, int(current.StartPosition().Row)+1)
+		case "function_declaration", "method_declaration", "function_definition",
+			"arrow_function", "lambda", "func_literal":
+			goto done
+		}
+	}
+done:
+	if len(blockLines) == 0 {
+		return BlockScope{ScopeKey: callerName}
+	}
+	// blockLines collected inner-to-outer; reverse to build chain outer-to-inner
+	parents := make(map[string]string)
+	currentKey := callerName
+	for i := len(blockLines) - 1; i >= 0; i-- {
+		nextKey := currentKey + "#L" + strconv.Itoa(blockLines[i])
+		parents[nextKey] = currentKey
+		currentKey = nextKey
+	}
+	return BlockScope{ScopeKey: currentKey, ScopeParents: parents}
 }

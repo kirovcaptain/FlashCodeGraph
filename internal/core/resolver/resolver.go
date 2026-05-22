@@ -180,6 +180,13 @@ func (resolver *Resolver) resolveCallNoCandidate(call model.RawCall, envs map[st
 	// Try receiverType from TypeEnv (instance call: e.g. jdbcTemplate.query)
 	receiverType := resolver.lookupReceiverType(call, envs, langHelper)
 	if receiverType != "" && receiverType != call.ReceiverExpr {
+		// First: check if receiverType.calledName exists as an internal symbol
+		candidates := resolver.symbolTable.FindByName(call.CalledName)
+		matched := filterByOwnerClass(candidates, receiverType)
+		if len(matched) > 0 {
+			return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "receiver_type_internal", 1)}, nil
+		}
+		// Fallback: resolve as external via import path
 		if env := envs[call.FilePath]; env != nil {
 			for _, imp := range env.Imports {
 				if imp.SymbolName == receiverType || (strings.Contains(receiverType, ".") && strings.HasPrefix(receiverType, imp.ModulePath)) {
@@ -759,7 +766,7 @@ func (resolver *Resolver) resolveImportedCallLegacy(call model.RawCall, receiver
 // Returns the type of the final method's return value.
 func (resolver *Resolver) resolveChainedReceiver(expr string, call model.RawCall, envs map[string]*model.TypeEnv, langHelper LanguageHelper) string {
 	// Cache lookup
-	cacheKey := expr + ":" + call.CallerName + ":" + call.FilePath
+	cacheKey := expr + ":" + effectiveCallerScope(call) + ":" + call.FilePath
 	if resolver.chainedReceiverCache == nil {
 		resolver.chainedReceiverCache = make(map[string]string)
 	}
@@ -811,7 +818,7 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 		baseType = resolver.resolveChainedReceiver(baseExpr, call, envs, langHelper)
 	} else {
 		// Simple variable — lookup in TypeEnv
-		baseCall := model.RawCall{ReceiverExpr: baseExpr, CallerName: call.CallerName, FilePath: call.FilePath}
+		baseCall := model.RawCall{ReceiverExpr: baseExpr, CallerName: call.CallerName, CallerScope: call.CallerScope, FilePath: call.FilePath}
 		baseType = resolver.lookupReceiverType(baseCall, envs, langHelper)
 	}
 	if baseType == "" {
@@ -921,7 +928,7 @@ func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiver
 				if env == nil {
 					return retType
 				}
-				typeArgs := typeinfer.LookupTypeArgs(env, call.CallerName, receiverVar)
+				typeArgs := typeinfer.LookupTypeArgs(env, effectiveCallerScope(call), receiverVar)
 				if idx < len(typeArgs) {
 					return typeArgs[idx]
 				}
@@ -948,8 +955,9 @@ func (resolver *Resolver) lookupReceiverType(call model.RawCall, envs map[string
 		return resolver.resolveChainedReceiver(receiver, call, envs, langHelper)
 	}
 
-	key := call.CallerName + ":" + receiver
-	if info, exists := env.Bindings[key]; exists {
+	// Scope chain lookup for receiver type
+	scope := effectiveCallerScope(call)
+	if info := lookupBindingWithScopeChain(env, scope, receiver); info != nil {
 		return info.TypeName
 	}
 
@@ -960,8 +968,7 @@ func (resolver *Resolver) lookupReceiverType(call model.RawCall, envs map[string
 
 	// self/this receiver
 	if receiver == "self" || receiver == "this" {
-		selfKey := call.CallerName + ":" + receiver
-		if info, exists := env.Bindings[selfKey]; exists {
+		if info := lookupBindingWithScopeChain(env, scope, receiver); info != nil {
 			return info.TypeName
 		}
 	}
@@ -983,16 +990,34 @@ func (resolver *Resolver) resolveFullQualifiedType(typeName string, env *model.T
 	if env == nil || strings.Contains(typeName, ".") {
 		return typeName
 	}
+	// First: check if typeName exists as a class/interface in SymbolTable directly
+	for _, symbol := range resolver.symbolTable.FindByName(typeName) {
+		if symbol.Kind == constants.KindClass || symbol.Kind == "abstract_class" ||
+			symbol.Kind == constants.KindInterface || symbol.ClassType == "struct" {
+			return symbol.QualifiedName
+		}
+	}
 	for _, imp := range env.Imports {
 		if imp.SymbolName == typeName {
+			// Check reExportIndex: typeName might be a re-exported alias (e.g. MyComp → DefaultComponent)
+			if resolver.importFileMap != nil {
+				if targetFile, exists := resolver.importFileMap[ImportFileKey{FilePath: imp.FilePath, SymbolName: typeName}]; exists {
+					reExportKey := util.DerivePackage(targetFile) + "." + typeName
+					if targetID, found := resolver.symbolTable.GetReExport(reExportKey); found {
+						if symbol := resolver.symbolTable.FindByID(targetID); symbol != nil {
+							return symbol.QualifiedName
+						}
+					}
+				}
+			}
 			return imp.ModulePath
 		}
 		// Wildcard import: try ModulePath + "." + typeName and verify in symbolTable
-		candidateQN := imp.ModulePath + "." + typeName
-		for _, sym := range resolver.symbolTable.FindByQualifiedName(candidateQN) {
-			if sym.Kind == constants.KindClass || sym.Kind == "abstract_class" ||
-				sym.Kind == constants.KindInterface || sym.ClassType == "struct" {
-				return candidateQN
+		candidateQualifiedName := imp.ModulePath + "." + typeName
+		for _, symbol := range resolver.symbolTable.FindByQualifiedName(candidateQualifiedName) {
+			if symbol.Kind == constants.KindClass || symbol.Kind == "abstract_class" ||
+				symbol.Kind == constants.KindInterface || symbol.ClassType == "struct" {
+				return candidateQualifiedName
 			}
 		}
 	}
@@ -1192,10 +1217,20 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 	// 1. Simple variable — lookup in TypeEnv
 	if !strings.Contains(expr, ".") && !strings.Contains(expr, "(") {
 		if env != nil {
-			// Method scope
-			key := call.CallerName + ":" + expr
-			if info, ok := env.Bindings[key]; ok {
-				return extractSimpleType(info.TypeName)
+			// Scope-aware lookup (block→function only, no class fallback here)
+			scope := effectiveCallerScope(call)
+			current := scope
+			for current != "" {
+				if info := env.Bindings[current+":"+expr]; info != nil {
+					return extractSimpleType(info.TypeName)
+				}
+				if env.ScopeParents != nil {
+					if parent, ok := env.ScopeParents[current]; ok {
+						current = parent
+						continue
+					}
+				}
+				break // stop at function level, let lookupFieldInHierarchy handle class fields
 			}
 			// Class scope (field TypeHint) — walk up inheritance chain
 			if typeName := resolver.lookupFieldInHierarchy(call.CallerName, expr, envs); typeName != "" {
@@ -1383,6 +1418,19 @@ func filterByArgTypes(candidates []model.Symbol, argTypes []string, langHelper L
 
 func isSingleLetterGeneric(typeName string) bool {
 	return len(typeName) == 1 && typeName[0] >= 'A' && typeName[0] <= 'Z'
+}
+
+// effectiveCallerScope returns CallerScope if set, otherwise CallerName.
+func effectiveCallerScope(call model.RawCall) string {
+	if call.CallerScope != "" {
+		return call.CallerScope
+	}
+	return call.CallerName
+}
+
+// lookupBindingWithScopeChain traverses the scope chain to find a variable binding.
+func lookupBindingWithScopeChain(env *model.TypeEnv, callerScope, varName string) *model.TypeInfo {
+	return typeinfer.LookupBindingInEnv(env, callerScope, varName)
 }
 
 // isSingleLetterGeneric returns true if the type name is a single uppercase letter (generic type parameter).

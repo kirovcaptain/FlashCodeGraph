@@ -53,3 +53,4 @@ func EnrichArgTypes(call model.RawCall, envs map[string]*model.TypeEnv, symbolTa
 func CountParams(params []model.ParamInfo) int {
 	return len(params)
 }
+

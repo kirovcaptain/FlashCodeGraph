@@ -1,13 +1,14 @@
 package typescript
 
 import (
+	"strconv"
 	"strings"
 
-	tree_sitter "github.com/tree-sitter/go-tree-sitter"
-	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
-	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/astutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 // extractTypeScript extracts symbols from TypeScript/JavaScript AST.
@@ -29,6 +30,9 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 			return false
 		case "function_declaration":
 			extractFunction(node, content, file.RelPath, "", true, result)
+			return false
+		case "ambient_declaration":
+			extractAmbientDeclaration(node, content, file, result)
 			return false
 		case "lexical_declaration", "variable_declaration":
 			extractArrowFunctions(node, content, file.RelPath, result)
@@ -97,6 +101,64 @@ func extractImport(node *tree_sitter.Node, content []byte, filePath string, resu
 			FilePath:   filePath,
 			Line:       int(node.StartPosition().Row) + 1,
 		})
+	}
+}
+
+// extractAmbientReturnTypes extracts return types from a type_annotation node.
+// Handles tuple types [A, B] as multiple return types, otherwise single type.
+func extractAmbientReturnTypes(returnTypeNode *tree_sitter.Node, content []byte) []string {
+	// type_annotation children: ":" + actual_type_node
+	// If actual type is tuple_type, extract each element as a separate return type
+	for i := uint(0); i < returnTypeNode.ChildCount(); i++ {
+		child := returnTypeNode.Child(i)
+		if child.Kind() == "tuple_type" {
+			// [UserService, OrderService] → ["UserService", "OrderService"]
+			var types []string
+			for j := uint(0); j < child.ChildCount(); j++ {
+				elem := child.Child(j)
+				if elem.IsNamed() {
+					types = append(types, elem.Utf8Text(content))
+				}
+			}
+			return types
+		}
+	}
+	// Non-tuple: single return type (e.g. ": QueryResult")
+	typeName := extractTypeName(returnTypeNode, content)
+	if typeName != "" {
+		return []string{typeName}
+	}
+	return nil
+}
+
+// extractAmbientDeclaration handles `declare function/class/interface` statements.
+func extractAmbientDeclaration(node *tree_sitter.Node, content []byte, file scanner.ScannedFile, result *model.ParseResult) {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "function_signature":
+			nameNode := child.ChildByFieldName("name")
+			if nameNode == nil {
+				continue
+			}
+			funcName := nameNode.Utf8Text(content)
+			qualifiedName := buildQualifiedName(file.RelPath, funcName)
+			var returnTypes []string
+			returnTypeNode := child.ChildByFieldName("return_type")
+			if returnTypeNode != nil {
+				returnTypes = extractAmbientReturnTypes(returnTypeNode, content)
+			}
+			result.Symbols = append(result.Symbols, model.Symbol{
+				ID:            astutil.GenerateSymbolID(file.RelPath, funcName, int(child.StartPosition().Row)+1),
+				Name:          funcName,
+				QualifiedName: qualifiedName,
+				Kind:          constants.KindFunction,
+				FilePath:      file.RelPath,
+				StartLine:     int(child.StartPosition().Row) + 1,
+				EndLine:       int(child.EndPosition().Row) + 1,
+				ReturnTypes:   returnTypes,
+			})
+		}
 	}
 }
 
@@ -254,7 +316,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 							result.Heritage = append(result.Heritage, model.RawHeritage{
 								ChildName: className, ChildQualified: qualifiedName,
 								ParentName: parentName,
-								Kind: "extends", FilePath: file.RelPath,
+								Kind:       "extends", FilePath: file.RelPath,
 							})
 						}
 					}
@@ -268,7 +330,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 							result.Heritage = append(result.Heritage, model.RawHeritage{
 								ChildName: className, ChildQualified: qualifiedName,
 								ParentName: ifaceName,
-								Kind: "implements", FilePath: file.RelPath,
+								Kind:       "implements", FilePath: file.RelPath,
 							})
 						}
 					}
@@ -288,7 +350,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 					result.Heritage = append(result.Heritage, model.RawHeritage{
 						ChildName: className, ChildQualified: qualifiedName,
 						ParentName: parentName,
-						Kind: kind, FilePath: file.RelPath,
+						Kind:       kind, FilePath: file.RelPath,
 					})
 				}
 			}
@@ -383,8 +445,8 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, className s
 
 	isAsync := false
 	isStatic := false
-	isGetter := false  // TypeScript `get xxx()` accessor
-	isSetter := false  // TypeScript `set xxx(v)` accessor
+	isGetter := false // TypeScript `get xxx()` accessor
+	isSetter := false // TypeScript `set xxx(v)` accessor
 	isConstructor := methodName == "constructor"
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -531,8 +593,16 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 		if node.Kind() == "lexical_declaration" || node.Kind() == "variable_declaration" {
 			extractTSPendingAssignment(node, content, qualifiedCallerName, result)
 			// Also extract const arrow functions defined inside function bodies
-			// (e.g. const ensureSlash = (path: string) => ...)
+			// Record nested function → outer function parent relationship
+			symbolCountBefore := len(result.Symbols)
 			extractArrowFunctions(node, content, filePath, result)
+			for j := symbolCountBefore; j < len(result.Symbols); j++ {
+				nestedQN := result.Symbols[j].QualifiedName
+				if result.ScopeParents == nil {
+					result.ScopeParents = make(map[string]string)
+				}
+				result.ScopeParents[nestedQN] = qualifiedCallerName
+			}
 		}
 		if node.Kind() == "call_expression" {
 			ExtractRoutes(node, content, qualifiedCallerName, filePath, result)
@@ -568,17 +638,20 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 			}
 
 			if calledName != "" {
-				fc := astutil.DetectFlowContext(node, content)
+				flowContext := astutil.DetectFlowContext(node, content)
+				blockScope := astutil.DetectBlockScope(node, qualifiedCallerName)
+				mergeScopeParents(result, blockScope.ScopeParents)
 				result.Calls = append(result.Calls, model.RawCall{
 					CalledName:   calledName,
 					CallerName:   qualifiedCallerName,
+					CallerScope:  blockScope.ScopeKey,
 					CallerKind:   constants.KindFunction,
 					FilePath:     filePath,
 					Line:         int(node.StartPosition().Row) + 1,
 					ArgCount:     argCount,
 					ReceiverExpr: receiverExpr,
-					FlowContext:  fc.Kind,
-					FlowLine:     fc.Line,
+					FlowContext:  flowContext.Kind,
+					FlowLine:     flowContext.Line,
 				})
 			}
 		}
@@ -672,7 +745,22 @@ func extractTSPendingAssignment(node *tree_sitter.Node, content []byte, scope st
 		}
 		nameNode := child.ChildByFieldName("name")
 		valueNode := child.ChildByFieldName("value")
-		if nameNode == nil || valueNode == nil || nameNode.Kind() != "identifier" {
+		if nameNode == nil || valueNode == nil {
+			continue
+		}
+
+		// Determine block-level scope for this declaration
+		blockScope := astutil.DetectBlockScope(child, scope)
+		blockScopeKey := blockScope.ScopeKey
+		mergeScopeParents(result, blockScope.ScopeParents)
+
+		// Handle destructuring patterns
+		if nameNode.Kind() == "object_pattern" || nameNode.Kind() == "array_pattern" {
+			extractDestructureAssignment(nameNode, valueNode, content, blockScopeKey, result)
+			continue
+		}
+
+		if nameNode.Kind() != "identifier" {
 			continue
 		}
 		lhs := nameNode.Utf8Text(content)
@@ -686,7 +774,7 @@ func extractTSPendingAssignment(node *tree_sitter.Node, content []byte, scope st
 					VarName:  lhs,
 					TypeName: typeName,
 					Tier:     0,
-					Scope:    scope,
+					Scope:    blockScopeKey,
 					FilePath: result.FilePath,
 				})
 			}
@@ -695,14 +783,14 @@ func extractTSPendingAssignment(node *tree_sitter.Node, content []byte, scope st
 		switch valueNode.Kind() {
 		case "identifier":
 			result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-				Kind: "copy", LHS: lhs, Scope: scope, RHS: valueNode.Utf8Text(content),
+				Kind: "copy", LHS: lhs, Scope: blockScopeKey, RHS: valueNode.Utf8Text(content),
 			})
 		case "member_expression":
 			obj := valueNode.ChildByFieldName("object")
 			prop := valueNode.ChildByFieldName("property")
 			if obj != nil && prop != nil && obj.Kind() == "identifier" {
 				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-					Kind: "field_access", LHS: lhs, Scope: scope, Receiver: obj.Utf8Text(content), Field: prop.Utf8Text(content),
+					Kind: "field_access", LHS: lhs, Scope: blockScopeKey, Receiver: obj.Utf8Text(content), Field: prop.Utf8Text(content),
 				})
 			}
 		case "call_expression":
@@ -712,16 +800,28 @@ func extractTSPendingAssignment(node *tree_sitter.Node, content []byte, scope st
 			}
 			if fn.Kind() == "identifier" {
 				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-					Kind: "call_result", LHS: lhs, Scope: scope, Callee: fn.Utf8Text(content),
+					Kind: "call_result", LHS: lhs, Scope: blockScopeKey, Callee: fn.Utf8Text(content),
 				})
 			} else if fn.Kind() == "member_expression" {
 				obj := fn.ChildByFieldName("object")
 				prop := fn.ChildByFieldName("property")
 				if obj != nil && prop != nil && obj.Kind() == "identifier" {
 					result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-						Kind: "method_call_result", LHS: lhs, Scope: scope, Receiver: obj.Utf8Text(content), Method: prop.Utf8Text(content),
+						Kind: "method_call_result", LHS: lhs, Scope: blockScopeKey, Receiver: obj.Utf8Text(content), Method: prop.Utf8Text(content),
 					})
 				}
+			}
+		case "new_expression":
+			constructor := valueNode.ChildByFieldName("constructor")
+			if constructor != nil && constructor.Kind() == "identifier" {
+				typeName := constructor.Utf8Text(content)
+				result.TypeHints = append(result.TypeHints, model.TypeBinding{
+					VarName:  lhs,
+					TypeName: typeName,
+					Tier:     1,
+					Scope:    blockScopeKey,
+					FilePath: result.FilePath,
+				})
 			}
 		}
 	}
@@ -795,9 +895,33 @@ func extractInterface(node *tree_sitter.Node, content []byte, file scanner.Scann
 		case "method_signature":
 			// addNode(node: string): void
 		case "property_signature":
-			// addNode: (node: string) => void — function-typed property
-			typeNode := child.ChildByFieldName("type")
-			if typeNode == nil || !strings.Contains(typeNode.Utf8Text(content), "=>") {
+			// Extract as field declaration for FindFieldByOwner
+			propNameNode := child.ChildByFieldName("name")
+			propTypeNode := child.ChildByFieldName("type")
+			if propNameNode != nil && propTypeNode != nil {
+				propName := propNameNode.Utf8Text(content)
+				propType := extractTypeName(propTypeNode, content)
+				if propType != "" {
+					// Function-typed property also gets a Symbol (existing behavior)
+					if strings.Contains(propTypeNode.Utf8Text(content), "=>") {
+						// fall through to method extraction below
+					} else {
+						// Plain field — emit FieldDeclaration only
+						result.Fields = append(result.Fields, model.FieldDeclaration{
+							FieldInfo: model.FieldInfo{
+								Name: propName,
+								Type: propType,
+							},
+							OwnerQualifiedName: ifaceQualifiedName,
+							FilePath:           file.RelPath,
+							Line:               int(child.StartPosition().Row) + 1,
+						})
+						continue
+					}
+				} else {
+					continue
+				}
+			} else if propTypeNode == nil || !strings.Contains(propTypeNode.Utf8Text(content), "=>") {
 				continue
 			}
 		default:
@@ -826,4 +950,90 @@ func extractInterface(node *tree_sitter.Node, content []byte, file scanner.Scann
 			ReturnTypes:   returnTypes,
 		})
 	}
+}
+
+// mergeScopeParents merges discovered scope parent relationships into the ParseResult.
+func mergeScopeParents(result *model.ParseResult, parents map[string]string) {
+	if len(parents) == 0 {
+		return
+	}
+	if result.ScopeParents == nil {
+		result.ScopeParents = make(map[string]string)
+	}
+	for child, parent := range parents {
+		result.ScopeParents[child] = parent
+	}
+}
+
+// extractDestructureAssignment handles object/array destructuring patterns.
+func extractDestructureAssignment(nameNode, valueNode *tree_sitter.Node, content []byte, scope string, result *model.ParseResult) {
+	callee := extractCalleeName(valueNode, content)
+	if callee == "" {
+		return
+	}
+
+	if nameNode.Kind() == "object_pattern" {
+		for i := uint(0); i < nameNode.ChildCount(); i++ {
+			fieldNode := nameNode.Child(i)
+			switch fieldNode.Kind() {
+			case "shorthand_property_identifier_pattern":
+				fieldName := fieldNode.Utf8Text(content)
+				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+					Kind: "destructure", LHS: fieldName, Scope: scope, Callee: callee, DestructuredKey: fieldName,
+				})
+			case "pair_pattern":
+				keyNode := fieldNode.ChildByFieldName("key")
+				valNode := fieldNode.ChildByFieldName("value")
+				if keyNode != nil && valNode != nil {
+					result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+						Kind: "destructure", LHS: valNode.Utf8Text(content), Scope: scope, Callee: callee, DestructuredKey: keyNode.Utf8Text(content),
+					})
+				}
+			}
+		}
+	} else if nameNode.Kind() == "array_pattern" {
+		idx := 0
+		for i := uint(0); i < nameNode.ChildCount(); i++ {
+			elemNode := nameNode.Child(i)
+			if elemNode.Kind() == "identifier" {
+				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+					Kind: "destructure", LHS: elemNode.Utf8Text(content), Scope: scope, Callee: callee, DestructuredKey: strconv.Itoa(idx),
+				})
+				idx++
+			} else if elemNode.IsNamed() {
+				idx++ // skip rest_pattern etc but count position
+			}
+		}
+	}
+}
+
+// extractCalleeName extracts the function name from a call expression or identifier value node.
+func extractCalleeName(valueNode *tree_sitter.Node, content []byte) string {
+	switch valueNode.Kind() {
+	case "call_expression":
+		fn := valueNode.ChildByFieldName("function")
+		if fn == nil {
+			return ""
+		}
+		if fn.Kind() == "identifier" {
+			return fn.Utf8Text(content)
+		}
+		if fn.Kind() == "member_expression" {
+			prop := fn.ChildByFieldName("property")
+			if prop != nil {
+				return prop.Utf8Text(content)
+			}
+		}
+	case "await_expression":
+		// const { data } = await useQuery()
+		for i := uint(0); i < valueNode.ChildCount(); i++ {
+			child := valueNode.Child(i)
+			if child.IsNamed() {
+				return extractCalleeName(child, content)
+			}
+		}
+	case "identifier":
+		return valueNode.Utf8Text(content)
+	}
+	return ""
 }

@@ -4,6 +4,7 @@ package model
 type RawCall struct {
 	CalledName   string `json:"called_name"`
 	CallerName   string `json:"caller_name"`
+	CallerScope  string `json:"caller_scope,omitempty"` // block-level scope key for TypeEnv lookup
 	CallerKind   string `json:"caller_kind"`
 	Language     string `json:"language"`
 	FilePath     string `json:"file_path"`
@@ -121,14 +122,15 @@ type TypeBinding struct {
 
 // PendingAssignment represents an unresolved variable assignment for fixpoint propagation.
 type PendingAssignment struct {
-	Kind     string `json:"kind"`     // copy, call_result, field_access, method_call_result
-	LHS      string `json:"lhs"`      // variable being assigned
-	Scope    string `json:"scope"`    // enclosing function/method
-	RHS      string `json:"rhs,omitempty"`      // copy: source variable
-	Callee   string `json:"callee,omitempty"`   // call_result: function name
-	Receiver string `json:"receiver,omitempty"` // field_access/method_call_result: receiver variable
-	Field    string `json:"field,omitempty"`    // field_access: field name
-	Method   string `json:"method,omitempty"`   // method_call_result: method name
+	Kind            string `json:"kind"`                        // copy, call_result, field_access, method_call_result, destructure
+	LHS             string `json:"lhs"`                         // variable being assigned
+	Scope           string `json:"scope"`                       // enclosing block/function scope
+	RHS             string `json:"rhs,omitempty"`               // copy: source variable
+	Callee          string `json:"callee,omitempty"`            // call_result/destructure: function name
+	Receiver        string `json:"receiver,omitempty"`          // field_access/method_call_result: receiver variable
+	Field           string `json:"field,omitempty"`             // field_access: field name
+	Method          string `json:"method,omitempty"`            // method_call_result: method name
+	DestructuredKey string `json:"destructured_key,omitempty"`  // destructure: field name or index ("0", "1")
 }
 
 // ParseResult holds all extracted data from a single file.
@@ -147,6 +149,7 @@ type ParseResult struct {
 	Fields              []FieldDeclaration   `json:"fields,omitempty"`
 	TypeHints           []TypeBinding       `json:"type_hints"`
 	PendingAssignments  []PendingAssignment  `json:"pending_assignments,omitempty"`
+	ScopeParents        map[string]string    `json:"scope_parents,omitempty"` // childScope → parentScope
 	ConstRefs           []RawConstRef        `json:"const_refs,omitempty"`
 	Errors      []ParseError    `json:"errors,omitempty"`
 }

@@ -8,9 +8,17 @@ import (
 )
 
 // Helper implements resolver.LanguageHelper for TypeScript and JavaScript.
-type Helper struct{}
+type Helper struct {
+	externalMethods *ExternalMethodManager
+}
 
-func NewHelper() *Helper { return &Helper{} }
+func NewHelper(externalMethods ...*ExternalMethodManager) *Helper {
+	h := &Helper{}
+	if len(externalMethods) > 0 {
+		h.externalMethods = externalMethods[0]
+	}
+	return h
+}
 
 // ResolveSuperCall handles TS/JS super.method() and super() constructor calls.
 func (tsHelper *Helper) ResolveSuperCall(call model.RawCall, funcCandidates []model.Symbol, heritage []model.RawHeritage, _ map[string]*model.TypeEnv, callerID string) ([]model.ResolvedRelation, bool) {
@@ -149,8 +157,11 @@ func (tsHelper *Helper) InferStringConcat(expr string) bool {
 	return strings.Contains(expr, "`")
 }
 
-// LookupMethodReturn — no built-in method return table for TS/JS.
-func (tsHelper *Helper) LookupMethodReturn(_, _ string) (string, bool) {
+// LookupMethodReturn looks up external library method return types for TS/JS.
+func (tsHelper *Helper) LookupMethodReturn(typeName, methodName string) (string, bool) {
+	if tsHelper.externalMethods != nil {
+		return tsHelper.externalMethods.Lookup(typeName, methodName)
+	}
 	return "", false
 }
 

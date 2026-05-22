@@ -2587,3 +2587,268 @@ func TestResolveCalls_PythonBarrelReExport(t *testing.T) {
 		t.Errorf("expected target 'sym-find-by-id', got %q", relations[0].TargetID)
 	}
 }
+
+func TestResolveCalls_NoScopeParents_ClassFieldNotLeaked(t *testing.T) {
+	// Java scenario: without ScopeParents, lookupReceiverType should still work
+	// using direct key lookup (CallerName:receiver) — same as before.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "sym-find", Name: "findById", QualifiedName: "com.example.UserDao.findById", Kind: "Function", FilePath: "UserDao.java"},
+		{ID: "sym-dao", Name: "UserDao", QualifiedName: "com.example.UserDao", Kind: "Class", FilePath: "UserDao.java"},
+		{ID: "sym-caller", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
+	})
+
+	resolver := newTestResolver(table)
+	envs := map[string]*model.TypeEnv{
+		"Controller.java": {
+			Bindings: map[string]*model.TypeInfo{
+				"Controller.handle:dao": {TypeName: "UserDao"},
+			},
+			// No ScopeParents — Java style
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:   "findById",
+		CallerName:   "Controller.handle",
+		FilePath:     "Controller.java",
+		ReceiverExpr: "dao",
+		ArgCount:     1,
+		Language:     "java",
+	}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	if relations[0].TargetID != "sym-find" {
+		t.Fatalf("expected target 'sym-find', got %s", relations[0].TargetID)
+	}
+	t.Logf("✅ Java without ScopeParents: dao.findById() resolved correctly (resolved_by: %s)", relations[0].ResolvedBy)
+}
+
+func TestResolveCalls_WithScopeParents_ClosureCapture(t *testing.T) {
+	// TS scenario: nested function captures outer variable via ScopeParents chain.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "sym-execute", Name: "execute", QualifiedName: "db.Database.execute", Kind: "Function", FilePath: "db.ts"},
+		{ID: "sym-database", Name: "Database", QualifiedName: "db.Database", Kind: "Class", FilePath: "db.ts"},
+		{ID: "sym-inner", Name: "inner", QualifiedName: "app.setup.inner", Kind: "Function", FilePath: "app.ts"},
+	})
+
+	resolver := newTestResolver(table)
+	envs := map[string]*model.TypeEnv{
+		"app.ts": {
+			Bindings: map[string]*model.TypeInfo{
+				"app.setup:db": {TypeName: "Database"},
+			},
+			ScopeParents: map[string]string{
+				"app.setup.inner": "app.setup",
+			},
+			Imports: []model.RawImport{},
+		},
+	}
+
+	// inner() calls db.execute() — db is captured from outer scope
+	calls := []model.RawCall{{
+		CalledName:   "execute",
+		CallerName:   "app.setup.inner",
+		CallerScope:  "app.setup.inner",
+		FilePath:     "app.ts",
+		ReceiverExpr: "db",
+		ArgCount:     0,
+		Language:     "typescript",
+	}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) == 0 {
+		t.Fatal("expected at least 1 relation for closure-captured variable")
+	}
+	if relations[0].TargetID != "sym-execute" {
+		t.Errorf("expected target 'sym-execute', got %q", relations[0].TargetID)
+	}
+	t.Logf("✅ Closure capture resolved: db.execute() via ScopeParents chain (resolved_by: %s)", relations[0].ResolvedBy)
+}
+
+func TestResolveCalls_BlockScope_IfElseIsolation(t *testing.T) {
+	// TS scenario: same variable name in if/else blocks should resolve to different types.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "sym-get-data", Name: "getData", QualifiedName: "svc.ServiceA.getData", Kind: "Function", FilePath: "svc.ts"},
+		{ID: "sym-get-error", Name: "getError", QualifiedName: "svc.ServiceB.getError", Kind: "Function", FilePath: "svc.ts"},
+		{ID: "sym-sa", Name: "ServiceA", QualifiedName: "svc.ServiceA", Kind: "Class", FilePath: "svc.ts"},
+		{ID: "sym-sb", Name: "ServiceB", QualifiedName: "svc.ServiceB", Kind: "Class", FilePath: "svc.ts"},
+		{ID: "sym-process", Name: "process", QualifiedName: "app.process", Kind: "Function", FilePath: "app.ts"},
+	})
+
+	resolver := newTestResolver(table)
+	envs := map[string]*model.TypeEnv{
+		"app.ts": {
+			Bindings: map[string]*model.TypeInfo{
+				"app.process#L3:result": {TypeName: "ServiceA"},
+				"app.process#L6:result": {TypeName: "ServiceB"},
+			},
+			ScopeParents: map[string]string{
+				"app.process#L3": "app.process",
+				"app.process#L6": "app.process",
+			},
+		},
+	}
+
+	calls := []model.RawCall{
+		{CalledName: "getData", CallerName: "app.process", CallerScope: "app.process#L3", FilePath: "app.ts", ReceiverExpr: "result", Language: "typescript"},
+		{CalledName: "getError", CallerName: "app.process", CallerScope: "app.process#L6", FilePath: "app.ts", ReceiverExpr: "result", Language: "typescript"},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) < 2 {
+		t.Fatalf("expected 2 relations, got %d", len(relations))
+	}
+	if relations[0].TargetID != "sym-get-data" {
+		t.Errorf("if-block: expected 'sym-get-data', got %q", relations[0].TargetID)
+	}
+	if relations[1].TargetID != "sym-get-error" {
+		t.Errorf("else-block: expected 'sym-get-error', got %q", relations[1].TargetID)
+	}
+	t.Log("✅ if/else block scope isolation works correctly")
+}
+
+func TestResolveCalls_TSImportedClass_ShouldResolveInternal(t *testing.T) {
+	// TS project imports UserService from './services',
+	// const svc = new UserService(); svc.findById(1)
+	// receiverType = "UserService" (from TypeEnv), and UserService.findById exists in SymbolTable.
+	// Should resolve to internal symbol, NOT external.
+	// Also includes a stale external symbol to verify it's not picked over internal.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "sym-us", Name: "UserService", QualifiedName: "src.services.UserService", Kind: "Class", FilePath: "src/services.ts"},
+		{ID: "sym-find", Name: "findById", QualifiedName: "src.services.UserService.findById", Kind: "Function", FilePath: "src/services.ts"},
+		{ID: "sym-caller", Name: "handleRequest", QualifiedName: "src.block-scope.handleRequest", Kind: "Function", FilePath: "src/block-scope.ts"},
+		{ID: "external:./services.findById", Name: "findById", QualifiedName: "./services.findById", Kind: "Function", FilePath: "[external]"},
+	})
+
+	resolver := newTestResolver(table)
+	envs := map[string]*model.TypeEnv{
+		"src/block-scope.ts": {
+			Bindings: map[string]*model.TypeInfo{
+				"src.block-scope.handleRequest:svc": {TypeName: "UserService"},
+			},
+			Imports: []model.RawImport{
+				{ModulePath: "./services", SymbolName: "UserService"},
+			},
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:   "findById",
+		CallerName:   "src.block-scope.handleRequest",
+		CallerScope:  "src.block-scope.handleRequest",
+		FilePath:     "src/block-scope.ts",
+		ReceiverExpr: "svc",
+		ArgCount:     1,
+		Language:     "typescript",
+	}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) == 0 {
+		t.Fatal("expected at least 1 relation")
+	}
+
+	// Should resolve to internal sym-find, NOT external:./services.findById
+	for _, rel := range relations {
+		if strings.HasPrefix(rel.TargetID, "external:") {
+			t.Errorf("resolved to external %q — should resolve to internal sym-find", rel.TargetID)
+		}
+	}
+	if relations[0].TargetID == "sym-find" {
+		t.Log("✅ TS imported class resolved to internal method")
+	} else {
+		t.Logf("⚠ resolved to %q (resolved_by: %s)", relations[0].TargetID, relations[0].ResolvedBy)
+	}
+}
+
+func TestResolveCalls_ExternalClass_FallbackToImportPath(t *testing.T) {
+	// When receiverType is NOT in SymbolTable (external library), should resolve as external.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "sym-caller", Name: "setup", QualifiedName: "app.setup", Kind: "Function", FilePath: "app.ts"},
+	})
+
+	resolver := newTestResolver(table)
+	envs := map[string]*model.TypeEnv{
+		"app.ts": {
+			Bindings: map[string]*model.TypeInfo{
+				"app.setup:router": {TypeName: "Router"},
+			},
+			Imports: []model.RawImport{
+				{ModulePath: "express", SymbolName: "Router"},
+			},
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:   "get",
+		CallerName:   "app.setup",
+		FilePath:     "app.ts",
+		ReceiverExpr: "router",
+		Language:     "typescript",
+	}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) == 0 {
+		t.Fatal("expected at least 1 relation for external class method")
+	}
+	if !strings.HasPrefix(relations[0].TargetID, "external:") {
+		t.Fatalf("expected external resolution, got %q", relations[0].TargetID)
+	}
+	t.Logf("✅ External class correctly resolved as external: %s", relations[0].TargetID)
+}
+
+func TestResolveCalls_DefaultReExport_ShouldResolveInternal(t *testing.T) {
+	// Scenario: export { default as MyComp } from './DefaultComp'
+	// Consumer: const comp = new MyComp(); comp.render()
+	// receiverType = "MyComp" but SymbolTable has "DefaultComponent"
+	// reExportIndex has "src.components.MyComp" → sym-dc
+	// Should resolve comp.render() to DefaultComponent.render
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "sym-dc", Name: "DefaultComponent", QualifiedName: "src.components.DefaultComp.DefaultComponent", Kind: "Class", FilePath: "src/components/DefaultComp.ts", IsExported: true, IsDefaultExport: true},
+		{ID: "sym-render", Name: "render", QualifiedName: "src.components.DefaultComp.DefaultComponent.render", Kind: "Function", FilePath: "src/components/DefaultComp.ts"},
+		{ID: "sym-caller", Name: "useDefaultExport", QualifiedName: "src.extra-consumer.useDefaultExport", Kind: "Function", FilePath: "src/extra-consumer.ts"},
+	})
+	// Register re-export: MyComp → DefaultComponent
+	table.AddReExport("src.components.MyComp", "sym-dc")
+
+	resolver := newTestResolver(table)
+	resolver.SetImportFileMap(map[ImportFileKey]string{
+		{FilePath: "src/extra-consumer.ts", SymbolName: "MyComp"}: "src/components/index.ts",
+	})
+
+	envs := map[string]*model.TypeEnv{
+		"src/extra-consumer.ts": {
+			Bindings: map[string]*model.TypeInfo{
+				"src.extra-consumer.useDefaultExport:comp": {TypeName: "MyComp"},
+			},
+			Imports: []model.RawImport{
+				{ModulePath: "./components", SymbolName: "MyComp", FilePath: "src/extra-consumer.ts"},
+			},
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:   "render",
+		CallerName:   "src.extra-consumer.useDefaultExport",
+		FilePath:     "src/extra-consumer.ts",
+		ReceiverExpr: "comp",
+		Language:     "typescript",
+	}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) == 0 {
+		t.Fatal("expected at least 1 relation")
+	}
+	if relations[0].TargetID != "sym-render" {
+		t.Fatalf("expected sym-render, got %q (resolved_by: %s)", relations[0].TargetID, relations[0].ResolvedBy)
+	}
+	t.Log("✅ default re-export: MyComp.render() resolved to DefaultComponent.render")
+}

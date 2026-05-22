@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"strings"
 
-	tree_sitter "github.com/tree-sitter/go-tree-sitter"
-	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
-	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/astutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 // extractJava extracts symbols from Java/Kotlin AST.
@@ -1012,7 +1012,7 @@ func extractMethodInvocation(node *tree_sitter.Node, content []byte, filePath, q
 
 	callerContext := qualifiedCallerName
 
-	fc := astutil.DetectFlowContext(node, content)
+	flowContext := astutil.DetectFlowContext(node, content)
 	result.Calls = append(result.Calls, model.RawCall{
 		CalledName:   methodName,
 		CallerName:   callerContext,
@@ -1023,8 +1023,8 @@ func extractMethodInvocation(node *tree_sitter.Node, content []byte, filePath, q
 		ArgTypes:     argTypes,
 		ArgExprs:     argExprs,
 		ReceiverExpr: receiverExpr,
-		FlowContext:  fc.Kind,
-		FlowLine:     fc.Line,
+		FlowContext:  flowContext.Kind,
+		FlowLine:     flowContext.Line,
 	})
 }
 
@@ -1103,7 +1103,7 @@ func extractConstructorCall(node *tree_sitter.Node, content []byte, filePath, qu
 
 	callerContext := qualifiedCallerName
 
-	fc := astutil.DetectFlowContext(node, content)
+	flowContext := astutil.DetectFlowContext(node, content)
 	result.Calls = append(result.Calls, model.RawCall{
 		CalledName:  typeName,
 		CallerName:  callerContext,
@@ -1113,8 +1113,8 @@ func extractConstructorCall(node *tree_sitter.Node, content []byte, filePath, qu
 		ArgCount:    argCount,
 		ArgTypes:    argTypes,
 		ArgExprs:    argExprs,
-		FlowContext: fc.Kind,
-		FlowLine:    fc.Line,
+		FlowContext: flowContext.Kind,
+		FlowLine:    flowContext.Line,
 	})
 }
 
@@ -1329,4 +1329,3 @@ func countComplexity(node *tree_sitter.Node, content []byte) int {
 }
 
 // walkNamedChildren iterates named children recursively.
-

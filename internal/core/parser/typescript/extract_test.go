@@ -1,6 +1,7 @@
 package typescript
 
 import (
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -438,4 +439,355 @@ func TestExtract_NormalExportNotReexport(t *testing.T) {
 			t.Error("normal export should not produce IsReexport imports")
 		}
 	}
+}
+
+func TestExtract_BlockScopeInIfElse(t *testing.T) {
+	code := []byte(`function process(flag: boolean) {
+    if (flag) {
+        const svc = new ServiceA();
+        svc.getData();
+    } else {
+        const svc = new ServiceB();
+        svc.getError();
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	// Verify calls have different CallerScope
+	if len(result.Calls) < 2 {
+		t.Fatalf("expected at least 2 calls, got %d", len(result.Calls))
+	}
+
+	scopeMap := map[string]string{}
+	for _, call := range result.Calls {
+		if call.CalledName == "getData" || call.CalledName == "getError" {
+			scopeMap[call.CalledName] = call.CallerScope
+		}
+	}
+
+	if scopeMap["getData"] == scopeMap["getError"] {
+		t.Fatalf("getData and getError should have different CallerScope, both got %q", scopeMap["getData"])
+	}
+	if scopeMap["getData"] == "" || scopeMap["getError"] == "" {
+		t.Fatal("CallerScope should not be empty for calls inside if/else blocks")
+	}
+
+	// Verify ScopeParents exist
+	if len(result.ScopeParents) == 0 {
+		t.Fatal("ScopeParents should be populated for block-scoped calls")
+	}
+
+	t.Logf("✅ Block scope: getData scope=%q, getError scope=%q, parents=%v", scopeMap["getData"], scopeMap["getError"], result.ScopeParents)
+}
+
+func TestExtract_DestructureAssignment(t *testing.T) {
+	code := []byte(`function setup() {
+    const { data, error } = useQuery();
+    const [count, setCount] = useState(0);
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	destructures := map[string]string{}
+	for _, pa := range result.PendingAssignments {
+		if pa.Kind == "destructure" {
+			destructures[pa.LHS] = pa.DestructuredKey
+		}
+	}
+
+	// Object destructure
+	if destructures["data"] != "data" {
+		t.Errorf("expected data→data, got %q", destructures["data"])
+	}
+	if destructures["error"] != "error" {
+		t.Errorf("expected error→error, got %q", destructures["error"])
+	}
+	// Array destructure
+	if destructures["count"] != "0" {
+		t.Errorf("expected count→0, got %q", destructures["count"])
+	}
+	if destructures["setCount"] != "1" {
+		t.Errorf("expected setCount→1, got %q", destructures["setCount"])
+	}
+
+	t.Logf("✅ Destructure: %d pending assignments extracted", len(result.PendingAssignments))
+}
+
+func TestExtract_NestedFunctionScopeParent(t *testing.T) {
+	code := []byte(`function outer() {
+    const inner = (x: number) => {
+        console.log(x);
+    };
+    inner(1);
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	// Find the nested function symbol
+	var nestedQualifiedName string
+	for _, sym := range result.Symbols {
+		if sym.Name == "inner" {
+			nestedQualifiedName = sym.QualifiedName
+			break
+		}
+	}
+	if nestedQualifiedName == "" {
+		t.Fatal("nested function 'inner' not found in symbols")
+	}
+
+	// Verify ScopeParents maps inner → outer
+	parent, exists := result.ScopeParents[nestedQualifiedName]
+	if !exists {
+		t.Fatalf("ScopeParents should contain %q", nestedQualifiedName)
+	}
+	if !strings.Contains(parent, "outer") {
+		t.Fatalf("expected parent to contain 'outer', got %q", parent)
+	}
+
+	t.Logf("✅ Nested function parent: %s → %s", nestedQualifiedName, parent)
+}
+
+func TestExtract_BlockScopeInTryCatch(t *testing.T) {
+	code := []byte(`function handle() {
+    try {
+        const conn = getConnection();
+        conn.query();
+    } catch (e) {
+        const logger = getLogger();
+        logger.error(e);
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	scopeMap := map[string]string{}
+	for _, call := range result.Calls {
+		if call.CalledName == "query" || call.CalledName == "error" {
+			scopeMap[call.CalledName] = call.CallerScope
+		}
+	}
+
+	if scopeMap["query"] == scopeMap["error"] {
+		t.Fatalf("try/catch calls should have different CallerScope, both got %q", scopeMap["query"])
+	}
+	if scopeMap["query"] == "" || scopeMap["error"] == "" {
+		t.Fatal("CallerScope should not be empty for calls inside try/catch blocks")
+	}
+	t.Logf("✅ Try/catch block scope: query=%q, error=%q", scopeMap["query"], scopeMap["error"])
+}
+
+func TestExtract_BlockScopeInForLoop(t *testing.T) {
+	code := []byte(`function process(items: string[]) {
+    for (const item of items) {
+        const svc = getService();
+        svc.handle(item);
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var handleScope string
+	for _, call := range result.Calls {
+		if call.CalledName == "handle" {
+			handleScope = call.CallerScope
+			break
+		}
+	}
+
+	if handleScope == "" {
+		t.Fatal("handle() call not found")
+	}
+	if !strings.Contains(handleScope, "#L") {
+		t.Fatalf("expected block scope with #L suffix, got %q", handleScope)
+	}
+	t.Logf("✅ For loop block scope: handle scope=%q", handleScope)
+}
+
+func TestExtract_NestedBlockScope(t *testing.T) {
+	code := []byte(`function process(flag: boolean) {
+    if (flag) {
+        for (const item of items) {
+            const svc = getService();
+            svc.run(item);
+        }
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var runScope string
+	for _, call := range result.Calls {
+		if call.CalledName == "run" {
+			runScope = call.CallerScope
+			break
+		}
+	}
+
+	if runScope == "" {
+		t.Fatal("run() call not found")
+	}
+	// Should have nested block: e.g. "app.ts.process#L2#L3"
+	if strings.Count(runScope, "#L") < 2 {
+		t.Fatalf("expected nested block scope with at least 2 #L segments, got %q", runScope)
+	}
+
+	// Verify parent chain exists
+	if len(result.ScopeParents) < 2 {
+		t.Fatalf("expected at least 2 ScopeParents entries for nested blocks, got %d", len(result.ScopeParents))
+	}
+	t.Logf("✅ Nested block scope: run scope=%q, parents=%v", runScope, result.ScopeParents)
+}
+
+func TestExtract_DestructureWithRename(t *testing.T) {
+	code := []byte(`function setup() {
+    const { data: result, error: err } = fetchData();
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	destructures := map[string]string{}
+	for _, pa := range result.PendingAssignments {
+		if pa.Kind == "destructure" {
+			destructures[pa.LHS] = pa.DestructuredKey
+		}
+	}
+
+	if destructures["result"] != "data" {
+		t.Errorf("expected LHS=result → key=data, got key=%q", destructures["result"])
+	}
+	if destructures["err"] != "error" {
+		t.Errorf("expected LHS=err → key=error, got key=%q", destructures["err"])
+	}
+	t.Logf("✅ Destructure with rename: %v", destructures)
+}
+
+func TestExtract_DestructureAwait(t *testing.T) {
+	code := []byte(`async function load() {
+    const { data, loading } = await useQuery();
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	destructures := map[string]string{}
+	callees := map[string]string{}
+	for _, pa := range result.PendingAssignments {
+		if pa.Kind == "destructure" {
+			destructures[pa.LHS] = pa.DestructuredKey
+			callees[pa.LHS] = pa.Callee
+		}
+	}
+
+	if destructures["data"] != "data" {
+		t.Errorf("expected data→data, got %q", destructures["data"])
+	}
+	if callees["data"] != "useQuery" {
+		t.Errorf("expected callee=useQuery, got %q", callees["data"])
+	}
+	t.Logf("✅ Destructure await: callee=%q, keys=%v", callees["data"], destructures)
+}
+
+func TestExtract_NewExpressionTypeHint(t *testing.T) {
+	code := []byte(`function setup() {
+    const svc = new UserService();
+    svc.findById(1);
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	// Verify TypeHint for svc = new UserService()
+	var found bool
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "svc" && hint.TypeName == "UserService" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected TypeHint for svc=UserService from new_expression")
+	}
+	t.Log("✅ new_expression produces TypeHint: svc → UserService")
+}
+
+func TestExtract_NewExpressionInBlockScope(t *testing.T) {
+	code := []byte(`function process(flag: boolean) {
+    if (flag) {
+        const svc = new ServiceA();
+        svc.run();
+    } else {
+        const svc = new ServiceB();
+        svc.stop();
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/app.ts", RelPath: "app.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	// Verify TypeHints have block-level scope (different for if vs else)
+	scopesByType := map[string]string{}
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "svc" {
+			scopesByType[hint.TypeName] = hint.Scope
+		}
+	}
+
+	if scopesByType["ServiceA"] == "" {
+		t.Fatal("missing TypeHint for svc=ServiceA")
+	}
+	if scopesByType["ServiceB"] == "" {
+		t.Fatal("missing TypeHint for svc=ServiceB")
+	}
+	if scopesByType["ServiceA"] == scopesByType["ServiceB"] {
+		t.Fatalf("ServiceA and ServiceB should have different scopes, both got %q", scopesByType["ServiceA"])
+	}
+	t.Logf("✅ new_expression block scope: ServiceA scope=%q, ServiceB scope=%q", scopesByType["ServiceA"], scopesByType["ServiceB"])
 }

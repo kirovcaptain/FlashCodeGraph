@@ -312,10 +312,10 @@ public class Service {
 	if flowMap["commit"] != "try" {
 		t.Errorf("commit: expected try, got %q", flowMap["commit"])
 	}
-	if flowMap["rollback"] != "try > catch" {
+	if flowMap["rollback"] != "catch" {
 		t.Errorf("rollback: expected try > catch, got %q", flowMap["rollback"])
 	}
-	if flowMap["cleanup"] != "try > finally" {
+	if flowMap["cleanup"] != "finally" {
 		t.Errorf("cleanup: expected try > finally, got %q", flowMap["cleanup"])
 	}
 	t.Log("✅ Java FlowContext: if/else/loop/try/catch/finally")

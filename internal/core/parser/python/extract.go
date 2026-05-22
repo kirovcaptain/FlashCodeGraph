@@ -3,11 +3,11 @@ package python
 import (
 	"strings"
 
-	tree_sitter "github.com/tree-sitter/go-tree-sitter"
-	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
-	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/astutil"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/scanner"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 // extractPython extracts symbols from Python AST.
@@ -394,6 +394,20 @@ func extractDecorated(node *tree_sitter.Node, content []byte, file scanner.Scann
 func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCallerName string, result *model.ParseResult) {
 	scope := qualifiedCallerName
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
+		// Nested function definition — extract Symbol and record parent relationship
+		if node.Kind() == "function_definition" {
+			nameNode := node.ChildByFieldName("name")
+			if nameNode != nil {
+				nestedName := nameNode.Utf8Text(content)
+				nestedQualifiedName := qualifiedCallerName + "." + nestedName
+				if result.ScopeParents == nil {
+					result.ScopeParents = make(map[string]string)
+				}
+				result.ScopeParents[nestedQualifiedName] = qualifiedCallerName
+			}
+			extractFunction(node, content, filePath, "", result)
+			return false // don't walk into nested function body (already handled)
+		}
 		if node.Kind() == "assignment" {
 			extractPythonPendingAssignment(node, content, scope, filePath, result)
 		}
@@ -429,17 +443,20 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 			}
 
 			if calledName != "" {
-				fc := astutil.DetectFlowContext(node, content)
+				flowContext := astutil.DetectFlowContext(node, content)
+				blockScope := astutil.DetectBlockScope(node, qualifiedCallerName)
+				mergePythonScopeParents(result, blockScope.ScopeParents)
 				result.Calls = append(result.Calls, model.RawCall{
 					CalledName:   calledName,
 					CallerName:   qualifiedCallerName,
+					CallerScope:  blockScope.ScopeKey,
 					CallerKind:   constants.KindFunction,
 					FilePath:     filePath,
 					Line:         int(node.StartPosition().Row) + 1,
 					ArgCount:     argCount,
 					ReceiverExpr: receiverExpr,
-					FlowContext:  fc.Kind,
-					FlowLine:     fc.Line,
+					FlowContext:  flowContext.Kind,
+					FlowLine:     flowContext.Line,
 				})
 			}
 		}
@@ -515,17 +532,22 @@ func extractPythonPendingAssignment(node *tree_sitter.Node, content []byte, scop
 	}
 	lhs := left.Utf8Text(content)
 
+	// Determine block-level scope
+	blockScope := astutil.DetectBlockScope(node, scope)
+	blockScopeKey := blockScope.ScopeKey
+	mergePythonScopeParents(result, blockScope.ScopeParents)
+
 	switch right.Kind() {
 	case "identifier":
 		result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-			Kind: "copy", LHS: lhs, Scope: scope, RHS: right.Utf8Text(content),
+			Kind: "copy", LHS: lhs, Scope: blockScopeKey, RHS: right.Utf8Text(content),
 		})
 	case "attribute":
 		obj := right.ChildByFieldName("object")
 		attr := right.ChildByFieldName("attribute")
 		if obj != nil && attr != nil && obj.Kind() == "identifier" {
 			result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-				Kind: "field_access", LHS: lhs, Scope: scope, Receiver: obj.Utf8Text(content), Field: attr.Utf8Text(content),
+				Kind: "field_access", LHS: lhs, Scope: blockScopeKey, Receiver: obj.Utf8Text(content), Field: attr.Utf8Text(content),
 			})
 		}
 	case "call":
@@ -535,14 +557,14 @@ func extractPythonPendingAssignment(node *tree_sitter.Node, content []byte, scop
 		}
 		if fn.Kind() == "identifier" {
 			result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-				Kind: "call_result", LHS: lhs, Scope: scope, Callee: fn.Utf8Text(content),
+				Kind: "call_result", LHS: lhs, Scope: blockScopeKey, Callee: fn.Utf8Text(content),
 			})
 		} else if fn.Kind() == "attribute" {
 			obj := fn.ChildByFieldName("object")
 			attr := fn.ChildByFieldName("attribute")
 			if obj != nil && attr != nil && obj.Kind() == "identifier" {
 				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-					Kind: "method_call_result", LHS: lhs, Scope: scope, Receiver: obj.Utf8Text(content), Method: attr.Utf8Text(content),
+					Kind: "method_call_result", LHS: lhs, Scope: blockScopeKey, Receiver: obj.Utf8Text(content), Method: attr.Utf8Text(content),
 				})
 			}
 		}
@@ -575,3 +597,15 @@ func buildQualifiedName(relPath, name string) string {
 	return modulePath + "." + name
 }
 
+// mergePythonScopeParents merges discovered scope parent relationships into the ParseResult.
+func mergePythonScopeParents(result *model.ParseResult, parents map[string]string) {
+	if len(parents) == 0 {
+		return
+	}
+	if result.ScopeParents == nil {
+		result.ScopeParents = make(map[string]string)
+	}
+	for child, parent := range parents {
+		result.ScopeParents[child] = parent
+	}
+}

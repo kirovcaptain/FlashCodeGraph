@@ -258,8 +258,9 @@ func buildLanguageHelpers(language string, symbolTable *resolver.SymbolTable, fr
 	case constants.LangPython:
 		helpers[constants.LangPython] = resolverpy.NewHelper()
 	case constants.LangTypeScript, constants.LangJavaScript:
-		helpers[constants.LangTypeScript] = resolverts.NewHelper()
-		helpers[constants.LangJavaScript] = resolverts.NewHelper()
+		tsExternalMethods := resolverts.NewExternalMethodManager(frameworks, projectRoot)
+		helpers[constants.LangTypeScript] = resolverts.NewHelper(tsExternalMethods)
+		helpers[constants.LangJavaScript] = resolverts.NewHelper(tsExternalMethods)
 	}
 	return helpers
 }

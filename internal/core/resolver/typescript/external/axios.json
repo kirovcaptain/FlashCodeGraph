@@ -1,0 +1,17 @@
+{
+  "axios.get": "AxiosResponse",
+  "axios.post": "AxiosResponse",
+  "axios.put": "AxiosResponse",
+  "axios.delete": "AxiosResponse",
+  "axios.patch": "AxiosResponse",
+  "axios.request": "AxiosResponse",
+  "axios.create": "AxiosInstance",
+  "AxiosInstance.get": "AxiosResponse",
+  "AxiosInstance.post": "AxiosResponse",
+  "AxiosInstance.put": "AxiosResponse",
+  "AxiosInstance.delete": "AxiosResponse",
+  "AxiosInstance.patch": "AxiosResponse",
+  "AxiosInstance.request": "AxiosResponse",
+  "AxiosInstance.interceptors": "AxiosInterceptorManager",
+  "AxiosResponse.data": "T"
+}

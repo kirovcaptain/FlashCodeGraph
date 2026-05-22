@@ -498,3 +498,190 @@ func TestResolveFixpoint_UserDefinedGeneric(t *testing.T) {
 	}
 	t.Log("✅ Fixpoint: TKPayResponseWrapper<TKPayPayOutOrderCallback>.getData → T → TKPayPayOutOrderCallback")
 }
+
+func TestLookupInEnv_ScopeParentsMultiLevel(t *testing.T) {
+	env := &model.TypeEnv{
+		Bindings: map[string]*model.TypeInfo{
+			"app.setup:db":              {TypeName: "Database"},
+			"app.setup#L3:localVar":     {TypeName: "String"},
+			"app.setup#L3#L5:innerVar":  {TypeName: "Number"},
+		},
+		ScopeParents: map[string]string{
+			"app.setup#L3#L5": "app.setup#L3",
+			"app.setup#L3":    "app.setup",
+		},
+	}
+
+	// From innermost block, should find variable in outer function scope
+	result := lookupInEnv(env, "app.setup#L3#L5", "db")
+	if result != "Database" {
+		t.Fatalf("expected Database from outer scope, got %q", result)
+	}
+
+	// From innermost block, should find variable in parent block
+	result = lookupInEnv(env, "app.setup#L3#L5", "localVar")
+	if result != "String" {
+		t.Fatalf("expected String from parent block, got %q", result)
+	}
+
+	// From innermost block, should find own variable
+	result = lookupInEnv(env, "app.setup#L3#L5", "innerVar")
+	if result != "Number" {
+		t.Fatalf("expected Number from own scope, got %q", result)
+	}
+
+	// Variable not found anywhere
+	result = lookupInEnv(env, "app.setup#L3#L5", "notExist")
+	if result != "" {
+		t.Fatalf("expected empty for non-existent var, got %q", result)
+	}
+
+	t.Log("✅ lookupInEnv multi-level ScopeParents traversal works")
+}
+
+func TestLookupInEnv_ModuleLevelFallback(t *testing.T) {
+	env := &model.TypeEnv{
+		Bindings: map[string]*model.TypeInfo{
+			"globalConfig": {TypeName: "Config"},
+		},
+		ScopeParents: map[string]string{
+			"app.setup#L3": "app.setup",
+		},
+	}
+
+	// From block scope, should fall through to module-level
+	result := lookupInEnv(env, "app.setup#L3", "globalConfig")
+	if result != "Config" {
+		t.Fatalf("expected Config from module fallback, got %q", result)
+	}
+	t.Log("✅ lookupInEnv module-level fallback works")
+}
+
+func TestLookupInEnv_NoScopeParents_LegacyBehavior(t *testing.T) {
+	env := &model.TypeEnv{
+		Bindings: map[string]*model.TypeInfo{
+			"Controller.handle:dao": {TypeName: "UserDao"},
+			"Controller:status":     {TypeName: "String"},
+		},
+		// No ScopeParents — Java style
+	}
+
+	// Direct scope lookup
+	result := lookupInEnv(env, "Controller.handle", "dao")
+	if result != "UserDao" {
+		t.Fatalf("expected UserDao, got %q", result)
+	}
+
+	// Class scope fallback (one level only)
+	result = lookupInEnv(env, "Controller.handle", "status")
+	if result != "String" {
+		t.Fatalf("expected String from class scope, got %q", result)
+	}
+
+	// Should NOT traverse beyond class scope
+	result = lookupInEnv(env, "Controller.handle", "notExist")
+	if result != "" {
+		t.Fatalf("expected empty, got %q", result)
+	}
+
+	t.Log("✅ lookupInEnv legacy behavior (no ScopeParents) preserved")
+}
+
+func TestResolveFixpoint_DestructureObject(t *testing.T) {
+	infer := New()
+	result := &model.ParseResult{
+		PendingAssignments: []model.PendingAssignment{
+			{Kind: "destructure", LHS: "data", Scope: "app.setup", Callee: "useQuery", DestructuredKey: "data"},
+			{Kind: "destructure", LHS: "error", Scope: "app.setup", Callee: "useQuery", DestructuredKey: "error"},
+		},
+	}
+
+	env := infer.InferLocal(result)
+
+	// Simulate findByName returning useQuery with return type
+	findByName := func(name string) []model.Symbol {
+		if name == "useQuery" {
+			return []model.Symbol{{Kind: "Function", ReturnTypes: []string{"QueryResult"}}}
+		}
+		return nil
+	}
+
+	// Simulate findFieldByOwner
+	findFieldByOwner := func(ownerType, fieldName string) *model.FieldInfo {
+		if ownerType == "QueryResult" {
+			switch fieldName {
+			case "data":
+				return &model.FieldInfo{Type: "User[]"}
+			case "error":
+				return &model.FieldInfo{Type: "Error"}
+			}
+		}
+		return nil
+	}
+
+	infer.ResolveFixpoint(env, result.PendingAssignments, findByName, findFieldByOwner)
+
+	dataInfo := env.Bindings["app.setup:data"]
+	if dataInfo == nil || dataInfo.TypeName != "User[]" {
+		t.Fatalf("expected data→User[], got %v", dataInfo)
+	}
+	errorInfo := env.Bindings["app.setup:error"]
+	if errorInfo == nil || errorInfo.TypeName != "Error" {
+		t.Fatalf("expected error→Error, got %v", errorInfo)
+	}
+	t.Log("✅ Fixpoint destructure object: data=User[], error=Error")
+}
+
+func TestResolveFixpoint_DestructureArray(t *testing.T) {
+	infer := New()
+	result := &model.ParseResult{
+		PendingAssignments: []model.PendingAssignment{
+			{Kind: "destructure", LHS: "count", Scope: "app.setup", Callee: "useState", DestructuredKey: "0"},
+			{Kind: "destructure", LHS: "setCount", Scope: "app.setup", Callee: "useState", DestructuredKey: "1"},
+		},
+	}
+
+	env := infer.InferLocal(result)
+
+	findByName := func(name string) []model.Symbol {
+		if name == "useState" {
+			return []model.Symbol{{Kind: "Function", ReturnTypes: []string{"number", "Function"}}}
+		}
+		return nil
+	}
+
+	infer.ResolveFixpoint(env, result.PendingAssignments, findByName)
+
+	countInfo := env.Bindings["app.setup:count"]
+	if countInfo == nil || countInfo.TypeName != "number" {
+		t.Fatalf("expected count→number, got %v", countInfo)
+	}
+	setCountInfo := env.Bindings["app.setup:setCount"]
+	if setCountInfo == nil || setCountInfo.TypeName != "Function" {
+		t.Fatalf("expected setCount→Function, got %v", setCountInfo)
+	}
+	t.Log("✅ Fixpoint destructure array: count=number, setCount=Function")
+}
+
+func TestInferLocal_ScopeParentsPassed(t *testing.T) {
+	infer := New()
+	result := &model.ParseResult{
+		ScopeParents: map[string]string{
+			"app.setup#L3": "app.setup",
+			"app.setup.inner": "app.setup",
+		},
+	}
+
+	env := infer.InferLocal(result)
+
+	if env.ScopeParents == nil {
+		t.Fatal("ScopeParents should be passed to TypeEnv")
+	}
+	if env.ScopeParents["app.setup#L3"] != "app.setup" {
+		t.Fatalf("expected parent app.setup, got %q", env.ScopeParents["app.setup#L3"])
+	}
+	if env.ScopeParents["app.setup.inner"] != "app.setup" {
+		t.Fatalf("expected parent app.setup, got %q", env.ScopeParents["app.setup.inner"])
+	}
+	t.Log("✅ InferLocal passes ScopeParents to TypeEnv")
+}

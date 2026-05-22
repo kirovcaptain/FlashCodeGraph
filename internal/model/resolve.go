@@ -2,8 +2,9 @@ package model
 
 // TypeEnv maps variable names to type info within a scope.
 type TypeEnv struct {
-	Bindings map[string]*TypeInfo `json:"bindings"`
-	Imports  []RawImport          `json:"imports,omitempty"`
+	Bindings     map[string]*TypeInfo `json:"bindings"`
+	Imports      []RawImport          `json:"imports,omitempty"`
+	ScopeParents map[string]string    `json:"scope_parents,omitempty"` // childScope → parentScope for chain lookup
 }
 
 // TypeInfo describes an inferred type.

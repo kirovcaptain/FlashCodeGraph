@@ -204,3 +204,88 @@ func TestExtract_PythonPropertyAccessor(t *testing.T) {
 	}
 	t.Log("✅ Python @property/@setter accessor detection")
 }
+
+func TestExtract_NestedDefScopeParent(t *testing.T) {
+	code := []byte(`def outer():
+    x = get_connection()
+
+    def inner():
+        x.query()
+
+    inner()
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.py", Language: "python"}
+	file := scanner.ScannedFile{Path: "/test/app.py", RelPath: "app.py", Language: "python"}
+	Extract(root, code, file, result)
+
+	if result.ScopeParents == nil {
+		t.Fatal("ScopeParents should be populated for nested def")
+	}
+
+	// Find inner's qualified name
+	var innerQualifiedName string
+	for child, parent := range result.ScopeParents {
+		if parent != "" && child != "" {
+			innerQualifiedName = child
+			_ = parent
+			break
+		}
+	}
+	if innerQualifiedName == "" {
+		t.Fatal("no ScopeParents entry found for nested function")
+	}
+
+	parent := result.ScopeParents[innerQualifiedName]
+	if parent == "" {
+		t.Fatalf("parent of %q should not be empty", innerQualifiedName)
+	}
+
+	// Verify inner function is extracted as a Symbol
+	var innerSymbolFound bool
+	for _, sym := range result.Symbols {
+		if sym.Name == "inner" {
+			innerSymbolFound = true
+			break
+		}
+	}
+	if !innerSymbolFound {
+		t.Fatal("nested def 'inner' should be extracted as a Symbol")
+	}
+
+	t.Logf("✅ Python nested def parent: %s → %s", innerQualifiedName, parent)
+}
+
+func TestExtract_PythonBlockScopeInAssignment(t *testing.T) {
+	code := []byte(`def process(flag):
+    if flag:
+        svc = ServiceA()
+        svc.get_data()
+    else:
+        svc = ServiceB()
+        svc.get_error()
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "app.py", Language: "python"}
+	file := scanner.ScannedFile{Path: "/test/app.py", RelPath: "app.py", Language: "python"}
+	Extract(root, code, file, result)
+
+	scopeMap := map[string]string{}
+	for _, call := range result.Calls {
+		if call.CalledName == "get_data" || call.CalledName == "get_error" {
+			scopeMap[call.CalledName] = call.CallerScope
+		}
+	}
+
+	if scopeMap["get_data"] == scopeMap["get_error"] {
+		t.Fatalf("if/else calls should have different CallerScope, both got %q", scopeMap["get_data"])
+	}
+	if scopeMap["get_data"] == "" || scopeMap["get_error"] == "" {
+		t.Fatal("CallerScope should not be empty for calls inside if/else blocks")
+	}
+	t.Logf("✅ Python block scope: get_data=%q, get_error=%q", scopeMap["get_data"], scopeMap["get_error"])
+}

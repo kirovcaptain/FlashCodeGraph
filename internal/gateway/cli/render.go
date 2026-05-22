@@ -355,7 +355,7 @@ func splitFlowContext(ctx string) []string {
 	if ctx == "" {
 		return nil
 	}
-	return strings.Split(ctx, " > ")
+	return strings.Split(ctx, " - ")
 }
 
 func renderVNode(node *vnode, nodeMap map[string]*model.Node, children map[string][]callChild, visited map[string]bool, prefix string, currentDepth int, maxDepth int) {

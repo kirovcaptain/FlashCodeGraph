@@ -2,6 +2,7 @@
 package typeinfer
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
@@ -20,7 +21,8 @@ func New() *TypeInfer {
 // Returns a TypeEnv mapping (scope, varName) → TypeInfo.
 func (infer *TypeInfer) InferLocal(result *model.ParseResult) *model.TypeEnv {
 	env := &model.TypeEnv{
-		Bindings: make(map[string]*model.TypeInfo),
+		Bindings:     make(map[string]*model.TypeInfo),
+		ScopeParents: result.ScopeParents,
 	}
 
 	// Tier 0: explicit type annotations (from parser TypeHints)
@@ -166,6 +168,27 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 				if receiverType != "" {
 					typeName = lookupMethodReturnTypeWithArgs(env, p.Scope, p.Receiver, receiverType, p.Method, findByName)
 				}
+			case "destructure":
+				returnType := lookupReturnType(p.Callee, findByName)
+				if returnType != "" {
+					if len(p.DestructuredKey) > 0 && p.DestructuredKey[0] >= '0' && p.DestructuredKey[0] <= '9' {
+						// Tuple/array destructure: key is index ("0", "1", ...)
+						idx, _ := strconv.Atoi(p.DestructuredKey)
+						for _, fn := range findByName(p.Callee) {
+							if fn.Kind == constants.KindFunction && idx < len(fn.ReturnTypes) {
+								typeName = fn.ReturnTypes[idx]
+								break
+							}
+						}
+					} else {
+						// Object destructure: key is field name
+						if len(findFieldByOwner) > 0 && findFieldByOwner[0] != nil {
+							if fieldInfo := findFieldByOwner[0](returnType, p.DestructuredKey); fieldInfo != nil {
+								typeName = fieldInfo.Type
+							}
+						}
+					}
+				}
 			}
 			if typeName != "" {
 				env.Bindings[key] = &model.TypeInfo{TypeName: typeName, Tier: 2, Scope: p.Scope}
@@ -191,19 +214,67 @@ func LookupInEnv(env *model.TypeEnv, scope, varName string) string {
 	return lookupInEnv(env, scope, varName)
 }
 
+// LookupBindingInEnv is the exported version of lookupBindingInEnv for use by resolver.
+func LookupBindingInEnv(env *model.TypeEnv, scope, varName string) *model.TypeInfo {
+	return lookupBindingInEnv(env, scope, varName)
+}
+
 func lookupInEnv(env *model.TypeEnv, scope, varName string) string {
-	key := scopedKey(scope, varName)
-	if info, exists := env.Bindings[key]; exists {
+	if info := lookupBindingInEnv(env, scope, varName); info != nil {
 		return info.TypeName
 	}
-	// Try class scope (field TypeHint)
-	if dotIdx := strings.LastIndex(scope, "."); dotIdx >= 0 {
-		classKey := scopedKey(scope[:dotIdx], varName)
-		if info, exists := env.Bindings[classKey]; exists {
-			return info.TypeName
+	return ""
+}
+
+// lookupBindingInEnv traverses the scope chain to find a variable binding.
+// When ScopeParents is available, traverses the full chain.
+// When ScopeParents is empty (Java/Go), does one class scope fallback only (legacy behavior).
+func lookupBindingInEnv(env *model.TypeEnv, scope, varName string) *model.TypeInfo {
+	// Direct lookup at current scope
+	key := scopedKey(scope, varName)
+	if info, exists := env.Bindings[key]; exists {
+		return info
+	}
+
+	// If ScopeParents available, traverse the full scope chain
+	if len(env.ScopeParents) > 0 {
+		current := scope
+		// Skip first iteration (already checked above)
+		if parent, ok := env.ScopeParents[current]; ok {
+			current = parent
+		} else if dotIdx := strings.LastIndex(current, "."); dotIdx >= 0 {
+			current = current[:dotIdx]
+		} else {
+			current = ""
+		}
+		for current != "" {
+			k := scopedKey(current, varName)
+			if info, exists := env.Bindings[k]; exists {
+				return info
+			}
+			if parent, ok := env.ScopeParents[current]; ok {
+				current = parent
+			} else if dotIdx := strings.LastIndex(current, "."); dotIdx >= 0 {
+				current = current[:dotIdx]
+			} else {
+				current = ""
+			}
+		}
+	} else {
+		// No ScopeParents: legacy behavior — one class scope fallback only
+		if dotIdx := strings.LastIndex(scope, "."); dotIdx >= 0 {
+			classKey := scopedKey(scope[:dotIdx], varName)
+			if info, exists := env.Bindings[classKey]; exists {
+				return info
+			}
 		}
 	}
-	return ""
+
+	// Module-level fallback
+	if info, exists := env.Bindings[varName]; exists {
+		return info
+	}
+	return nil
 }
 
 func lookupReturnType(callee string, findByName func(string) []model.Symbol) string {
@@ -464,7 +535,11 @@ func resolveTypeNames(env *model.TypeEnv, imports []model.RawImport) {
 	for _, info := range env.Bindings {
 		for _, imp := range imports {
 			if imp.SymbolName == info.TypeName {
-				info.TypeName = imp.ModulePath
+				// Only resolve to ModulePath if it looks like a fully qualified name
+				// (e.g. "com.example.UserService"), not a relative path (e.g. "./services")
+				if !strings.HasPrefix(imp.ModulePath, "./") && !strings.HasPrefix(imp.ModulePath, "../") && strings.Contains(imp.ModulePath, ".") {
+					info.TypeName = imp.ModulePath
+				}
 				break
 			}
 		}
