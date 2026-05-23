@@ -922,3 +922,78 @@ declare function useState<S>(initial: S): [S, (s: S) => void];`)
 		t.Errorf("useState TypeParams: got %v, want [S]", useStateSymbol.TypeParams)
 	}
 }
+
+func TestExtractClass_HeritageTypeArgs(t *testing.T) {
+	tests := []struct {
+		name             string
+		code             string
+		parentName       string
+		expectedTypeArgs []string
+		heritageKind     string
+	}{
+		{
+			name:             "single generic extends",
+			code:             `class UserService extends BaseService<User> {}`,
+			parentName:       "BaseService",
+			expectedTypeArgs: []string{"User"},
+			heritageKind:     "extends",
+		},
+		{
+			name:             "multiple generic extends",
+			code:             `class Repo extends Base<User, string> {}`,
+			parentName:       "Base",
+			expectedTypeArgs: []string{"User", "string"},
+			heritageKind:     "extends",
+		},
+		{
+			name:             "no generic extends",
+			code:             `class Dog extends Animal {}`,
+			parentName:       "Animal",
+			expectedTypeArgs: nil,
+			heritageKind:     "extends",
+		},
+		{
+			name:             "implements generic",
+			code:             `class UserRepo implements Repository<User> {}`,
+			parentName:       "Repository",
+			expectedTypeArgs: []string{"User"},
+			heritageKind:     "implements",
+		},
+		{
+			name:             "abstract class extends",
+			code:             `class UserService extends AbstractService<User> {}`,
+			parentName:       "AbstractService",
+			expectedTypeArgs: []string{"User"},
+			heritageKind:     "extends",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			root, cleanup := parse([]byte(testCase.code))
+			defer cleanup()
+			result := &model.ParseResult{}
+			file := scanner.ScannedFile{RelPath: "test.ts", Language: "typescript"}
+			Extract(root, []byte(testCase.code), file, result)
+
+			var found *model.RawHeritage
+			for i := range result.Heritage {
+				if result.Heritage[i].ParentName == testCase.parentName && result.Heritage[i].Kind == testCase.heritageKind {
+					found = &result.Heritage[i]
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("heritage entry for parent %q kind %q not found", testCase.parentName, testCase.heritageKind)
+			}
+			if len(found.TypeArgs) != len(testCase.expectedTypeArgs) {
+				t.Fatalf("TypeArgs length: got %d, want %d (got %v)", len(found.TypeArgs), len(testCase.expectedTypeArgs), found.TypeArgs)
+			}
+			for i, expected := range testCase.expectedTypeArgs {
+				if found.TypeArgs[i] != expected {
+					t.Errorf("TypeArgs[%d]: got %q, want %q", i, found.TypeArgs[i], expected)
+				}
+			}
+		})
+	}
+}

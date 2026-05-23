@@ -2909,3 +2909,121 @@ func TestIsGenericTypeParam(t *testing.T) {
 		})
 	}
 }
+
+func TestSubstituteGenericParam_Heritage(t *testing.T) {
+	tests := []struct {
+		name         string
+		receiverType string
+		retType      string
+		heritage     []model.RawHeritage
+		parentSymbol model.Symbol
+		expected     string
+	}{
+		{
+			name:         "extends single generic substitution",
+			receiverType: "UserRepo",
+			retType:      "T",
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User"}}},
+			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: []string{"T"}},
+			expected:     "User",
+		},
+		{
+			name:         "extends multiple generic index 1",
+			receiverType: "UserRepo",
+			retType:      "ID",
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User", "Long"}}},
+			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: []string{"T", "ID"}},
+			expected:     "Long",
+		},
+		{
+			name:         "no heritage entries",
+			receiverType: "UserRepo",
+			retType:      "T",
+			heritage:     nil,
+			parentSymbol: model.Symbol{},
+			expected:     "T",
+		},
+		{
+			name:         "retType is concrete type",
+			receiverType: "UserRepo",
+			retType:      "int",
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User"}}},
+			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: []string{"T"}},
+			expected:     "int",
+		},
+		{
+			name:         "parent has no TypeParams",
+			receiverType: "UserRepo",
+			retType:      "T",
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User"}}},
+			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: nil},
+			expected:     "T",
+		},
+		{
+			name:         "TypeArgs shorter than TypeParams index",
+			receiverType: "UserRepo",
+			retType:      "ID",
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User"}}},
+			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: []string{"T", "ID"}},
+			expected:     "ID",
+		},
+		{
+			name:         "implements generic substitution",
+			receiverType: "UserService",
+			retType:      "R",
+			heritage:     []model.RawHeritage{{ChildName: "UserService", ParentName: "Converter", Kind: "implements", TypeArgs: []string{"User", "UserDTO"}}},
+			parentSymbol: model.Symbol{Name: "Converter", Kind: "Interface", TypeParams: []string{"S", "R"}},
+			expected:     "UserDTO",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			symbolTable := NewSymbolTable()
+			if testCase.parentSymbol.Name != "" {
+				symbolTable.Add(testCase.parentSymbol)
+			}
+			resolver := NewResolver(symbolTable)
+			if testCase.heritage != nil {
+				resolver.SetHeritage(testCase.heritage)
+			}
+			call := model.RawCall{FilePath: "test.java", CallerName: "caller"}
+			envs := map[string]*model.TypeEnv{"test.java": {}}
+			result := resolver.substituteGenericParam(testCase.retType, testCase.receiverType, "receiver", call, envs)
+			if result != testCase.expected {
+				t.Errorf("substituteGenericParam(%q, %q) = %q, want %q",
+					testCase.retType, testCase.receiverType, result, testCase.expected)
+			}
+		})
+	}
+}
+
+func TestSubstituteGenericParam_OwnTypeParamsTakesPriority(t *testing.T) {
+	// R-4: When receiver class has its own TypeParams and TypeEnv has TypeArgs,
+	// the original logic (TypeEnv lookup) should take priority over heritage chain.
+	symbolTable := NewSymbolTable()
+	// Receiver class itself is generic: List<T>
+	symbolTable.Add(model.Symbol{Name: "List", Kind: "Class", TypeParams: []string{"T"}})
+	// Also has a parent with TypeParams (should NOT be reached)
+	symbolTable.Add(model.Symbol{Name: "AbstractList", Kind: "Class", TypeParams: []string{"E"}})
+
+	resolver := NewResolver(symbolTable)
+	resolver.SetHeritage([]model.RawHeritage{
+		{ChildName: "List", ParentName: "AbstractList", Kind: "extends", TypeArgs: []string{"WrongType"}},
+	})
+
+	call := model.RawCall{FilePath: "test.java", CallerName: "com.example.Service.process"}
+	// TypeEnv has TypeArgs for the receiver variable "users" → ["User"]
+	envs := map[string]*model.TypeEnv{
+		"test.java": {
+			Bindings: map[string]*model.TypeInfo{
+				"com.example.Service.process:users": {TypeName: "List", TypeArgs: []string{"User"}, Scope: "com.example.Service.process"},
+			},
+		},
+	}
+
+	result := resolver.substituteGenericParam("T", "List", "users", call, envs)
+	if result != "User" {
+		t.Errorf("expected own TypeParams+TypeEnv to take priority, got %q, want %q", result, "User")
+	}
+}

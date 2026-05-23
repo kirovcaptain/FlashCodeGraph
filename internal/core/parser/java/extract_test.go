@@ -1081,3 +1081,78 @@ class Repo<T extends Entity, ID extends Serializable> {
 		}
 	}
 }
+
+func TestExtractClass_HeritageTypeArgs(t *testing.T) {
+	tests := []struct {
+		name             string
+		code             string
+		parentName       string
+		expectedTypeArgs []string
+		heritageKind     string
+	}{
+		{
+			name: "single generic extends",
+			code: `package com.example;
+class UserRepo extends BaseRepo<User> {}`,
+			parentName:       "BaseRepo",
+			expectedTypeArgs: []string{"User"},
+			heritageKind:     "extends",
+		},
+		{
+			name: "multiple generic extends",
+			code: `package com.example;
+class UserRepo extends BaseRepo<User, Long> {}`,
+			parentName:       "BaseRepo",
+			expectedTypeArgs: []string{"User", "Long"},
+			heritageKind:     "extends",
+		},
+		{
+			name: "no generic extends",
+			code: `package com.example;
+class Dog extends Animal {}`,
+			parentName:       "Animal",
+			expectedTypeArgs: nil,
+			heritageKind:     "extends",
+		},
+		{
+			name: "implements generic",
+			code: `package com.example;
+class UserService implements Comparable<User> {}`,
+			parentName:       "Comparable",
+			expectedTypeArgs: []string{"User"},
+			heritageKind:     "implements",
+		},
+		{
+			name: "nested generic extends",
+			code: `package com.example;
+class Repo extends Base<List<User>, Long> {}`,
+			parentName:       "Base",
+			expectedTypeArgs: []string{"List", "Long"},
+			heritageKind:     "extends",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := parseJavaFile(t, testCase.code, "Test.java")
+			var found *model.RawHeritage
+			for i := range result.Heritage {
+				if result.Heritage[i].ParentName == testCase.parentName && result.Heritage[i].Kind == testCase.heritageKind {
+					found = &result.Heritage[i]
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("heritage entry for parent %q kind %q not found", testCase.parentName, testCase.heritageKind)
+			}
+			if len(found.TypeArgs) != len(testCase.expectedTypeArgs) {
+				t.Fatalf("TypeArgs length: got %d, want %d (got %v)", len(found.TypeArgs), len(testCase.expectedTypeArgs), found.TypeArgs)
+			}
+			for i, expected := range testCase.expectedTypeArgs {
+				if found.TypeArgs[i] != expected {
+					t.Errorf("TypeArgs[%d]: got %q, want %q", i, found.TypeArgs[i], expected)
+				}
+			}
+		})
+	}
+}

@@ -176,6 +176,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 		case "superclass":
 			parentType := extractTypeFromHeritage(child, content)
 			if parentType != "" {
+				heritageTypeArgs := extractHeritageTypeArgs(child, content)
 				result.Heritage = append(result.Heritage, model.RawHeritage{
 					ChildName:       className,
 					ChildQualified:  qualifiedName,
@@ -183,6 +184,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 					ParentQualified: resolveParentQualified(parentType),
 					Kind:            "extends",
 					FilePath:        filePath,
+					TypeArgs:        heritageTypeArgs,
 				})
 			}
 		case "super_interfaces":
@@ -202,6 +204,10 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 					if iface.IsNamed() {
 						ifaceName := ExtractTypeName(iface, content)
 						if ifaceName != "" {
+							var interfaceTypeArgs []string
+							if iface.Kind() == "generic_type" {
+								interfaceTypeArgs = ExtractTypeArgs(iface, content)
+							}
 							result.Heritage = append(result.Heritage, model.RawHeritage{
 								ChildName:       className,
 								ChildQualified:  qualifiedName,
@@ -209,6 +215,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 								ParentQualified: resolveParentQualified(ifaceName),
 								Kind:            "implements",
 								FilePath:        filePath,
+								TypeArgs:        interfaceTypeArgs,
 							})
 						}
 					}
@@ -1313,6 +1320,18 @@ func extractTypeFromHeritage(node *tree_sitter.Node, content []byte) string {
 		}
 	}
 	return ""
+}
+
+// extractHeritageTypeArgs extracts generic type arguments from a superclass node.
+// For: extends BaseRepo<User, Long> → ["User", "Long"]
+func extractHeritageTypeArgs(superclassNode *tree_sitter.Node, content []byte) []string {
+	for i := uint(0); i < superclassNode.ChildCount(); i++ {
+		child := superclassNode.Child(i)
+		if child.Kind() == "generic_type" {
+			return ExtractTypeArgs(child, content)
+		}
+	}
+	return nil
 }
 
 // countComplexity counts cyclomatic complexity (branches + 1).

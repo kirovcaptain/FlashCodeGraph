@@ -903,10 +903,10 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 	return ""
 }
 
-// substituteGenericParam replaces a type parameter (e.g. "T") with the actual type argument
-// by looking up the class's TypeParams and the receiver variable's TypeArgs.
-// substituteGenericParam replaces a generic return type (e.g. "T") with the actual type argument
-// from the receiver's instantiation. Example: List<String>.get() returns "T" → substituted to "String".
+// substituteGenericParam replaces a generic return type (e.g. "T") with the actual type argument.
+// First checks the receiver class's own TypeParams + TypeEnv TypeArgs (for direct generic instantiation).
+// Then checks heritage chain: if receiver is a subclass, looks up parent's TypeParams and uses
+// the heritage TypeArgs to substitute. Example: UserRepo extends BaseRepo<User> → T becomes "User".
 func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiverVar string, call model.RawCall, envs map[string]*model.TypeEnv) string {
 	if len(retType) > 20 || strings.Contains(retType, ".") {
 		return retType
@@ -915,15 +915,14 @@ func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiver
 	if dotIdx := strings.LastIndex(receiverType, "."); dotIdx >= 0 {
 		typeSeg = receiverType[dotIdx+1:]
 	}
-	// Find class with TypeParams
+	// 1. Check receiver class's own TypeParams + TypeEnv TypeArgs
 	classSymbols := resolver.symbolTable.FindByName(typeSeg)
-	for _, cls := range classSymbols {
-		if len(cls.TypeParams) == 0 {
+	for _, classSymbol := range classSymbols {
+		if len(classSymbol.TypeParams) == 0 {
 			continue
 		}
-		for idx, tp := range cls.TypeParams {
-			if tp == retType {
-				// Get TypeArgs from TypeEnv
+		for idx, typeParam := range classSymbol.TypeParams {
+			if typeParam == retType {
 				env := envs[call.FilePath]
 				if env == nil {
 					return retType
@@ -935,6 +934,26 @@ func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiver
 			}
 		}
 	}
+
+	// 2. Check heritage chain: subclass inherits from generic parent
+	heritageEntries := resolver.heritageByChild[typeSeg]
+	for _, heritageEntry := range heritageEntries {
+		if len(heritageEntry.TypeArgs) == 0 {
+			continue
+		}
+		parentSymbols := resolver.symbolTable.FindByName(heritageEntry.ParentName)
+		for _, parentClass := range parentSymbols {
+			if len(parentClass.TypeParams) == 0 {
+				continue
+			}
+			for idx, typeParam := range parentClass.TypeParams {
+				if typeParam == retType && idx < len(heritageEntry.TypeArgs) {
+					return heritageEntry.TypeArgs[idx]
+				}
+			}
+		}
+	}
+
 	return retType
 }
 

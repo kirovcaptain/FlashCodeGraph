@@ -31,12 +31,13 @@ type RawImport struct {
 
 // RawHeritage represents an inheritance/implementation relationship from AST.
 type RawHeritage struct {
-	ChildName      string `json:"child_name"`
-	ChildQualified string `json:"child_qualified,omitempty"`
-	ParentName      string `json:"parent_name"`
-	ParentQualified string `json:"parent_qualified,omitempty"`
-	Kind            string `json:"kind"` // extends / implements / embedding
-	FilePath       string `json:"file_path"`
+	ChildName       string   `json:"child_name"`
+	ChildQualified  string   `json:"child_qualified,omitempty"`
+	ParentName      string   `json:"parent_name"`
+	ParentQualified string   `json:"parent_qualified,omitempty"`
+	Kind            string   `json:"kind"`                       // extends / implements / embedding
+	FilePath        string   `json:"file_path"`
+	TypeArgs        []string `json:"type_args,omitempty"`        // generic args: extends Base<User, Long> → ["User", "Long"]
 }
 
 // RawRoute represents a route declaration extracted from AST.

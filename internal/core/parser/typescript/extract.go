@@ -310,32 +310,47 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 			clause := heritageNode.Child(i)
 			switch clause.Kind() {
 			case "extends_clause":
+				var parentName string
+				var heritageTypeArgs []string
 				for j := uint(0); j < clause.ChildCount(); j++ {
 					typeNode := clause.Child(j)
-					if typeNode.IsNamed() && typeNode.Kind() != "type_arguments" {
-						parentName := extractTypeName(typeNode, content)
-						if parentName != "" {
-							result.Heritage = append(result.Heritage, model.RawHeritage{
-								ChildName: className, ChildQualified: qualifiedName,
-								ParentName: parentName,
-								Kind:       "extends", FilePath: file.RelPath,
-							})
-						}
+					if typeNode.Kind() == "type_arguments" {
+						heritageTypeArgs = extractTypeArgsFromNode(typeNode, content)
+					} else if typeNode.IsNamed() {
+						parentName = extractTypeName(typeNode, content)
 					}
+				}
+				if parentName != "" {
+					result.Heritage = append(result.Heritage, model.RawHeritage{
+						ChildName: className, ChildQualified: qualifiedName,
+						ParentName: parentName,
+						Kind:       "extends", FilePath: file.RelPath,
+						TypeArgs:   heritageTypeArgs,
+					})
 				}
 			case "implements_clause":
 				for j := uint(0); j < clause.ChildCount(); j++ {
 					typeNode := clause.Child(j)
-					if typeNode.IsNamed() && typeNode.Kind() != "type_arguments" {
-						ifaceName := extractTypeName(typeNode, content)
-						if ifaceName != "" {
-							result.Heritage = append(result.Heritage, model.RawHeritage{
-								ChildName: className, ChildQualified: qualifiedName,
-								ParentName: ifaceName,
-								Kind:       "implements", FilePath: file.RelPath,
-							})
-						}
+					if !typeNode.IsNamed() {
+						continue
 					}
+					if typeNode.Kind() == "type_arguments" {
+						continue
+					}
+					ifaceName := extractTypeName(typeNode, content)
+					if ifaceName == "" {
+						continue
+					}
+					var interfaceTypeArgs []string
+					if typeNode.Kind() == "generic_type" {
+						interfaceTypeArgs = extractTypeArgsFromNode(astutil.FindChildByKind(typeNode, "type_arguments"), content)
+					}
+					result.Heritage = append(result.Heritage, model.RawHeritage{
+						ChildName: className, ChildQualified: qualifiedName,
+						ParentName: ifaceName,
+						Kind:       "implements", FilePath: file.RelPath,
+						TypeArgs:   interfaceTypeArgs,
+					})
 				}
 			case "extends":
 				sawExtends = true
@@ -734,6 +749,22 @@ func extractTypeParams(node *tree_sitter.Node, content []byte) []string {
 		}
 	}
 	return typeParams
+}
+
+// extractTypeArgsFromNode extracts type argument names from a type_arguments node.
+// For TS: <User, string> → ["User", "string"]
+func extractTypeArgsFromNode(typeArgsNode *tree_sitter.Node, content []byte) []string {
+	if typeArgsNode == nil {
+		return nil
+	}
+	var typeArgs []string
+	for i := uint(0); i < typeArgsNode.ChildCount(); i++ {
+		child := typeArgsNode.Child(i)
+		if child.IsNamed() {
+			typeArgs = append(typeArgs, extractTypeName(child, content))
+		}
+	}
+	return typeArgs
 }
 
 func extractReturnTypes(node *tree_sitter.Node, content []byte) []string {
