@@ -318,3 +318,145 @@ func (s *Store[T]) Save(item T) error { return nil }
 		}
 	}
 }
+
+// --- Lambda extraction tests ---
+
+func parseGoFile(t *testing.T, code string, filename string) *model.ParseResult {
+	t.Helper()
+	root, cleanup := parse([]byte(code))
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: filename, Language: "go"}
+	Extract(root, []byte(code), file, result)
+	return result
+}
+
+func TestExtractLambda_GoArgumentPosition(t *testing.T) {
+	code := `package main
+
+func process() {
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        svc.Serve(w, r)
+    })
+}
+`
+	result := parseGoFile(t, code, "main.go")
+
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "lambda$1" {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda$1 symbol")
+	}
+	if !lambdaSymbol.IsLambda {
+		t.Error("expected IsLambda=true")
+	}
+
+	// Should have inner call from lambda to Serve
+	var innerCall *model.RawCall
+	for i := range result.Calls {
+		if result.Calls[i].CallerName == lambdaSymbol.QualifiedName && result.Calls[i].CalledName == "Serve" {
+			innerCall = &result.Calls[i]
+			break
+		}
+	}
+	if innerCall == nil {
+		t.Fatal("expected RawCall from lambda$1 to Serve")
+	}
+}
+
+func TestExtractLambda_GoDeclarative(t *testing.T) {
+	code := `package main
+
+func process() {
+    handler := func() { svc.Run() }
+    handler()
+}
+`
+	result := parseGoFile(t, code, "main.go")
+
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "handler" && result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected declarative lambda symbol 'handler'")
+	}
+
+	// Should have TypeHint with LambdaSymbolID
+	var hint *model.TypeBinding
+	for i := range result.TypeHints {
+		if result.TypeHints[i].VarName == "handler" && result.TypeHints[i].LambdaSymbolID != "" {
+			hint = &result.TypeHints[i]
+			break
+		}
+	}
+	if hint == nil {
+		t.Fatal("expected TypeHint with LambdaSymbolID for 'handler'")
+	}
+
+	// Should have inner call from handler to Run
+	var innerCall *model.RawCall
+	for i := range result.Calls {
+		if result.Calls[i].CallerName == lambdaSymbol.QualifiedName && result.Calls[i].CalledName == "Run" {
+			innerCall = &result.Calls[i]
+			break
+		}
+	}
+	if innerCall == nil {
+		t.Fatal("expected RawCall from handler to Run")
+	}
+}
+
+func TestExtractLambda_GoReturnFuncLiteralNotLost(t *testing.T) {
+	code := `package main
+
+func NewHandler() http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        svc.Handle(w, r)
+    }
+}
+`
+	result := parseGoFile(t, code, "main.go")
+
+	// The inner call svc.Handle should still be extracted (not lost)
+	var found bool
+	for i := range result.Calls {
+		if result.Calls[i].CalledName == "Handle" && result.Calls[i].ReceiverExpr == "svc" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected svc.Handle() call not to be lost in return func_literal")
+	}
+}
+
+func TestExtractLambda_GoFuncLiteralNotLost(t *testing.T) {
+	code := `package main
+
+func process() {
+    go func() { svc.Background() }()
+}
+`
+	result := parseGoFile(t, code, "main.go")
+
+	// go func(){...}() — inner call should not be lost
+	var found bool
+	for i := range result.Calls {
+		if result.Calls[i].CalledName == "Background" && result.Calls[i].ReceiverExpr == "svc" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected svc.Background() call not to be lost in go func_literal")
+	}
+}

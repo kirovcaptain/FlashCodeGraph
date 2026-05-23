@@ -1108,3 +1108,155 @@ function consume() {
 		t.Errorf("result ArgTypes: expected [Order], got %v", resultAssign.ArgTypes)
 	}
 }
+
+// --- Lambda extraction tests ---
+
+func parseTSFile(t *testing.T, code string, filename string) *model.ParseResult {
+	t.Helper()
+	root, cleanup := parse([]byte(code))
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: filename, Language: "typescript"}
+	Extract(root, []byte(code), file, result)
+	return result
+}
+
+func TestExtractLambda_TSArgumentPosition(t *testing.T) {
+	code := `export class UserService {
+    process() {
+        fetchUser().then(user => userService.validate(user));
+    }
+}
+`
+	result := parseTSFile(t, code, "service.ts")
+
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "lambda$1" {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda$1 symbol")
+	}
+	if !lambdaSymbol.IsLambda {
+		t.Error("expected IsLambda=true")
+	}
+	expectedQN := "service.ts.UserService.process.lambda$1"
+	if !strings.HasSuffix(lambdaSymbol.QualifiedName, "process.lambda$1") {
+		t.Errorf("expected QN ending with process.lambda$1, got %s", lambdaSymbol.QualifiedName)
+	}
+	_ = expectedQN
+
+	// Should have inner call from lambda to validate
+	var innerCall *model.RawCall
+	for i := range result.Calls {
+		if strings.HasSuffix(result.Calls[i].CallerName, "lambda$1") && result.Calls[i].CalledName == "validate" {
+			innerCall = &result.Calls[i]
+			break
+		}
+	}
+	if innerCall == nil {
+		t.Fatal("expected RawCall from lambda$1 to validate")
+	}
+
+	// Verify NO double extraction: validate should not have outer method as caller
+	for i := range result.Calls {
+		if result.Calls[i].CalledName == "validate" && result.Calls[i].ReceiverExpr == "userService" {
+			if !strings.HasSuffix(result.Calls[i].CallerName, "lambda$1") {
+				t.Errorf("double extraction: validate caller should be lambda$1, got %s", result.Calls[i].CallerName)
+			}
+		}
+	}
+}
+
+func TestExtractLambda_TSDeclarative(t *testing.T) {
+	code := `export class Service {
+    run() {
+        const handler = () => svc.execute();
+    }
+}
+`
+	result := parseTSFile(t, code, "service.ts")
+
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "handler" && result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected declarative lambda symbol 'handler'")
+	}
+
+	// Should have TypeHint with LambdaSymbolID
+	var hint *model.TypeBinding
+	for i := range result.TypeHints {
+		if result.TypeHints[i].VarName == "handler" && result.TypeHints[i].LambdaSymbolID != "" {
+			hint = &result.TypeHints[i]
+			break
+		}
+	}
+	if hint == nil {
+		t.Fatal("expected TypeHint with LambdaSymbolID for 'handler'")
+	}
+
+	// Verify NO double extraction: execute should only have handler as caller
+	for i := range result.Calls {
+		if result.Calls[i].CalledName == "execute" && result.Calls[i].ReceiverExpr == "svc" {
+			if !strings.HasSuffix(result.Calls[i].CallerName, ".handler") {
+				t.Errorf("double extraction: execute caller should be handler, got %s", result.Calls[i].CallerName)
+			}
+		}
+	}
+}
+
+func TestExtractLambda_TSNested(t *testing.T) {
+	code := `export class Service {
+    run() {
+        fetchData().then(data => data.items.map(item => item.process()));
+    }
+}
+`
+	result := parseTSFile(t, code, "service.ts")
+
+	var outerLambda, innerLambda *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "lambda$1" && !strings.Contains(result.Symbols[i].QualifiedName, "lambda$1.") {
+			outerLambda = &result.Symbols[i]
+		}
+		if result.Symbols[i].Name == "lambda$1" && strings.Contains(result.Symbols[i].QualifiedName, "lambda$1.lambda$1") {
+			innerLambda = &result.Symbols[i]
+		}
+	}
+	if outerLambda == nil {
+		t.Fatal("expected outer lambda$1")
+	}
+	if innerLambda == nil {
+		t.Fatal("expected nested lambda$1.lambda$1")
+	}
+}
+
+func TestExtractLambda_TSReturnArrowNotLost(t *testing.T) {
+	code := `export class Service {
+    getHandler() {
+        return () => svc.run();
+    }
+}
+`
+	result := parseTSFile(t, code, "service.ts")
+
+	// The inner call svc.run() should still be extracted (caller=getHandler, not lost)
+	var found bool
+	for i := range result.Calls {
+		if result.Calls[i].CalledName == "run" && result.Calls[i].ReceiverExpr == "svc" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected svc.run() call not to be lost in return arrow_function")
+	}
+}

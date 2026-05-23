@@ -3027,3 +3027,462 @@ func TestSubstituteGenericParam_OwnTypeParamsTakesPriority(t *testing.T) {
 		t.Errorf("expected own TypeParams+TypeEnv to take priority, got %q, want %q", result, "User")
 	}
 }
+
+// --- Lambda callback reference tests ---
+
+func TestResolveCalls_LambdaPreResolved(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "process", QualifiedName: "pkg.Service.process", Kind: "Function", FilePath: "Service.java"},
+		{ID: "lambda1", Name: "lambda$1", QualifiedName: "pkg.Service.process.lambda$1", Kind: "Function", FilePath: "Service.java"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "pkg.Service.process.lambda$1", CallerName: "pkg.Service.process", FilePath: "Service.java", Line: 5, IsPreResolved: true},
+	}
+	envs := map[string]*model.TypeEnv{"Service.java": {Bindings: map[string]*model.TypeInfo{}}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	if relations[0].TargetID != "lambda1" {
+		t.Errorf("expected target lambda1, got %s", relations[0].TargetID)
+	}
+	if relations[0].ResolvedBy != "qualified_name_exact" {
+		t.Errorf("expected qualified_name_exact, got %s", relations[0].ResolvedBy)
+	}
+}
+
+func TestResolveCalls_CallbackIdentifier(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "register", QualifiedName: "pkg.App.register", Kind: "Function", FilePath: "App.java"},
+		{ID: "lambda1", Name: "processor", QualifiedName: "pkg.App.register.processor", Kind: "Function", FilePath: "App.java"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "execute", CallerName: "pkg.App.register", FilePath: "App.java", Line: 10, ArgExprs: []string{"processor"}},
+	}
+	envs := map[string]*model.TypeEnv{
+		"App.java": {Bindings: map[string]*model.TypeInfo{
+			"pkg.App.register:processor": {TypeName: "Function", LambdaSymbolID: "lambda1", Scope: "pkg.App.register"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	// Should have a lambda_passthrough relation
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "lambda1" && rel.ResolvedBy == "lambda_passthrough" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected lambda_passthrough relation to lambda1, got %v", relations)
+	}
+}
+
+func TestResolveCalls_CallbackReceiverMethod(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "setup", QualifiedName: "pkg.App.setup", Kind: "Function", FilePath: "App.ts"},
+		{ID: "handler1", Name: "handleList", QualifiedName: "pkg.Server.handleList", Kind: "Function", FilePath: "Server.ts"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "AddTool", CallerName: "pkg.App.setup", FilePath: "App.ts", Line: 5, ArgExprs: []string{"tool", "srv.handleList"}},
+	}
+	envs := map[string]*model.TypeEnv{
+		"App.ts": {Bindings: map[string]*model.TypeInfo{
+			"pkg.App.setup:srv": {TypeName: "Server", Scope: "pkg.App.setup"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "handler1" && rel.ResolvedBy == "lambda_passthrough" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected lambda_passthrough to handleList, got %v", relations)
+	}
+}
+
+func TestResolveCalls_CallbackBindThis(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "init", QualifiedName: "pkg.Module.init", Kind: "Function", FilePath: "module.ts"},
+		{ID: "handler1", Name: "handleOrder", QualifiedName: "pkg.OrderModule.handleOrder", Kind: "Function", FilePath: "module.ts"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "on", CallerName: "pkg.Module.init", FilePath: "module.ts", Line: 5, ArgExprs: []string{"\"event\"", "this.handleOrder.bind(this)"}},
+	}
+	envs := map[string]*model.TypeEnv{
+		"module.ts": {Bindings: map[string]*model.TypeInfo{
+			"pkg.Module.init:this": {TypeName: "OrderModule", Scope: "pkg.Module.init"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "handler1" && rel.ResolvedBy == "lambda_passthrough" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected lambda_passthrough to handleOrder, got %v", relations)
+	}
+}
+
+func TestResolveCalls_CallbackNonIdentifierSkipped(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "run", QualifiedName: "pkg.App.run", Kind: "Function", FilePath: "App.ts"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "process", CallerName: "pkg.App.run", FilePath: "App.ts", Line: 5, ArgExprs: []string{"new Order()"}},
+	}
+	envs := map[string]*model.TypeEnv{
+		"App.ts": {Bindings: map[string]*model.TypeInfo{}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	for _, rel := range relations {
+		if rel.ResolvedBy == "lambda_passthrough" {
+			t.Fatalf("should not create lambda_passthrough for non-identifier, got %v", rel)
+		}
+	}
+}
+
+func TestResolveCalls_IdentifierNoLambdaSymbolID(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "run", QualifiedName: "pkg.App.run", Kind: "Function", FilePath: "App.java"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "map", CallerName: "pkg.App.run", FilePath: "App.java", Line: 5, ArgExprs: []string{"order"}},
+	}
+	envs := map[string]*model.TypeEnv{
+		"App.java": {Bindings: map[string]*model.TypeInfo{
+			"pkg.App.run:order": {TypeName: "Order", Scope: "pkg.App.run"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	for _, rel := range relations {
+		if rel.ResolvedBy == "lambda_passthrough" {
+			t.Fatalf("should not create lambda_passthrough for variable without LambdaSymbolID, got %v", rel)
+		}
+	}
+}
+
+func TestResolveCalls_LambdaRedirect(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "run", QualifiedName: "pkg.App.run", Kind: "Function", FilePath: "App.java"},
+		{ID: "lambda1", Name: "processor", QualifiedName: "pkg.App.run.processor", Kind: "Function", FilePath: "App.java"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "apply", CallerName: "pkg.App.run", FilePath: "App.java", Line: 10, ReceiverExpr: "processor"},
+	}
+	envs := map[string]*model.TypeEnv{
+		"App.java": {Bindings: map[string]*model.TypeInfo{
+			"pkg.App.run:processor": {TypeName: "Function", LambdaSymbolID: "lambda1", Scope: "pkg.App.run"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) == 0 {
+		t.Fatal("expected at least 1 relation")
+	}
+	if relations[0].TargetID != "lambda1" {
+		t.Errorf("expected redirect to lambda1, got %s", relations[0].TargetID)
+	}
+	if relations[0].ResolvedBy != "lambda_redirect" {
+		t.Errorf("expected lambda_redirect, got %s", relations[0].ResolvedBy)
+	}
+}
+
+func TestResolveCalls_NoLambdaSymbolIDNormalResolve(t *testing.T) {
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "run", QualifiedName: "pkg.App.run", Kind: "Function", FilePath: "App.java"},
+		{ID: "findById1", Name: "findById", QualifiedName: "pkg.UserService.findById", Kind: "Function", FilePath: "UserService.java"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "findById", CallerName: "pkg.App.run", FilePath: "App.java", Line: 10, ReceiverExpr: "userService"},
+	}
+	envs := map[string]*model.TypeEnv{
+		"App.java": {Bindings: map[string]*model.TypeInfo{
+			"pkg.App.run:userService": {TypeName: "UserService", Scope: "pkg.App.run"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) == 0 {
+		t.Fatal("expected at least 1 relation")
+	}
+	if relations[0].ResolvedBy == "lambda_redirect" {
+		t.Error("should not use lambda_redirect for normal receiver")
+	}
+}
+
+func TestResolveCalls_LambdaInnerCallSameClass(t *testing.T) {
+	// Simulates: lambda$1 calls "transform" (same class method)
+	// CallerName = "com.example.Service.process.lambda$1", CalledName = "transform"
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "process1", Name: "process", QualifiedName: "com.example.Service.process", Kind: "Function", FilePath: "Service.java"},
+		{ID: "lambda1", Name: "lambda$1", QualifiedName: "com.example.Service.process.lambda$1", Kind: "Function", FilePath: "Service.java"},
+		{ID: "transform1", Name: "transform", QualifiedName: "com.example.Service.transform", Kind: "Function", FilePath: "Service.java"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "transform", CallerName: "com.example.Service.process.lambda$1", FilePath: "Service.java", Line: 5},
+	}
+	envs := map[string]*model.TypeEnv{"Service.java": {Bindings: map[string]*model.TypeInfo{}}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "transform1" {
+			found = true
+			t.Logf("resolved_by: %s, confidence: %f", rel.ResolvedBy, rel.Confidence)
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected lambda inner call to resolve to transform1, got %v", relations)
+	}
+}
+
+func TestResolveCalls_LambdaInnerCallFieldReceiver(t *testing.T) {
+	// Lambda calls orderService.process() — orderService is a field, not in method-level TypeEnv
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "lambda1", Name: "lambda$1", QualifiedName: "com.example.Service.process.lambda$1", Kind: "Function", FilePath: "Service.java"},
+		{ID: "processOrder", Name: "process", QualifiedName: "com.example.OrderService.process", Kind: "Function", FilePath: "OrderService.java"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "process", CallerName: "com.example.Service.process.lambda$1", FilePath: "Service.java", Line: 5, ReceiverExpr: "orderService"},
+	}
+	// No TypeEnv binding for orderService (it's a field, not a local variable)
+	envs := map[string]*model.TypeEnv{"Service.java": {Bindings: map[string]*model.TypeInfo{}}}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "processOrder" {
+			found = true
+			break
+		}
+	}
+	// Known limitation: field receiver in lambda scope cannot resolve without field type in TypeEnv
+	t.Logf("field receiver in lambda resolved: %v (relations: %v)", found, relations)
+	if found {
+		t.Log("✅ field receiver resolved (unexpected bonus)")
+	} else {
+		t.Log("⚠️ field receiver NOT resolved — known limitation: field type not in lambda scope TypeEnv")
+	}
+}
+
+func TestResolveCalls_DirectLambdaVariableCall(t *testing.T) {
+	// Go: handler() — direct call to lambda variable, no receiver
+	// Fixed: Step 0.5 checks LambdaSymbolID before FindByName
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "directCall", QualifiedName: "main.directCall", Kind: "Function", FilePath: "main.go"},
+		{ID: "handler1", Name: "handler", QualifiedName: "main.directCall.handler", Kind: "Function", FilePath: "main.go"},
+		{ID: "handler2", Name: "handler", QualifiedName: "main.otherFunc.handler", Kind: "Function", FilePath: "main.go"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "handler", CallerName: "main.directCall", FilePath: "main.go", Line: 5},
+	}
+	envs := map[string]*model.TypeEnv{
+		"main.go": {Bindings: map[string]*model.TypeInfo{
+			"main.directCall:handler": {TypeName: "func", LambdaSymbolID: "handler1", Scope: "main.directCall"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	if len(relations) == 0 {
+		t.Fatal("expected direct lambda call to resolve")
+	}
+	if relations[0].TargetID != "handler1" {
+		t.Errorf("expected target handler1, got %s", relations[0].TargetID)
+	}
+	if relations[0].ResolvedBy != "lambda_direct_call" {
+		t.Errorf("expected lambda_direct_call, got %s", relations[0].ResolvedBy)
+	}
+}
+
+func TestResolveCalls_CallbackNestedPropertyAccess(t *testing.T) {
+	// TS: this.orderModule.handleOrder.bind(this) — nested property access
+	// After stripping .bind(: "this.orderModule.handleOrder"
+	// SplitN(".", 2) → receiver="this", method="orderModule.handleOrder"
+	// method contains "." — won't match any Symbol name
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "init", QualifiedName: "pkg.Module.init", Kind: "Function", FilePath: "module.ts"},
+		{ID: "handler1", Name: "handleOrder", QualifiedName: "pkg.OrderModule.handleOrder", Kind: "Function", FilePath: "module.ts"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "on", CallerName: "pkg.Module.init", FilePath: "module.ts", Line: 5,
+			ArgExprs: []string{"\"event\"", "this.orderModule.handleOrder.bind(this)"}},
+	}
+	envs := map[string]*model.TypeEnv{
+		"module.ts": {Bindings: map[string]*model.TypeInfo{
+			"pkg.Module.init:this": {TypeName: "Module", Scope: "pkg.Module.init"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "handler1" && rel.ResolvedBy == "lambda_passthrough" {
+			found = true
+			break
+		}
+	}
+	t.Logf("nested property callback resolved: %v (relations: %v)", found, relations)
+	if found {
+		t.Log("✅ nested property resolved (unexpected bonus)")
+	} else {
+		t.Log("⚠️ nested property NOT resolved — known limitation: only single-level receiver.method supported")
+	}
+}
+
+func TestResolveCalls_CallbackModuleLevelVariable(t *testing.T) {
+	// TS: module-level const server = new Server(); app.get("/", server.handleUser)
+	// server is module-level, not in method-level TypeEnv
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "methodReference", QualifiedName: "consumer.ts.methodReference", Kind: "Function", FilePath: "consumer.ts"},
+		{ID: "handler1", Name: "handleUser", QualifiedName: "services.ts.Server.handleUser", Kind: "Function", FilePath: "services.ts"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "get", CallerName: "consumer.ts.methodReference", FilePath: "consumer.ts", Line: 5,
+			ArgExprs: []string{"\"/\"", "server.handleUser"}},
+	}
+	// server is module-level — not in method scope TypeEnv
+	envs := map[string]*model.TypeEnv{
+		"consumer.ts": {Bindings: map[string]*model.TypeInfo{}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "handler1" && rel.ResolvedBy == "lambda_passthrough" {
+			found = true
+			break
+		}
+	}
+	t.Logf("module-level variable callback resolved: %v (relations: %v)", found, relations)
+	if found {
+		t.Log("✅ module-level variable resolved (unexpected bonus)")
+	} else {
+		t.Log("⚠️ module-level variable NOT resolved — known limitation: only method-scope variables in TypeEnv")
+	}
+}
+
+func TestResolveCalls_LambdaInnerCallClosureVariable(t *testing.T) {
+	// Lambda calls userService.run() — userService is in outer/module scope, not lambda scope
+	// With multiple "run" candidates, TypeEnv is needed to disambiguate
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "declarativeCallback", QualifiedName: "module.declarativeCallback", Kind: "Function", FilePath: "consumer.ts"},
+		{ID: "handler1", Name: "handler", QualifiedName: "module.declarativeCallback.handler", Kind: "Function", FilePath: "consumer.ts"},
+		{ID: "run1", Name: "run", QualifiedName: "services.UserService.run", Kind: "Function", FilePath: "services.ts"},
+		{ID: "run2", Name: "run", QualifiedName: "services.OrderService.run", Kind: "Function", FilePath: "services.ts"},
+	})
+	resolver := newTestResolver(table)
+
+	// RawCall from handler (lambda) to run with receiver userService
+	calls := []model.RawCall{
+		{CalledName: "run", CallerName: "module.declarativeCallback.handler", FilePath: "consumer.ts", Line: 5, ReceiverExpr: "userService"},
+	}
+	// userService binding is in module scope, not in handler scope
+	envs := map[string]*model.TypeEnv{
+		"consumer.ts": {
+			Bindings: map[string]*model.TypeInfo{
+				"module:userService": {TypeName: "UserService", Scope: "module"},
+			},
+		},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "run1" && rel.ResolvedBy == "type_exact" {
+			found = true
+			break
+		}
+	}
+	if found {
+		t.Log("✅ closure variable resolved via type_exact")
+	} else {
+		t.Logf("⚠️ closure variable NOT resolved via type_exact — need ScopeParents for lambda → outer scope (got: %v)", relations)
+	}
+}
+
+func TestResolveCalls_DirectLambdaVariableCallWithAmbiguity(t *testing.T) {
+	// handler() — direct call to lambda variable, no receiver, multiple "handler" symbols
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "directCall", QualifiedName: "main.directCall", Kind: "Function", FilePath: "main.go"},
+		{ID: "handler1", Name: "handler", QualifiedName: "main.directCall.handler", Kind: "Function", FilePath: "main.go"},
+		{ID: "handler2", Name: "handler", QualifiedName: "main.otherFunc.handler", Kind: "Function", FilePath: "main.go"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "handler", CallerName: "main.directCall", FilePath: "main.go", Line: 5},
+	}
+	envs := map[string]*model.TypeEnv{
+		"main.go": {Bindings: map[string]*model.TypeInfo{
+			"main.directCall:handler": {TypeName: "func", LambdaSymbolID: "handler1", Scope: "main.directCall"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "handler1" {
+			found = true
+			t.Logf("resolved_by: %s", rel.ResolvedBy)
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("direct lambda variable call should resolve to handler1 via LambdaSymbolID, got: %v", relations)
+	}
+}

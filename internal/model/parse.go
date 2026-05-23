@@ -2,19 +2,20 @@ package model
 
 // RawCall represents an unresolved function call extracted from AST.
 type RawCall struct {
-	CalledName   string `json:"called_name"`
-	CallerName   string `json:"caller_name"`
-	CallerScope  string `json:"caller_scope,omitempty"` // block-level scope key for TypeEnv lookup
-	CallerKind   string `json:"caller_kind"`
-	Language     string `json:"language"`
-	FilePath     string `json:"file_path"`
-	Line         int    `json:"line"`
-	ArgCount     int      `json:"arg_count"`
-	ArgTypes     []string `json:"arg_types,omitempty"`
-	ArgExprs     []string `json:"arg_exprs,omitempty"`
-	ReceiverExpr string `json:"receiver_expr,omitempty"`
-	FlowContext  string `json:"flow_context,omitempty"` // if/else/loop/defer/switch
-	FlowLine     int    `json:"flow_line,omitempty"`    // line of the control flow statement
+	CalledName    string `json:"called_name"`
+	CallerName    string `json:"caller_name"`
+	CallerScope   string `json:"caller_scope,omitempty"` // block-level scope key for TypeEnv lookup
+	CallerKind    string `json:"caller_kind"`
+	Language      string `json:"language"`
+	FilePath      string `json:"file_path"`
+	Line          int    `json:"line"`
+	ArgCount      int      `json:"arg_count"`
+	ArgTypes      []string `json:"arg_types,omitempty"`
+	ArgExprs      []string `json:"arg_exprs,omitempty"`
+	ReceiverExpr  string `json:"receiver_expr,omitempty"`
+	FlowContext   string `json:"flow_context,omitempty"` // if/else/loop/defer/switch
+	FlowLine      int    `json:"flow_line,omitempty"`    // line of the control flow statement
+	IsPreResolved bool   `json:"is_pre_resolved,omitempty"` // CalledName is a full QualifiedName, resolve via FindByQualifiedName directly
 }
 
 // RawImport represents an import statement extracted from AST.
@@ -111,14 +112,15 @@ type RawConstRef struct {
 
 // TypeBinding represents a Tier 0/1 type hint from AST.
 type TypeBinding struct {
-	VarName       string    `json:"var_name"`
-	TypeName      string    `json:"type_name"`
-	TypeArgs      []TypeArg `json:"type_args,omitempty"`
-	Tier          int       `json:"tier"`
-	Scope         string    `json:"scope"`
-	FilePath      string    `json:"file_path"`
-	MultiReturnOf string    `json:"multi_return_of,omitempty"`
-	ReturnIndex   int      `json:"return_index,omitempty"`
+	VarName        string    `json:"var_name"`
+	TypeName       string    `json:"type_name"`
+	TypeArgs       []TypeArg `json:"type_args,omitempty"`
+	Tier           int       `json:"tier"`
+	Scope          string    `json:"scope"`
+	FilePath       string    `json:"file_path"`
+	MultiReturnOf  string    `json:"multi_return_of,omitempty"`
+	ReturnIndex    int       `json:"return_index,omitempty"`
+	LambdaSymbolID string    `json:"lambda_symbol_id,omitempty"` // variable points to this lambda Symbol
 }
 
 // PendingAssignment represents an unresolved variable assignment for fixpoint propagation.

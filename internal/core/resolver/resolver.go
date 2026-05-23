@@ -121,6 +121,15 @@ func (resolver *Resolver) ResolveCalls(calls []model.RawCall, envs map[string]*m
 		if hint != nil {
 			hints = append(hints, *hint)
 		}
+		// Detect callback references in ArgExprs (lambda variable / method reference)
+		if len(call.ArgExprs) > 0 {
+			callerID := resolver.findCallerID(call)
+			if callerID != "" {
+				env := envs[call.FilePath]
+				callbackRelations := resolver.detectCallbackReferences(call, callerID, env)
+				relations = append(relations, callbackRelations...)
+			}
+		}
 	}
 
 	return relations, hints
@@ -129,6 +138,27 @@ func (resolver *Resolver) ResolveCalls(calls []model.RawCall, envs map[string]*m
 // resolveCall resolves a single raw call to one or more target symbols.
 // Returns resolved relations (with confidence scores) or an unresolved hint.
 func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model.TypeEnv) ([]model.ResolvedRelation, *model.UnresolvedHint) {
+	// Step 0: Pre-resolved call (Parser-constructed known target, CalledName is full QualifiedName)
+	if call.IsPreResolved {
+		qualifiedNameMatches := resolver.symbolTable.FindByQualifiedName(call.CalledName)
+		if len(qualifiedNameMatches) == 1 {
+			callerID := resolver.findCallerID(call)
+			return []model.ResolvedRelation{makeRelation(callerID, qualifiedNameMatches[0].ID, call, 0.95, "qualified_name_exact", 1)}, nil
+		}
+		return nil, nil
+	}
+
+	// Step 0.5: Direct lambda variable call — no receiver, CalledName is a variable with LambdaSymbolID
+	if call.ReceiverExpr == "" {
+		if env := envs[call.FilePath]; env != nil {
+			scope := effectiveCallerScope(call)
+			if info := lookupBindingWithScopeChain(env, scope, call.CalledName); info != nil && info.LambdaSymbolID != "" {
+				callerID := resolver.findCallerID(call)
+				return []model.ResolvedRelation{makeRelation(callerID, info.LambdaSymbolID, call, 0.95, "lambda_direct_call", 1)}, nil
+			}
+		}
+	}
+
 	// Step 1: Find candidate symbols by name from the SymbolTable.
 	candidates := resolver.symbolTable.FindByName(call.CalledName)
 
@@ -144,6 +174,16 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 	// This typically means the call targets a third-party library (e.g. "jdbcTemplate.query",
 	// "DateUtil.format") that is not in the indexed source code. Attempt to resolve as external.
 	if len(funcCandidates) == 0 {
+		// Check LambdaSymbolID redirect before giving up — receiver may be a lambda variable
+		if call.ReceiverExpr != "" {
+			if env := envs[call.FilePath]; env != nil {
+				scope := effectiveCallerScope(call)
+				if info := lookupBindingWithScopeChain(env, scope, call.ReceiverExpr); info != nil && info.LambdaSymbolID != "" {
+					callerID := resolver.findCallerID(call)
+					return []model.ResolvedRelation{makeRelation(callerID, info.LambdaSymbolID, call, 0.95, "lambda_redirect", 1)}, nil
+				}
+			}
+		}
 		return resolver.resolveCallNoCandidate(call, envs)
 	}
 
@@ -224,6 +264,14 @@ func (resolver *Resolver) resolveCallWithReceiver(
 	// Strategy 1: super.method() — delegate to language helper for parent class resolution.
 	if relations, handled := langHelper.ResolveSuperCall(call, funcCandidates, resolver.heritage, envs, callerID); handled {
 		return relations, nil, false
+	}
+
+	// Strategy 1.5: LambdaSymbolID redirect — receiver is a lambda variable, redirect to lambda Symbol.
+	if env := envs[call.FilePath]; env != nil {
+		scope := effectiveCallerScope(call)
+		if info := lookupBindingWithScopeChain(env, scope, call.ReceiverExpr); info != nil && info.LambdaSymbolID != "" {
+			return []model.ResolvedRelation{makeRelation(callerID, info.LambdaSymbolID, call, 0.95, "lambda_redirect", 1)}, nil, false
+		}
 	}
 
 	// Strategy 2: Import-based fully qualified name matching.
@@ -1671,3 +1719,87 @@ func (resolver *Resolver) inferConstantReturnTypeByMethodName(methodName string)
 }
 
 
+
+// detectCallbackReferences checks ArgExprs for callback references (lambda variables or method references)
+// and creates CALLS edges from the caller to the callback target.
+func (resolver *Resolver) detectCallbackReferences(call model.RawCall, callerID string, env *model.TypeEnv) []model.ResolvedRelation {
+	var relations []model.ResolvedRelation
+	scope := effectiveCallerScope(call)
+	for _, argExpr := range call.ArgExprs {
+		if argExpr == "" {
+			continue
+		}
+		targetID := resolver.resolveCallbackTarget(argExpr, scope, env)
+		if targetID != "" {
+			relations = append(relations, model.ResolvedRelation{
+				SourceID:   callerID,
+				TargetID:   targetID,
+				Kind:       model.RelCalls,
+				SourceKind: constants.KindFunction,
+				Confidence: 0.85,
+				ResolvedBy: "lambda_passthrough",
+				Candidates: 1,
+				Line:       call.Line,
+			})
+		}
+	}
+	return relations
+}
+
+// resolveCallbackTarget resolves a single ArgExpr to a target Symbol ID.
+// Handles: simple identifier (lambda variable), receiver.method (method reference), this.method.bind(...).
+func (resolver *Resolver) resolveCallbackTarget(argExpr, scope string, env *model.TypeEnv) string {
+	if env == nil {
+		return ""
+	}
+
+	// 1. Strip .bind(...) suffix (any arguments)
+	expr := argExpr
+	if idx := strings.Index(expr, ".bind("); idx > 0 {
+		expr = expr[:idx]
+	}
+
+	// 2. Simple identifier → lookup LambdaSymbolID
+	if isSimpleIdentifier(expr) {
+		if info := lookupBindingWithScopeChain(env, scope, expr); info != nil && info.LambdaSymbolID != "" {
+			return info.LambdaSymbolID
+		}
+		return ""
+	}
+
+	// 3. receiver.method → lookup receiver type → find method Symbol
+	if parts := strings.SplitN(expr, ".", 2); len(parts) == 2 {
+		receiver, method := parts[0], parts[1]
+		if info := lookupBindingWithScopeChain(env, scope, receiver); info != nil {
+			typeName := extractSimpleType(info.TypeName)
+			if typeName != "" {
+				candidates := resolver.symbolTable.FindByName(method)
+				for _, candidate := range candidates {
+					if candidate.Kind == constants.KindFunction && strings.Contains(candidate.QualifiedName, typeName+".") {
+						return candidate.ID
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// isSimpleIdentifier checks if an expression is a simple variable name (no dots, parens, operators).
+func isSimpleIdentifier(expr string) bool {
+	if len(expr) == 0 {
+		return false
+	}
+	for _, ch := range expr {
+		if ch == '.' || ch == '(' || ch == ')' || ch == ' ' || ch == '"' || ch == '\'' || ch == '+' || ch == '-' {
+			return false
+		}
+	}
+	first := expr[0]
+	if first >= '0' && first <= '9' {
+		return false
+	}
+	return true
+}
+
+// extractSimpleType is already defined elsewhere in this file.

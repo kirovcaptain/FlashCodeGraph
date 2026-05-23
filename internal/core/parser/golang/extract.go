@@ -1,6 +1,7 @@
 package golang
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
@@ -502,8 +503,9 @@ func extractLocalFuncLiteral(node *tree_sitter.Node, content []byte, filePath, p
 		params := extractParams(valueNode, content)
 		returnTypes := extractReturnTypes(valueNode, content, "")
 
+		lambdaID := astutil.GenerateSymbolID(filePath, qualifiedName, int(valueNode.StartPosition().Row)+1)
 		result.Symbols = append(result.Symbols, model.Symbol{
-			ID:            astutil.GenerateSymbolID(filePath, funcName, int(valueNode.StartPosition().Row)+1),
+			ID:            lambdaID,
 			Name:          funcName,
 			QualifiedName: qualifiedName,
 			Kind:          constants.KindFunction,
@@ -515,6 +517,19 @@ func extractLocalFuncLiteral(node *tree_sitter.Node, content []byte, filePath, p
 			IsLambda:      true,
 			LambdaContext: parentQualifiedName,
 		})
+		// Write TypeHint with LambdaSymbolID for declarative lambda
+		result.TypeHints = append(result.TypeHints, model.TypeBinding{
+			VarName:        funcName,
+			TypeName:       "func",
+			Scope:          parentQualifiedName,
+			FilePath:       filePath,
+			LambdaSymbolID: lambdaID,
+		})
+		// Recursively extract calls from lambda body
+		bodyNode := valueNode.ChildByFieldName("body")
+		if bodyNode != nil {
+			extractCalls(bodyNode, content, filePath, qualifiedName, "", "", result)
+		}
 		break // short_var_declaration is the node itself, only process once
 	}
 }
@@ -615,7 +630,28 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 	ExtractGoRemoteCalls(body, content, fullCaller, filePath, importsMap, result)
 	ExtractGoGRPCRegister(body, content, fullCaller, filePath, result)
 
+	lambdaCounter := 0 // method-body-level counter shared across all call sites
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
+		// Skip func_literal nodes that are already handled elsewhere
+		if node.Kind() == "func_literal" {
+			parent := node.Parent()
+			if parent == nil {
+				return true
+			}
+			// Argument position → handled by lambda detection in call_expression below
+			if parent.Kind() == "argument_list" {
+				return false
+			}
+			// Declarative assignment → handled by extractLocalFuncLiteral
+			if parent.Kind() == "expression_list" {
+				grandparent := parent.Parent()
+				if grandparent != nil && (grandparent.Kind() == "short_var_declaration" || grandparent.Kind() == "var_spec") {
+					return false
+				}
+			}
+			// Other positions (return/go/defer) → walker recurses normally (caller=outer method)
+			return true
+		}
 		// Extract local anonymous functions assigned to variables
 		// (e.g. handler := func(w http.ResponseWriter) { ... })
 		if node.Kind() == "short_var_declaration" || node.Kind() == "var_declaration" {
@@ -644,11 +680,47 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 			}
 
 			argCount := 0
+			var argExprs []string
 			argsNode := node.ChildByFieldName("arguments")
 			if argsNode != nil {
 				for j := uint(0); j < argsNode.ChildCount(); j++ {
-					if argsNode.Child(j).IsNamed() {
+					child := argsNode.Child(j)
+					if !child.IsNamed() {
+						continue
+					}
+					if child.Kind() == "func_literal" {
 						argCount++
+						argExprs = append(argExprs, "")
+						lambdaCounter++
+						lambdaName := fmt.Sprintf("lambda$%d", lambdaCounter)
+						lambdaQualifiedName := fullCaller + "." + lambdaName
+						lambdaID := astutil.GenerateSymbolID(filePath, lambdaQualifiedName, int(child.StartPosition().Row)+1)
+						result.Symbols = append(result.Symbols, model.Symbol{
+							ID:            lambdaID,
+							Name:          lambdaName,
+							QualifiedName: lambdaQualifiedName,
+							Kind:          constants.KindFunction,
+							FilePath:      filePath,
+							StartLine:     int(child.StartPosition().Row) + 1,
+							EndLine:       int(child.EndPosition().Row) + 1,
+							IsLambda:      true,
+							LambdaContext: fullCaller,
+						})
+						result.Calls = append(result.Calls, model.RawCall{
+							CalledName:    lambdaQualifiedName,
+							CallerName:    fullCaller,
+							CallerKind:    constants.KindFunction,
+							FilePath:      filePath,
+							Line:          int(child.StartPosition().Row) + 1,
+							IsPreResolved: true,
+						})
+						lambdaBody := child.ChildByFieldName("body")
+						if lambdaBody != nil {
+							extractCalls(lambdaBody, content, filePath, lambdaQualifiedName, "", "", result)
+						}
+					} else {
+						argCount++
+						argExprs = append(argExprs, child.Utf8Text(content))
 					}
 				}
 			}
@@ -662,6 +734,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 					FilePath:     filePath,
 					Line:         int(node.StartPosition().Row) + 1,
 					ArgCount:     argCount,
+					ArgExprs:     argExprs,
 					ReceiverExpr: receiverExpr,
 					FlowContext:  flowContext.Kind,
 					FlowLine:     flowContext.Line,

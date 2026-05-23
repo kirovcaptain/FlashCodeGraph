@@ -1,6 +1,7 @@
 package typescript
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -35,7 +36,7 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 			extractAmbientDeclaration(node, content, file, result)
 			return false
 		case "lexical_declaration", "variable_declaration":
-			extractArrowFunctions(node, content, file.RelPath, result)
+			extractArrowFunctions(node, content, file.RelPath, "", result)
 			return false
 		}
 		return true
@@ -202,7 +203,7 @@ func extractExport(node *tree_sitter.Node, content []byte, file scanner.ScannedF
 				result.Symbols[funcSymbolIndex].IsDefaultExport = true
 			}
 		case "lexical_declaration", "variable_declaration":
-			extractArrowFunctions(child, content, file.RelPath, result)
+			extractArrowFunctions(child, content, file.RelPath, "", result)
 		}
 	}
 }
@@ -574,7 +575,7 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 }
 
 // extractTSVariableDeclaration handles const/let/var with arrow functions.
-func extractArrowFunctions(node *tree_sitter.Node, content []byte, filePath string, result *model.ParseResult) {
+func extractArrowFunctions(node *tree_sitter.Node, content []byte, filePath, callerQualifiedName string, result *model.ParseResult) {
 	astutil.WalkNamedChildren(node, func(child *tree_sitter.Node) bool {
 		if child.Kind() == "variable_declarator" {
 			nameNode := child.ChildByFieldName("name")
@@ -584,9 +585,16 @@ func extractArrowFunctions(node *tree_sitter.Node, content []byte, filePath stri
 				returnTypes := extractReturnTypes(valueNode, content)
 				paramTypes := extractParams(valueNode, content)
 
-				qualifiedName := buildQualifiedName(filePath, funcName)
+				var qualifiedName string
+				if callerQualifiedName != "" {
+					qualifiedName = callerQualifiedName + "." + funcName
+				} else {
+					qualifiedName = buildQualifiedName(filePath, funcName)
+				}
+
+				lambdaID := astutil.GenerateSymbolID(filePath, qualifiedName, int(child.StartPosition().Row)+1)
 				result.Symbols = append(result.Symbols, model.Symbol{
-					ID:            astutil.GenerateSymbolID(filePath, funcName, int(child.StartPosition().Row)+1),
+					ID:            lambdaID,
 					Name:          funcName,
 					QualifiedName: qualifiedName,
 					Kind:          constants.KindFunction,
@@ -596,12 +604,27 @@ func extractArrowFunctions(node *tree_sitter.Node, content []byte, filePath stri
 					Params:        paramTypes,
 					ReturnTypes:   returnTypes,
 					IsLambda:      true,
-					LambdaContext: funcName,
+					LambdaContext: callerQualifiedName,
 				})
+
+				// Write TypeHint with LambdaSymbolID for declarative lambda
+				if callerQualifiedName != "" {
+					result.TypeHints = append(result.TypeHints, model.TypeBinding{
+						VarName:        funcName,
+						Scope:          callerQualifiedName,
+						FilePath:       filePath,
+						LambdaSymbolID: lambdaID,
+					})
+				}
 
 				body := valueNode.ChildByFieldName("body")
 				if body != nil {
-					extractCalls(body, content, filePath, qualifiedName, result)
+					if body.Kind() == "statement_block" {
+						extractCalls(body, content, filePath, qualifiedName, result)
+					} else {
+						// Expression body — pass arrow_function node so walker visits body as child
+						extractCalls(valueNode, content, filePath, qualifiedName, result)
+					}
 				}
 			}
 		}
@@ -618,13 +641,23 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 	ExtractTSRemoteCalls(body, content, qualifiedCallerName, filePath, result)
 	ExtractGQLTemplateCalls(body, content, qualifiedCallerName, filePath, result)
 
+	lambdaCounter := 0 // method-body-level counter shared across all call sites
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
+		// Skip arrow_function already handled elsewhere:
+		// - argument position: handled by lambda detection in call_expression below
+		// - declarative (variable_declarator): handled by extractArrowFunctions
+		if node.Kind() == "arrow_function" {
+			parent := node.Parent()
+			if parent != nil && (parent.Kind() == "arguments" || parent.Kind() == "variable_declarator") {
+				return false
+			}
+		}
 		if node.Kind() == "lexical_declaration" || node.Kind() == "variable_declaration" {
 			extractTSPendingAssignment(node, content, qualifiedCallerName, result)
 			// Also extract const arrow functions defined inside function bodies
 			// Record nested function → outer function parent relationship
 			symbolCountBefore := len(result.Symbols)
-			extractArrowFunctions(node, content, filePath, result)
+			extractArrowFunctions(node, content, filePath, qualifiedCallerName, result)
 			for j := symbolCountBefore; j < len(result.Symbols); j++ {
 				nestedQN := result.Symbols[j].QualifiedName
 				if result.ScopeParents == nil {
@@ -657,11 +690,53 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 			}
 
 			argCount := 0
+			var argExprs []string
 			argsNode := node.ChildByFieldName("arguments")
 			if argsNode != nil {
 				for j := uint(0); j < argsNode.ChildCount(); j++ {
-					if argsNode.Child(j).IsNamed() {
+					child := argsNode.Child(j)
+					if !child.IsNamed() {
+						continue
+					}
+					if child.Kind() == "arrow_function" {
 						argCount++
+						argExprs = append(argExprs, "")
+						lambdaCounter++
+						lambdaName := fmt.Sprintf("lambda$%d", lambdaCounter)
+						lambdaQualifiedName := qualifiedCallerName + "." + lambdaName
+						lambdaID := astutil.GenerateSymbolID(filePath, lambdaQualifiedName, int(child.StartPosition().Row)+1)
+						result.Symbols = append(result.Symbols, model.Symbol{
+							ID:            lambdaID,
+							Name:          lambdaName,
+							QualifiedName: lambdaQualifiedName,
+							Kind:          constants.KindFunction,
+							FilePath:      filePath,
+							StartLine:     int(child.StartPosition().Row) + 1,
+							EndLine:       int(child.EndPosition().Row) + 1,
+							IsLambda:      true,
+							LambdaContext: qualifiedCallerName,
+						})
+						result.Calls = append(result.Calls, model.RawCall{
+							CalledName:    lambdaQualifiedName,
+							CallerName:    qualifiedCallerName,
+							CallerKind:    constants.KindFunction,
+							FilePath:      filePath,
+							Line:          int(child.StartPosition().Row) + 1,
+							IsPreResolved: true,
+						})
+						lambdaBody := child.ChildByFieldName("body")
+						if lambdaBody != nil {
+							if lambdaBody.Kind() == "statement_block" {
+								extractCalls(lambdaBody, content, filePath, lambdaQualifiedName, result)
+							} else {
+								// Expression body (e.g. call_expression) — wrap in extractCalls on parent
+								// since extractCalls walks children, pass the arrow_function body's parent context
+								extractCalls(child, content, filePath, lambdaQualifiedName, result)
+							}
+						}
+					} else {
+						argCount++
+						argExprs = append(argExprs, child.Utf8Text(content))
 					}
 				}
 			}
@@ -678,6 +753,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 					FilePath:     filePath,
 					Line:         int(node.StartPosition().Row) + 1,
 					ArgCount:     argCount,
+					ArgExprs:     argExprs,
 					ReceiverExpr: receiverExpr,
 					FlowContext:  flowContext.Kind,
 					FlowLine:     flowContext.Line,

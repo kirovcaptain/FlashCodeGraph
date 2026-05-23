@@ -1317,3 +1317,177 @@ public class Consumer {
 		t.Errorf("result ArgTypes[1]: expected Order, got %q", resultAssign.ArgTypes[1])
 	}
 }
+
+// --- Lambda extraction tests ---
+
+func TestExtractLambda_ArgumentPosition(t *testing.T) {
+	code := `package com.example;
+class OrderService {
+    void processOrders(List<Order> orders) {
+        orders.stream().map(order -> orderService.process(order));
+    }
+}
+`
+	result := parseJavaFile(t, code, "OrderService.java")
+
+	// Should have lambda$1 Symbol
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "lambda$1" {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda$1 symbol")
+	}
+	if !lambdaSymbol.IsLambda {
+		t.Error("expected IsLambda=true")
+	}
+	if lambdaSymbol.QualifiedName != "com.example.OrderService.processOrders.lambda$1" {
+		t.Errorf("expected QN com.example.OrderService.processOrders.lambda$1, got %s", lambdaSymbol.QualifiedName)
+	}
+
+	// Should have pre-resolved RawCall: processOrders → lambda$1
+	var preResolvedCall *model.RawCall
+	for i := range result.Calls {
+		if result.Calls[i].IsPreResolved && result.Calls[i].CalledName == lambdaSymbol.QualifiedName {
+			preResolvedCall = &result.Calls[i]
+			break
+		}
+	}
+	if preResolvedCall == nil {
+		t.Fatal("expected pre-resolved RawCall to lambda$1")
+	}
+
+	// Should have RawCall from lambda$1 → process
+	var innerCall *model.RawCall
+	for i := range result.Calls {
+		if result.Calls[i].CallerName == lambdaSymbol.QualifiedName && result.Calls[i].CalledName == "process" {
+			innerCall = &result.Calls[i]
+			break
+		}
+	}
+	if innerCall == nil {
+		t.Fatal("expected RawCall from lambda$1 to process")
+	}
+
+	// Verify NO double extraction: process should not have outer method as caller
+	for i := range result.Calls {
+		if result.Calls[i].CalledName == "process" && result.Calls[i].ReceiverExpr == "orderService" {
+			if result.Calls[i].CallerName != lambdaSymbol.QualifiedName {
+				t.Errorf("double extraction: process caller should be %s, got %s",
+					lambdaSymbol.QualifiedName, result.Calls[i].CallerName)
+			}
+		}
+	}
+}
+
+func TestExtractLambda_MultipleLambdasUniqueNumbering(t *testing.T) {
+	code := `package com.example;
+class Service {
+    void run() {
+        list.stream().map(x -> a()).forEach(x -> b());
+    }
+}
+`
+	result := parseJavaFile(t, code, "Service.java")
+
+	var lambda1, lambda2 *model.Symbol
+	for i := range result.Symbols {
+		switch result.Symbols[i].Name {
+		case "lambda$1":
+			lambda1 = &result.Symbols[i]
+		case "lambda$2":
+			lambda2 = &result.Symbols[i]
+		}
+	}
+	if lambda1 == nil || lambda2 == nil {
+		t.Fatal("expected both lambda$1 and lambda$2")
+	}
+	if lambda1.QualifiedName == lambda2.QualifiedName {
+		t.Error("lambda QualifiedNames should be unique")
+	}
+}
+
+func TestExtractLambda_Declarative(t *testing.T) {
+	code := `package com.example;
+class Service {
+    void run() {
+        Function<String, String> f = x -> svc.process(x);
+    }
+}
+`
+	result := parseJavaFile(t, code, "Service.java")
+
+	// Should have Symbol named "f"
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "f" && result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected declarative lambda symbol 'f'")
+	}
+
+	// Should have TypeHint with LambdaSymbolID
+	var hint *model.TypeBinding
+	for i := range result.TypeHints {
+		if result.TypeHints[i].VarName == "f" && result.TypeHints[i].LambdaSymbolID != "" {
+			hint = &result.TypeHints[i]
+			break
+		}
+	}
+	if hint == nil {
+		t.Fatal("expected TypeHint with LambdaSymbolID for 'f'")
+	}
+	if hint.LambdaSymbolID != lambdaSymbol.ID {
+		t.Errorf("TypeHint LambdaSymbolID mismatch: %s vs %s", hint.LambdaSymbolID, lambdaSymbol.ID)
+	}
+
+	// Verify NO double extraction: svc.process should only have lambda as caller, not outer method
+	for i := range result.Calls {
+		if result.Calls[i].CalledName == "process" && result.Calls[i].ReceiverExpr == "svc" {
+			if result.Calls[i].CallerName != lambdaSymbol.QualifiedName {
+				t.Errorf("double extraction: svc.process caller should be %s, got %s",
+					lambdaSymbol.QualifiedName, result.Calls[i].CallerName)
+			}
+		}
+	}
+}
+
+func TestExtractLambda_ConstructorArgument(t *testing.T) {
+	code := `package com.example;
+class Service {
+    void run() {
+        new Thread(() -> svc.execute());
+    }
+}
+`
+	result := parseJavaFile(t, code, "Service.java")
+
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].Name == "lambda$1" && result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda$1 from constructor argument")
+	}
+
+	// Should have inner call from lambda to svc.execute
+	var innerCall *model.RawCall
+	for i := range result.Calls {
+		if result.Calls[i].CallerName == lambdaSymbol.QualifiedName && result.Calls[i].CalledName == "execute" {
+			innerCall = &result.Calls[i]
+			break
+		}
+	}
+	if innerCall == nil {
+		t.Fatal("expected RawCall from lambda$1 to execute")
+	}
+}

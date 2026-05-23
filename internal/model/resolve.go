@@ -16,12 +16,13 @@ type TypeEnv struct {
 
 // TypeInfo describes an inferred type.
 type TypeInfo struct {
-	TypeName      string    `json:"type_name"`
-	TypeArgs      []TypeArg `json:"type_args,omitempty"` // generic args: List<User> → [{Name:"User"}]
-	Tier          int       `json:"tier"`
-	Scope         string    `json:"scope"`
-	MultiReturnOf string    `json:"multi_return_of,omitempty"`
-	ReturnIndex   int       `json:"return_index,omitempty"`
+	TypeName       string    `json:"type_name"`
+	TypeArgs       []TypeArg `json:"type_args,omitempty"` // generic args: List<User> → [{Name:"User"}]
+	Tier           int       `json:"tier"`
+	Scope          string    `json:"scope"`
+	MultiReturnOf  string    `json:"multi_return_of,omitempty"`
+	ReturnIndex    int       `json:"return_index,omitempty"`
+	LambdaSymbolID string    `json:"lambda_symbol_id,omitempty"` // variable points to this lambda Symbol
 }
 
 // ResolvedRelation is a fully resolved relationship with confidence.

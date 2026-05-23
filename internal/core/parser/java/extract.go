@@ -2,6 +2,7 @@ package java
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
@@ -730,18 +731,29 @@ func extractCalls(bodyNode *tree_sitter.Node, content []byte, filePath, callerNa
 	if packageName != "" {
 		scope = packageName + "." + scope
 	}
+	lambdaCounter := 0 // method-body-level counter shared across all call sites
 	astutil.WalkNamedChildren(bodyNode, func(node *tree_sitter.Node) bool {
+		// Skip lambda nodes already handled elsewhere:
+		// - argument position: handled by extractLambdaFromArgs
+		// - declarative (variable_declarator): handled by extractDeclarativeLambda
+		if node.Kind() == "lambda_expression" {
+			parent := node.Parent()
+			if parent != nil && (parent.Kind() == "argument_list" || parent.Kind() == "variable_declarator") {
+				return false
+			}
+		}
 		if node.Kind() == "method_invocation" {
-			extractMethodInvocation(node, content, filePath, scope, result)
+			extractMethodInvocation(node, content, filePath, scope, &lambdaCounter, result)
 			return true
 		}
 		if node.Kind() == "object_creation_expression" {
-			extractConstructorCall(node, content, filePath, scope, result)
+			extractConstructorCall(node, content, filePath, scope, &lambdaCounter, result)
 			return true
 		}
 		if node.Kind() == "local_variable_declaration" {
 			extractLocalVarTypeHint(node, content, scope, filePath, result)
 			extractPendingAssignment(node, content, scope, result)
+			extractDeclarativeLambda(node, content, filePath, scope, &lambdaCounter, result)
 		}
 		if node.Kind() == "enhanced_for_statement" {
 			typeNode := node.ChildByFieldName("type")
@@ -985,7 +997,7 @@ func extractPendingAssignment(node *tree_sitter.Node, content []byte, scope stri
 }
 
 // extractMethodInvocation extracts a method_invocation node.
-func extractMethodInvocation(node *tree_sitter.Node, content []byte, filePath, qualifiedCallerName string, result *model.ParseResult) {
+func extractMethodInvocation(node *tree_sitter.Node, content []byte, filePath, qualifiedCallerName string, lambdaCounter *int, result *model.ParseResult) {
 	// method_invocation has: object.method(args) or method(args)
 	methodName := ""
 	receiverExpr := ""
@@ -1000,21 +1012,9 @@ func extractMethodInvocation(node *tree_sitter.Node, content []byte, filePath, q
 		receiverExpr = objectNode.Utf8Text(content)
 	}
 
-	// Count arguments and infer types
-	argCount := 0
-	var argTypes []string
-	var argExprs []string
+	// Count arguments, extract lambda from args
 	argsNode := node.ChildByFieldName("arguments")
-	if argsNode != nil {
-		for i := uint(0); i < argsNode.ChildCount(); i++ {
-			child := argsNode.Child(i)
-			if child.IsNamed() {
-				argCount++
-				argTypes = append(argTypes, inferArgType(child, content))
-				argExprs = append(argExprs, child.Utf8Text(content))
-			}
-		}
-	}
+	argCount, argTypes, argExprs := extractLambdaFromArgs(argsNode, content, filePath, qualifiedCallerName, lambdaCounter, result)
 
 	if methodName == "" {
 		return
@@ -1036,6 +1036,125 @@ func extractMethodInvocation(node *tree_sitter.Node, content []byte, filePath, q
 		FlowContext:  flowContext.Kind,
 		FlowLine:     flowContext.Line,
 	})
+}
+
+
+// extractLambdaFromArgs iterates argument children, extracts lambda_expression as Symbol with recursive calls,
+// and collects argCount/argTypes/argExprs for non-lambda arguments.
+func extractLambdaFromArgs(argsNode *tree_sitter.Node, content []byte, filePath, qualifiedCallerName string, lambdaCounter *int, result *model.ParseResult) (int, []string, []string) {
+	if argsNode == nil {
+		return 0, nil, nil
+	}
+	var argCount int
+	var argTypes, argExprs []string
+	for i := uint(0); i < argsNode.ChildCount(); i++ {
+		child := argsNode.Child(i)
+		if !child.IsNamed() {
+			continue
+		}
+		if child.Kind() == "lambda_expression" {
+			argCount++
+			argTypes = append(argTypes, "")
+			argExprs = append(argExprs, "")
+			*lambdaCounter++
+			lambdaName := fmt.Sprintf("lambda$%d", *lambdaCounter)
+			lambdaQualifiedName := qualifiedCallerName + "." + lambdaName
+			lambdaID := astutil.GenerateSymbolID(filePath, lambdaQualifiedName, int(child.StartPosition().Row)+1)
+			result.Symbols = append(result.Symbols, model.Symbol{
+				ID:            lambdaID,
+				Name:          lambdaName,
+				QualifiedName: lambdaQualifiedName,
+				Kind:          constants.KindFunction,
+				FilePath:      filePath,
+				StartLine:     int(child.StartPosition().Row) + 1,
+				EndLine:       int(child.EndPosition().Row) + 1,
+				IsLambda:      true,
+				LambdaContext: qualifiedCallerName,
+			})
+			result.Calls = append(result.Calls, model.RawCall{
+				CalledName:    lambdaQualifiedName,
+				CallerName:    qualifiedCallerName,
+				CallerKind:    constants.KindFunction,
+				FilePath:      filePath,
+				Line:          int(child.StartPosition().Row) + 1,
+				IsPreResolved: true,
+			})
+			body := child.ChildByFieldName("body")
+			if body != nil {
+				// Expression lambda: body is the expression itself (e.g. method_invocation)
+				// Block lambda: body is a block containing statements
+				if body.Kind() == "method_invocation" {
+					extractMethodInvocation(body, content, filePath, lambdaQualifiedName, lambdaCounter, result)
+				} else if body.Kind() == "object_creation_expression" {
+					extractConstructorCall(body, content, filePath, lambdaQualifiedName, lambdaCounter, result)
+				} else {
+					extractCalls(body, content, filePath, lambdaQualifiedName, "", "", result)
+				}
+			}
+		} else {
+			argCount++
+			argTypes = append(argTypes, inferArgType(child, content))
+			argExprs = append(argExprs, child.Utf8Text(content))
+		}
+	}
+	return argCount, argTypes, argExprs
+}
+
+// extractDeclarativeLambda detects variable declarations with lambda_expression on the right side,
+// extracts the lambda as a Symbol and recursively extracts calls from its body.
+func extractDeclarativeLambda(node *tree_sitter.Node, content []byte, filePath, callerQualifiedName string, lambdaCounter *int, result *model.ParseResult) {
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		declarator := node.NamedChild(i)
+		if declarator.Kind() != "variable_declarator" {
+			continue
+		}
+		nameNode := declarator.ChildByFieldName("name")
+		valueNode := declarator.ChildByFieldName("value")
+		if nameNode == nil || valueNode == nil || valueNode.Kind() != "lambda_expression" {
+			continue
+		}
+		lambdaName := nameNode.Utf8Text(content)
+		if lambdaName == "" {
+			continue
+		}
+		lambdaQualifiedName := callerQualifiedName + "." + lambdaName
+		lambdaID := astutil.GenerateSymbolID(filePath, lambdaQualifiedName, int(valueNode.StartPosition().Row)+1)
+		result.Symbols = append(result.Symbols, model.Symbol{
+			ID:            lambdaID,
+			Name:          lambdaName,
+			QualifiedName: lambdaQualifiedName,
+			Kind:          constants.KindFunction,
+			FilePath:      filePath,
+			StartLine:     int(valueNode.StartPosition().Row) + 1,
+			EndLine:       int(valueNode.EndPosition().Row) + 1,
+			IsLambda:      true,
+			LambdaContext: callerQualifiedName,
+		})
+		// Append TypeHint with LambdaSymbolID — this will override the one from extractLocalVarTypeHint
+		// because TypeInfer processes hints in order and same key overwrites.
+		typeNode := node.ChildByFieldName("type")
+		typeName := ""
+		if typeNode != nil {
+			typeName = ExtractTypeName(typeNode, content)
+		}
+		result.TypeHints = append(result.TypeHints, model.TypeBinding{
+			VarName:        lambdaName,
+			TypeName:       typeName,
+			Scope:          callerQualifiedName,
+			FilePath:       filePath,
+			LambdaSymbolID: lambdaID,
+		})
+		body := valueNode.ChildByFieldName("body")
+		if body != nil {
+			if body.Kind() == "method_invocation" {
+				extractMethodInvocation(body, content, filePath, lambdaQualifiedName, lambdaCounter, result)
+			} else if body.Kind() == "object_creation_expression" {
+				extractConstructorCall(body, content, filePath, lambdaQualifiedName, lambdaCounter, result)
+			} else {
+				extractCalls(body, content, filePath, lambdaQualifiedName, "", "", result)
+			}
+		}
+	}
 }
 
 // inferArgType infers a type hint from a call argument AST node.
@@ -1093,7 +1212,7 @@ func inferArgType(node *tree_sitter.Node, content []byte) string {
 }
 
 // extractConstructorCall extracts a new Xxx() expression.
-func extractConstructorCall(node *tree_sitter.Node, content []byte, filePath, qualifiedCallerName string, result *model.ParseResult) {
+func extractConstructorCall(node *tree_sitter.Node, content []byte, filePath, qualifiedCallerName string, lambdaCounter *int, result *model.ParseResult) {
 	typeNode := node.ChildByFieldName("type")
 	if typeNode == nil {
 		return
@@ -1103,21 +1222,9 @@ func extractConstructorCall(node *tree_sitter.Node, content []byte, filePath, qu
 		return
 	}
 
-	// Count arguments
-	argCount := 0
-	var argTypes []string
-	var argExprs []string
+	// Count arguments, extract lambda from args
 	argsNode := node.ChildByFieldName("arguments")
-	if argsNode != nil {
-		for i := uint(0); i < argsNode.ChildCount(); i++ {
-			child := argsNode.Child(i)
-			if child.IsNamed() {
-				argCount++
-				argTypes = append(argTypes, inferArgType(child, content))
-				argExprs = append(argExprs, child.Utf8Text(content))
-			}
-		}
-	}
+	argCount, argTypes, argExprs := extractLambdaFromArgs(argsNode, content, filePath, qualifiedCallerName, lambdaCounter, result)
 
 	callerContext := qualifiedCallerName
 
