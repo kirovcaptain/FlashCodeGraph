@@ -311,7 +311,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 			switch clause.Kind() {
 			case "extends_clause":
 				var parentName string
-				var heritageTypeArgs []string
+				var heritageTypeArgs []model.TypeArg
 				for j := uint(0); j < clause.ChildCount(); j++ {
 					typeNode := clause.Child(j)
 					if typeNode.Kind() == "type_arguments" {
@@ -341,7 +341,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 					if ifaceName == "" {
 						continue
 					}
-					var interfaceTypeArgs []string
+					var interfaceTypeArgs []model.TypeArg
 					if typeNode.Kind() == "generic_type" {
 						interfaceTypeArgs = extractTypeArgsFromNode(astutil.FindChildByKind(typeNode, "type_arguments"), content)
 					}
@@ -751,17 +751,24 @@ func extractTypeParams(node *tree_sitter.Node, content []byte) []string {
 	return typeParams
 }
 
-// extractTypeArgsFromNode extracts type argument names from a type_arguments node.
-// For TS: <User, string> → ["User", "string"]
-func extractTypeArgsFromNode(typeArgsNode *tree_sitter.Node, content []byte) []string {
+// extractTypeArgsFromNode extracts type arguments from a type_arguments node.
+// For TS: <User, Promise<Order>> → [{Name:"User"}, {Name:"Promise", Args:[{Name:"Order"}]}]
+func extractTypeArgsFromNode(typeArgsNode *tree_sitter.Node, content []byte) []model.TypeArg {
 	if typeArgsNode == nil {
 		return nil
 	}
-	var typeArgs []string
+	var typeArgs []model.TypeArg
 	for i := uint(0); i < typeArgsNode.ChildCount(); i++ {
 		child := typeArgsNode.Child(i)
-		if child.IsNamed() {
-			typeArgs = append(typeArgs, extractTypeName(child, content))
+		if !child.IsNamed() {
+			continue
+		}
+		if child.Kind() == "generic_type" {
+			name := extractTypeName(child, content)
+			nestedTypeArgs := extractTypeArgsFromNode(astutil.FindChildByKind(child, "type_arguments"), content)
+			typeArgs = append(typeArgs, model.TypeArg{Name: name, Args: nestedTypeArgs})
+		} else {
+			typeArgs = append(typeArgs, model.TypeArg{Name: extractTypeName(child, content)})
 		}
 	}
 	return typeArgs

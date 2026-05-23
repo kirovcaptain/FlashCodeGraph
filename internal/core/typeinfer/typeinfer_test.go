@@ -443,7 +443,7 @@ func TestResolveFixpoint_Chain(t *testing.T) {
 func TestResolveFixpoint_ContainerGeneric(t *testing.T) {
 	infer := New()
 	env := &model.TypeEnv{Bindings: map[string]*model.TypeInfo{
-		"process:users": {TypeName: "List", TypeArgs: []string{"User"}, Scope: "process"},
+		"process:users": {TypeName: "List", TypeArgs: []model.TypeArg{{Name: "User"}}, Scope: "process"},
 	}}
 	pendings := []model.PendingAssignment{
 		{Kind: "method_call_result", LHS: "first", Scope: "process", Receiver: "users", Method: "get"},
@@ -460,7 +460,7 @@ func TestResolveFixpoint_ContainerGeneric(t *testing.T) {
 func TestResolveFixpoint_MapGeneric(t *testing.T) {
 	infer := New()
 	env := &model.TypeEnv{Bindings: map[string]*model.TypeInfo{
-		"run:map": {TypeName: "HashMap", TypeArgs: []string{"String", "Order"}, Scope: "run"},
+		"run:map": {TypeName: "HashMap", TypeArgs: []model.TypeArg{{Name: "String"}, {Name: "Order"}}, Scope: "run"},
 	}}
 	pendings := []model.PendingAssignment{
 		{Kind: "method_call_result", LHS: "order", Scope: "run", Receiver: "map", Method: "get"},
@@ -477,7 +477,7 @@ func TestResolveFixpoint_MapGeneric(t *testing.T) {
 func TestResolveFixpoint_UserDefinedGeneric(t *testing.T) {
 	infer := New()
 	env := &model.TypeEnv{Bindings: map[string]*model.TypeInfo{
-		"process:callback": {TypeName: "TKPayResponseWrapper", TypeArgs: []string{"TKPayPayOutOrderCallback"}, Scope: "process"},
+		"process:callback": {TypeName: "TKPayResponseWrapper", TypeArgs: []model.TypeArg{{Name: "TKPayPayOutOrderCallback"}}, Scope: "process"},
 	}}
 	pendings := []model.PendingAssignment{
 		{Kind: "method_call_result", LHS: "data", Scope: "process", Receiver: "callback", Method: "getData"},

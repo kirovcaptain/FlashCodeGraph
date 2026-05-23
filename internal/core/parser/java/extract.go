@@ -204,7 +204,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 					if iface.IsNamed() {
 						ifaceName := ExtractTypeName(iface, content)
 						if ifaceName != "" {
-							var interfaceTypeArgs []string
+							var interfaceTypeArgs []model.TypeArg
 							if iface.Kind() == "generic_type" {
 								interfaceTypeArgs = ExtractTypeArgs(iface, content)
 							}
@@ -1291,24 +1291,54 @@ func ExtractTypeName(node *tree_sitter.Node, content []byte) string {
 
 // ExtractTypeArgs extracts generic type arguments from a type node.
 // e.g. List<User> → ["User"], Map<String, User> → ["String", "User"]
-func ExtractTypeArgs(node *tree_sitter.Node, content []byte) []string {
+func ExtractTypeArgs(node *tree_sitter.Node, content []byte) []model.TypeArg {
 	if node.Kind() != "generic_type" && node.Kind() != "parameterized_type" {
 		return nil
 	}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "type_arguments" {
-			var args []string
+			var args []model.TypeArg
 			for j := uint(0); j < child.ChildCount(); j++ {
 				arg := child.Child(j)
 				if arg.IsNamed() {
-					args = append(args, ExtractTypeName(arg, content))
+					args = append(args, extractTypeArg(arg, content))
 				}
 			}
 			return args
 		}
 	}
 	return nil
+}
+
+// extractTypeArg extracts a single type argument, handling wildcards and nested generics.
+func extractTypeArg(node *tree_sitter.Node, content []byte) model.TypeArg {
+	switch node.Kind() {
+	case "wildcard":
+		// ? extends Animal → wildcard children: [type_identifier("Animal")]
+		// ? super Dog      → wildcard children: [super, type_identifier("Dog")]
+		// ?                → wildcard children: (none)
+		hasSuperKeyword := false
+		for i := uint(0); i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child.Kind() == "super" {
+				hasSuperKeyword = true
+			}
+			if child.Kind() == "type_identifier" || child.Kind() == "generic_type" {
+				if hasSuperKeyword {
+					return model.TypeArg{Name: "Object"}
+				}
+				return extractTypeArg(child, content)
+			}
+		}
+		return model.TypeArg{Name: "Object"}
+	case "generic_type":
+		name := ExtractTypeName(node, content)
+		nestedArgs := ExtractTypeArgs(node, content)
+		return model.TypeArg{Name: name, Args: nestedArgs}
+	default:
+		return model.TypeArg{Name: ExtractTypeName(node, content)}
+	}
 }
 
 // extractTypeFromHeritage extracts the parent type from a superclass node.
@@ -1323,8 +1353,8 @@ func extractTypeFromHeritage(node *tree_sitter.Node, content []byte) string {
 }
 
 // extractHeritageTypeArgs extracts generic type arguments from a superclass node.
-// For: extends BaseRepo<User, Long> → ["User", "Long"]
-func extractHeritageTypeArgs(superclassNode *tree_sitter.Node, content []byte) []string {
+// For: extends BaseRepo<User, Long> → [{Name:"User"}, {Name:"Long"}]
+func extractHeritageTypeArgs(superclassNode *tree_sitter.Node, content []byte) []model.TypeArg {
 	for i := uint(0); i < superclassNode.ChildCount(); i++ {
 		child := superclassNode.Child(i)
 		if child.Kind() == "generic_type" {

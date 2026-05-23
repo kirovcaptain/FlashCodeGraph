@@ -344,7 +344,7 @@ func lookupMethodReturnTypeWithArgs(env *model.TypeEnv, scope, receiver, receive
 	if elemIdx, ok := containerElementIndex[typeSeg]; ok {
 		typeArgs := lookupTypeArgs(env, scope, receiver)
 		if elemIdx < len(typeArgs) {
-			return typeArgs[elemIdx]
+			return typeArgs[elemIdx].Name
 		}
 	}
 	return ""
@@ -368,7 +368,7 @@ func substituteTypeParam(returnType, receiverType, receiver string, env *model.T
 			if tp == returnType {
 				typeArgs := lookupTypeArgs(env, scope, receiver)
 				if idx < len(typeArgs) {
-					return typeArgs[idx]
+					return typeArgs[idx].Name
 				}
 			}
 		}
@@ -377,11 +377,11 @@ func substituteTypeParam(returnType, receiverType, receiver string, env *model.T
 }
 
 // LookupTypeArgs returns the TypeArgs for a variable in the given scope.
-func LookupTypeArgs(env *model.TypeEnv, scope, varName string) []string {
+func LookupTypeArgs(env *model.TypeEnv, scope, varName string) []model.TypeArg {
 	return lookupTypeArgs(env, scope, varName)
 }
 
-func lookupTypeArgs(env *model.TypeEnv, scope, varName string) []string {
+func lookupTypeArgs(env *model.TypeEnv, scope, varName string) []model.TypeArg {
 	key := scopedKey(scope, varName)
 	if info, exists := env.Bindings[key]; exists && len(info.TypeArgs) > 0 {
 		return info.TypeArgs

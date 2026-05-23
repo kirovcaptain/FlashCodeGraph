@@ -28,12 +28,13 @@ type Resolver struct {
 	symbolTable          *SymbolTable
 	heritage             []model.RawHeritage
 	langHelpers          map[string]LanguageHelper
-	qualifiedParentMap   map[string][]string           // cached buildQualifiedParentMap result
-	hierarchyCache       map[string]*model.Symbol      // cached FindMethodInHierarchy results
+	qualifiedParentMap   map[string][]string            // cached buildQualifiedParentMap result
+	hierarchyCache       map[string]*model.Symbol       // cached FindMethodInHierarchy results
 	heritageByChild      map[string][]model.RawHeritage // childName → heritage entries
-	globalBindings       map[string]string             // classQN:fieldName → typeName
-	chainedReceiverCache map[string]string             // expr:callerName:filePath → resolved type
-	importFileMap        map[ImportFileKey]string       // (filePath, symbolName) → resolved target file
+	globalBindings       map[string]string              // classQN:fieldName → typeName
+	chainedReceiverCache map[string]string              // expr:callerName:filePath → resolved type
+	chainedTypeArgs      map[string][]model.TypeArg     // expr → TypeArgs for chained generic resolution
+	importFileMap        map[ImportFileKey]string        // (filePath, symbolName) → resolved target file
 }
 
 // ImportFileKey identifies an import by its source file and symbol name.
@@ -45,8 +46,9 @@ type ImportFileKey struct {
 // NewResolver creates a Resolver with the given SymbolTable and optional language-specific helpers.
 func NewResolver(symbolTable *SymbolTable, helpers ...map[string]LanguageHelper) *Resolver {
 	r := &Resolver{
-		symbolTable: symbolTable,
-		langHelpers: make(map[string]LanguageHelper),
+		symbolTable:     symbolTable,
+		langHelpers:     make(map[string]LanguageHelper),
+		chainedTypeArgs: make(map[string][]model.TypeArg),
 	}
 	if len(helpers) > 0 && helpers[0] != nil {
 		r.langHelpers = helpers[0]
@@ -928,8 +930,16 @@ func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiver
 					return retType
 				}
 				typeArgs := typeinfer.LookupTypeArgs(env, effectiveCallerScope(call), receiverVar)
+				// Also check chainedTypeArgs cache for intermediate chain results
+				if typeArgs == nil {
+					typeArgs = resolver.chainedTypeArgs[receiverVar]
+				}
 				if idx < len(typeArgs) {
-					return typeArgs[idx]
+					matched := typeArgs[idx]
+					if len(matched.Args) > 0 && resolver.chainedTypeArgs != nil {
+						resolver.chainedTypeArgs[receiverVar+"."+retType] = matched.Args
+					}
+					return matched.Name
 				}
 			}
 		}
@@ -948,7 +958,11 @@ func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiver
 			}
 			for idx, typeParam := range parentClass.TypeParams {
 				if typeParam == retType && idx < len(heritageEntry.TypeArgs) {
-					return heritageEntry.TypeArgs[idx]
+					matched := heritageEntry.TypeArgs[idx]
+					if len(matched.Args) > 0 && resolver.chainedTypeArgs != nil {
+						resolver.chainedTypeArgs[receiverVar+"."+retType] = matched.Args
+					}
+					return matched.Name
 				}
 			}
 		}

@@ -990,10 +990,42 @@ func TestExtractClass_HeritageTypeArgs(t *testing.T) {
 				t.Fatalf("TypeArgs length: got %d, want %d (got %v)", len(found.TypeArgs), len(testCase.expectedTypeArgs), found.TypeArgs)
 			}
 			for i, expected := range testCase.expectedTypeArgs {
-				if found.TypeArgs[i] != expected {
-					t.Errorf("TypeArgs[%d]: got %q, want %q", i, found.TypeArgs[i], expected)
+				if found.TypeArgs[i].Name != expected {
+					t.Errorf("TypeArgs[%d]: got %q, want %q", i, found.TypeArgs[i].Name, expected)
 				}
 			}
 		})
+	}
+}
+
+func TestExtractTypeArgsFromNode_Nested(t *testing.T) {
+	code := []byte(`class Foo extends Base<string, Promise<User>> {}`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "test.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var found *model.RawHeritage
+	for i := range result.Heritage {
+		if result.Heritage[i].ParentName == "Base" {
+			found = &result.Heritage[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("heritage for Base not found")
+	}
+	if len(found.TypeArgs) != 2 {
+		t.Fatalf("TypeArgs length: got %d, want 2 (got %v)", len(found.TypeArgs), found.TypeArgs)
+	}
+	if found.TypeArgs[0].Name != "string" {
+		t.Errorf("TypeArgs[0].Name: got %q, want %q", found.TypeArgs[0].Name, "string")
+	}
+	if found.TypeArgs[1].Name != "Promise" {
+		t.Errorf("TypeArgs[1].Name: got %q, want %q", found.TypeArgs[1].Name, "Promise")
+	}
+	if len(found.TypeArgs[1].Args) != 1 || found.TypeArgs[1].Args[0].Name != "User" {
+		t.Errorf("TypeArgs[1].Args: got %v, want [{Name:User}]", found.TypeArgs[1].Args)
 	}
 }

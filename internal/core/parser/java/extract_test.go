@@ -1149,8 +1149,90 @@ class Repo extends Base<List<User>, Long> {}`,
 				t.Fatalf("TypeArgs length: got %d, want %d (got %v)", len(found.TypeArgs), len(testCase.expectedTypeArgs), found.TypeArgs)
 			}
 			for i, expected := range testCase.expectedTypeArgs {
-				if found.TypeArgs[i] != expected {
-					t.Errorf("TypeArgs[%d]: got %q, want %q", i, found.TypeArgs[i], expected)
+				if found.TypeArgs[i].Name != expected {
+					t.Errorf("TypeArgs[%d]: got %q, want %q", i, found.TypeArgs[i].Name, expected)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractTypeArgs_Wildcard(t *testing.T) {
+	tests := []struct {
+		name         string
+		code         string
+		fieldName    string
+		expectedArgs []model.TypeArg
+	}{
+		{
+			name:         "wildcard extends",
+			code:         `package test; class Foo { List<? extends Animal> a; }`,
+			fieldName:    "a",
+			expectedArgs: []model.TypeArg{{Name: "Animal"}},
+		},
+		{
+			name:         "wildcard super",
+			code:         `package test; class Foo { List<? super Dog> b; }`,
+			fieldName:    "b",
+			expectedArgs: []model.TypeArg{{Name: "Object"}},
+		},
+		{
+			name:         "unbounded wildcard",
+			code:         `package test; class Foo { List<?> c; }`,
+			fieldName:    "c",
+			expectedArgs: []model.TypeArg{{Name: "Object"}},
+		},
+		{
+			name:         "mixed wildcard",
+			code:         `package test; class Foo { Map<String, ? extends User> d; }`,
+			fieldName:    "d",
+			expectedArgs: []model.TypeArg{{Name: "String"}, {Name: "User"}},
+		},
+		{
+			name:         "nested generic",
+			code:         `package test; class Foo { Map<String, List<User>> e; }`,
+			fieldName:    "e",
+			expectedArgs: []model.TypeArg{{Name: "String"}, {Name: "List", Args: []model.TypeArg{{Name: "User"}}}},
+		},
+		{
+			name:         "multi-param nested",
+			code:         `package test; class Foo { Pair<Map<String, User>, Order> f; }`,
+			fieldName:    "f",
+			expectedArgs: []model.TypeArg{{Name: "Map", Args: []model.TypeArg{{Name: "String"}, {Name: "User"}}}, {Name: "Order"}},
+		},
+		{
+			name:         "simple generic unchanged",
+			code:         `package test; class Foo { List<User> g; }`,
+			fieldName:    "g",
+			expectedArgs: []model.TypeArg{{Name: "User"}},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := parseJavaFile(t, testCase.code, "Foo.java")
+			// Find TypeHint for the field
+			var foundTypeArgs []model.TypeArg
+			for _, hint := range result.TypeHints {
+				if hint.VarName == testCase.fieldName {
+					foundTypeArgs = hint.TypeArgs
+					break
+				}
+			}
+			if len(foundTypeArgs) != len(testCase.expectedArgs) {
+				t.Fatalf("TypeArgs length: got %d, want %d (got %v)", len(foundTypeArgs), len(testCase.expectedArgs), foundTypeArgs)
+			}
+			for i, expected := range testCase.expectedArgs {
+				if foundTypeArgs[i].Name != expected.Name {
+					t.Errorf("TypeArgs[%d].Name: got %q, want %q", i, foundTypeArgs[i].Name, expected.Name)
+				}
+				if len(foundTypeArgs[i].Args) != len(expected.Args) {
+					t.Errorf("TypeArgs[%d].Args length: got %d, want %d", i, len(foundTypeArgs[i].Args), len(expected.Args))
+				}
+				for j, nestedExpected := range expected.Args {
+					if j < len(foundTypeArgs[i].Args) && foundTypeArgs[i].Args[j].Name != nestedExpected.Name {
+						t.Errorf("TypeArgs[%d].Args[%d].Name: got %q, want %q", i, j, foundTypeArgs[i].Args[j].Name, nestedExpected.Name)
+					}
 				}
 			}
 		})

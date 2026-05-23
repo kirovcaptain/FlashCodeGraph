@@ -31,13 +31,13 @@ type RawImport struct {
 
 // RawHeritage represents an inheritance/implementation relationship from AST.
 type RawHeritage struct {
-	ChildName       string   `json:"child_name"`
-	ChildQualified  string   `json:"child_qualified,omitempty"`
-	ParentName      string   `json:"parent_name"`
-	ParentQualified string   `json:"parent_qualified,omitempty"`
-	Kind            string   `json:"kind"`                       // extends / implements / embedding
-	FilePath        string   `json:"file_path"`
-	TypeArgs        []string `json:"type_args,omitempty"`        // generic args: extends Base<User, Long> → ["User", "Long"]
+	ChildName       string    `json:"child_name"`
+	ChildQualified  string    `json:"child_qualified,omitempty"`
+	ParentName      string    `json:"parent_name"`
+	ParentQualified string    `json:"parent_qualified,omitempty"`
+	Kind            string    `json:"kind"`                       // extends / implements / embedding
+	FilePath        string    `json:"file_path"`
+	TypeArgs        []TypeArg `json:"type_args,omitempty"`        // generic args: extends Base<User, Long> → [{Name:"User"}, {Name:"Long"}]
 }
 
 // RawRoute represents a route declaration extracted from AST.
@@ -111,13 +111,13 @@ type RawConstRef struct {
 
 // TypeBinding represents a Tier 0/1 type hint from AST.
 type TypeBinding struct {
-	VarName       string   `json:"var_name"`
-	TypeName      string   `json:"type_name"`
-	TypeArgs      []string `json:"type_args,omitempty"`
-	Tier          int      `json:"tier"`
-	Scope         string   `json:"scope"`
-	FilePath      string   `json:"file_path"`
-	MultiReturnOf string   `json:"multi_return_of,omitempty"`
+	VarName       string    `json:"var_name"`
+	TypeName      string    `json:"type_name"`
+	TypeArgs      []TypeArg `json:"type_args,omitempty"`
+	Tier          int       `json:"tier"`
+	Scope         string    `json:"scope"`
+	FilePath      string    `json:"file_path"`
+	MultiReturnOf string    `json:"multi_return_of,omitempty"`
 	ReturnIndex   int      `json:"return_index,omitempty"`
 }
 

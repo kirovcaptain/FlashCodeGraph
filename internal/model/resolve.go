@@ -1,5 +1,12 @@
 package model
 
+// TypeArg represents a generic type argument, supporting nested generics.
+// Example: Map<String, List<User>> → [{Name:"String"}, {Name:"List", Args:[{Name:"User"}]}]
+type TypeArg struct {
+	Name string    `json:"name"`
+	Args []TypeArg `json:"args,omitempty"`
+}
+
 // TypeEnv maps variable names to type info within a scope.
 type TypeEnv struct {
 	Bindings     map[string]*TypeInfo `json:"bindings"`
@@ -9,12 +16,12 @@ type TypeEnv struct {
 
 // TypeInfo describes an inferred type.
 type TypeInfo struct {
-	TypeName      string   `json:"type_name"`
-	TypeArgs      []string `json:"type_args,omitempty"` // generic args: List<User> → ["User"]
-	Tier          int      `json:"tier"`
-	Scope         string   `json:"scope"`
-	MultiReturnOf string   `json:"multi_return_of,omitempty"`
-	ReturnIndex   int      `json:"return_index,omitempty"`
+	TypeName      string    `json:"type_name"`
+	TypeArgs      []TypeArg `json:"type_args,omitempty"` // generic args: List<User> → [{Name:"User"}]
+	Tier          int       `json:"tier"`
+	Scope         string    `json:"scope"`
+	MultiReturnOf string    `json:"multi_return_of,omitempty"`
+	ReturnIndex   int       `json:"return_index,omitempty"`
 }
 
 // ResolvedRelation is a fully resolved relationship with confidence.

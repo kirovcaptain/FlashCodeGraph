@@ -2923,7 +2923,7 @@ func TestSubstituteGenericParam_Heritage(t *testing.T) {
 			name:         "extends single generic substitution",
 			receiverType: "UserRepo",
 			retType:      "T",
-			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User"}}},
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []model.TypeArg{{Name: "User"}}}},
 			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: []string{"T"}},
 			expected:     "User",
 		},
@@ -2931,7 +2931,7 @@ func TestSubstituteGenericParam_Heritage(t *testing.T) {
 			name:         "extends multiple generic index 1",
 			receiverType: "UserRepo",
 			retType:      "ID",
-			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User", "Long"}}},
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []model.TypeArg{{Name: "User"}, {Name: "Long"}}}},
 			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: []string{"T", "ID"}},
 			expected:     "Long",
 		},
@@ -2947,7 +2947,7 @@ func TestSubstituteGenericParam_Heritage(t *testing.T) {
 			name:         "retType is concrete type",
 			receiverType: "UserRepo",
 			retType:      "int",
-			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User"}}},
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []model.TypeArg{{Name: "User"}}}},
 			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: []string{"T"}},
 			expected:     "int",
 		},
@@ -2955,7 +2955,7 @@ func TestSubstituteGenericParam_Heritage(t *testing.T) {
 			name:         "parent has no TypeParams",
 			receiverType: "UserRepo",
 			retType:      "T",
-			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User"}}},
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []model.TypeArg{{Name: "User"}}}},
 			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: nil},
 			expected:     "T",
 		},
@@ -2963,7 +2963,7 @@ func TestSubstituteGenericParam_Heritage(t *testing.T) {
 			name:         "TypeArgs shorter than TypeParams index",
 			receiverType: "UserRepo",
 			retType:      "ID",
-			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []string{"User"}}},
+			heritage:     []model.RawHeritage{{ChildName: "UserRepo", ParentName: "BaseRepo", Kind: "extends", TypeArgs: []model.TypeArg{{Name: "User"}}}},
 			parentSymbol: model.Symbol{Name: "BaseRepo", Kind: "Class", TypeParams: []string{"T", "ID"}},
 			expected:     "ID",
 		},
@@ -2971,7 +2971,7 @@ func TestSubstituteGenericParam_Heritage(t *testing.T) {
 			name:         "implements generic substitution",
 			receiverType: "UserService",
 			retType:      "R",
-			heritage:     []model.RawHeritage{{ChildName: "UserService", ParentName: "Converter", Kind: "implements", TypeArgs: []string{"User", "UserDTO"}}},
+			heritage:     []model.RawHeritage{{ChildName: "UserService", ParentName: "Converter", Kind: "implements", TypeArgs: []model.TypeArg{{Name: "User"}, {Name: "UserDTO"}}}},
 			parentSymbol: model.Symbol{Name: "Converter", Kind: "Interface", TypeParams: []string{"S", "R"}},
 			expected:     "UserDTO",
 		},
@@ -3009,7 +3009,7 @@ func TestSubstituteGenericParam_OwnTypeParamsTakesPriority(t *testing.T) {
 
 	resolver := NewResolver(symbolTable)
 	resolver.SetHeritage([]model.RawHeritage{
-		{ChildName: "List", ParentName: "AbstractList", Kind: "extends", TypeArgs: []string{"WrongType"}},
+		{ChildName: "List", ParentName: "AbstractList", Kind: "extends", TypeArgs: []model.TypeArg{{Name: "WrongType"}}},
 	})
 
 	call := model.RawCall{FilePath: "test.java", CallerName: "com.example.Service.process"}
@@ -3017,7 +3017,7 @@ func TestSubstituteGenericParam_OwnTypeParamsTakesPriority(t *testing.T) {
 	envs := map[string]*model.TypeEnv{
 		"test.java": {
 			Bindings: map[string]*model.TypeInfo{
-				"com.example.Service.process:users": {TypeName: "List", TypeArgs: []string{"User"}, Scope: "com.example.Service.process"},
+				"com.example.Service.process:users": {TypeName: "List", TypeArgs: []model.TypeArg{{Name: "User"}}, Scope: "com.example.Service.process"},
 			},
 		},
 	}
