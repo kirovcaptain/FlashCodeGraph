@@ -725,6 +725,16 @@ func extractParams(node *tree_sitter.Node, content []byte) []model.ParamInfo {
 			if param.Kind() == "optional_parameter" || param.ChildByFieldName("value") != nil {
 				entry.HasDefault = true
 			}
+			// Extract TypeArgs for generic_type params (e.g. Constructor<T>)
+			if typeNode != nil {
+				for j := uint(0); j < typeNode.ChildCount(); j++ {
+					typeChild := typeNode.Child(j)
+					if typeChild.Kind() == "generic_type" {
+						entry.TypeArgs = extractTypeArgsFromNode(astutil.FindChildByKind(typeChild, "type_arguments"), content)
+						break
+					}
+				}
+			}
 			params = append(params, entry)
 		}
 	}
@@ -808,6 +818,29 @@ func extractTypeName(node *tree_sitter.Node, content []byte) string {
 	return ""
 }
 
+// inferTSArgType infers a type hint from a call argument AST node.
+func inferTSArgType(node *tree_sitter.Node, content []byte) string {
+	switch node.Kind() {
+	case "identifier":
+		name := node.Utf8Text(content)
+		if len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' {
+			return name
+		}
+	case "new_expression":
+		constructor := node.ChildByFieldName("constructor")
+		if constructor != nil && constructor.Kind() == "identifier" {
+			return constructor.Utf8Text(content)
+		}
+	case "string":
+		return "string"
+	case "number":
+		return "number"
+	case "true", "false":
+		return "boolean"
+	}
+	return ""
+}
+
 // extractTSPendingAssignment extracts assignment patterns for fixpoint type propagation.
 func extractTSPendingAssignment(node *tree_sitter.Node, content []byte, scope string, result *model.ParseResult) {
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -870,16 +903,26 @@ func extractTSPendingAssignment(node *tree_sitter.Node, content []byte, scope st
 			if fn == nil {
 				continue
 			}
+			var argTypes []string
+			argsNode := valueNode.ChildByFieldName("arguments")
+			if argsNode != nil {
+				for j := uint(0); j < argsNode.ChildCount(); j++ {
+					arg := argsNode.Child(j)
+					if arg.IsNamed() {
+						argTypes = append(argTypes, inferTSArgType(arg, content))
+					}
+				}
+			}
 			if fn.Kind() == "identifier" {
 				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-					Kind: "call_result", LHS: lhs, Scope: blockScopeKey, Callee: fn.Utf8Text(content),
+					Kind: "call_result", LHS: lhs, Scope: blockScopeKey, Callee: fn.Utf8Text(content), ArgTypes: argTypes,
 				})
 			} else if fn.Kind() == "member_expression" {
 				obj := fn.ChildByFieldName("object")
 				prop := fn.ChildByFieldName("property")
 				if obj != nil && prop != nil && obj.Kind() == "identifier" {
 					result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-						Kind: "method_call_result", LHS: lhs, Scope: blockScopeKey, Receiver: obj.Utf8Text(content), Method: prop.Utf8Text(content),
+						Kind: "method_call_result", LHS: lhs, Scope: blockScopeKey, Receiver: obj.Utf8Text(content), Method: prop.Utf8Text(content), ArgTypes: argTypes,
 					})
 				}
 			}

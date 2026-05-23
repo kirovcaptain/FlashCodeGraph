@@ -421,7 +421,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 					}
 					paramType += "..."
 				}
-				paramTypes = append(paramTypes, model.ParamInfo{Name: paramName, Type: paramType})
+				paramTypes = append(paramTypes, model.ParamInfo{Name: paramName, Type: paramType, TypeArgs: ExtractTypeArgs(pTypeNode, content)})
 				// Add type hint for parameter (enables TypeInfer to resolve receiver types)
 				if paramType != "" && paramName != "" {
 					result.TypeHints = append(result.TypeHints, model.TypeBinding{
@@ -959,15 +959,25 @@ func extractPendingAssignment(node *tree_sitter.Node, content []byte, scope stri
 			if name == nil {
 				break
 			}
+			var argTypes []string
+			argsNode := valueNode.ChildByFieldName("arguments")
+			if argsNode != nil {
+				for j := uint(0); j < argsNode.ChildCount(); j++ {
+					arg := argsNode.Child(j)
+					if arg.IsNamed() {
+						argTypes = append(argTypes, inferArgType(arg, content))
+					}
+				}
+			}
 			if obj == nil {
 				// callResult: User user = getUser()
 				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-					Kind: "call_result", LHS: lhs, Scope: scope, Callee: name.Utf8Text(content),
+					Kind: "call_result", LHS: lhs, Scope: scope, Callee: name.Utf8Text(content), ArgTypes: argTypes,
 				})
 			} else if obj.Kind() == "identifier" {
 				// methodCallResult: Address addr = user.getAddress()
 				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
-					Kind: "method_call_result", LHS: lhs, Scope: scope, Receiver: obj.Utf8Text(content), Method: name.Utf8Text(content),
+					Kind: "method_call_result", LHS: lhs, Scope: scope, Receiver: obj.Utf8Text(content), Method: name.Utf8Text(content), ArgTypes: argTypes,
 				})
 			}
 		}
@@ -1068,6 +1078,14 @@ func inferArgType(node *tree_sitter.Node, content []byte) string {
 				if len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' {
 					return "!" + name // "!ResponseCode" means NOT ResponseCode
 				}
+			}
+		}
+	case "class_literal":
+		// User.class → "User"
+		for i := uint(0); i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child.Kind() == "type_identifier" {
+				return child.Utf8Text(content)
 			}
 		}
 	}
@@ -1292,6 +1310,9 @@ func ExtractTypeName(node *tree_sitter.Node, content []byte) string {
 // ExtractTypeArgs extracts generic type arguments from a type node.
 // e.g. List<User> → ["User"], Map<String, User> → ["String", "User"]
 func ExtractTypeArgs(node *tree_sitter.Node, content []byte) []model.TypeArg {
+	if node == nil {
+		return nil
+	}
 	if node.Kind() != "generic_type" && node.Kind() != "parameterized_type" {
 		return nil
 	}

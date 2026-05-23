@@ -2,9 +2,10 @@ package model
 
 // ParamInfo describes a function/method parameter.
 type ParamInfo struct {
-	Name       string `json:"name"`
-	Type       string `json:"type,omitempty"`
-	HasDefault bool   `json:"default,omitempty"`
+	Name       string    `json:"name"`
+	Type       string    `json:"type,omitempty"`
+	TypeArgs   []TypeArg `json:"type_args,omitempty"` // generic type arguments: Class<T> → [{Name:"T"}]
+	HasDefault bool      `json:"default,omitempty"`
 }
 
 // Symbol represents a code symbol extracted from source.

@@ -1238,3 +1238,82 @@ func TestExtractTypeArgs_Wildcard(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractMethod_ParamTypeArgs(t *testing.T) {
+	code := `package com.example;
+public class Factory {
+    public <T> T getBean(Class<T> clazz) { return null; }
+    public <K, V> V transform(K key, V value) { return value; }
+}
+`
+	result := parseJavaFile(t, code, "com/example/Factory.java")
+
+	methods := map[string][]model.ParamInfo{}
+	for _, sym := range result.Symbols {
+		if sym.Kind == "Function" {
+			methods[sym.Name] = sym.Params
+		}
+	}
+
+	// getBean: Class<T> → TypeArgs=[{Name:"T"}]
+	params := methods["getBean"]
+	if len(params) != 1 {
+		t.Fatalf("getBean: expected 1 param, got %d", len(params))
+	}
+	if params[0].Type != "Class" {
+		t.Errorf("getBean param type: expected Class, got %q", params[0].Type)
+	}
+	if len(params[0].TypeArgs) != 1 || params[0].TypeArgs[0].Name != "T" {
+		t.Errorf("getBean param TypeArgs: expected [{Name:T}], got %v", params[0].TypeArgs)
+	}
+
+	// transform: K key, V value → no TypeArgs (type_identifier, not generic_type)
+	params = methods["transform"]
+	if len(params) != 2 {
+		t.Fatalf("transform: expected 2 params, got %d", len(params))
+	}
+	if len(params[0].TypeArgs) != 0 {
+		t.Errorf("transform param[0] TypeArgs: expected empty, got %v", params[0].TypeArgs)
+	}
+	if len(params[1].TypeArgs) != 0 {
+		t.Errorf("transform param[1] TypeArgs: expected empty, got %v", params[1].TypeArgs)
+	}
+}
+
+func TestExtractPendingAssignment_ArgTypes(t *testing.T) {
+	code := `package com.example;
+public class Consumer {
+    void run() {
+        Object user = getBean(User.class);
+        Object result = ctx.readValue(json, Order.class);
+    }
+}
+`
+	result := parseJavaFile(t, code, "com/example/Consumer.java")
+
+	pending := map[string]model.PendingAssignment{}
+	for _, p := range result.PendingAssignments {
+		pending[p.LHS] = p
+	}
+
+	// call_result: getBean(User.class) → ArgTypes=["User"]
+	userAssign := pending["user"]
+	if userAssign.Kind != "call_result" {
+		t.Fatalf("user: expected call_result, got %q", userAssign.Kind)
+	}
+	if len(userAssign.ArgTypes) != 1 || userAssign.ArgTypes[0] != "User" {
+		t.Errorf("user ArgTypes: expected [User], got %v", userAssign.ArgTypes)
+	}
+
+	// method_call_result: ctx.readValue(json, Order.class) → ArgTypes=["", "Order"]
+	resultAssign := pending["result"]
+	if resultAssign.Kind != "method_call_result" {
+		t.Fatalf("result: expected method_call_result, got %q", resultAssign.Kind)
+	}
+	if len(resultAssign.ArgTypes) != 2 {
+		t.Fatalf("result ArgTypes: expected 2, got %d", len(resultAssign.ArgTypes))
+	}
+	if resultAssign.ArgTypes[1] != "Order" {
+		t.Errorf("result ArgTypes[1]: expected Order, got %q", resultAssign.ArgTypes[1])
+	}
+}

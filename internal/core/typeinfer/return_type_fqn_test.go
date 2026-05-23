@@ -18,7 +18,7 @@ func TestLookupReturnType_ResolvesToFQN(t *testing.T) {
 		return nil
 	}
 
-	result := lookupReturnType("createService", findByName)
+	result := lookupReturnType("createService", findByName, nil)
 	if result != "pkg.services.MyService" {
 		t.Errorf("expected FQN 'pkg.services.MyService', got %q", result)
 	}
@@ -32,7 +32,7 @@ func TestLookupReturnType_NoMatchFallsBackToShortName(t *testing.T) {
 		return nil
 	}
 
-	result := lookupReturnType("getData", findByName)
+	result := lookupReturnType("getData", findByName, nil)
 	if result != "string" {
 		t.Errorf("expected 'string', got %q", result)
 	}

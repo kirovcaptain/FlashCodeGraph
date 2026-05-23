@@ -685,3 +685,111 @@ func TestInferLocal_ScopeParentsPassed(t *testing.T) {
 	}
 	t.Log("✅ InferLocal passes ScopeParents to TypeEnv")
 }
+
+func TestSubstituteTypeParam_MethodLevelGeneric(t *testing.T) {
+	// Setup: method getBean<T>(Class<T> clazz): T
+	findByName := func(name string) []model.Symbol {
+		switch name {
+		case "getBean":
+			return []model.Symbol{{
+				Name:        "getBean",
+				Kind:        "Function",
+				TypeParams:  []string{"T"},
+				ReturnTypes: []string{"T"},
+				Params:      []model.ParamInfo{{Name: "clazz", Type: "Class", TypeArgs: []model.TypeArg{{Name: "T"}}}},
+			}}
+		case "identity":
+			return []model.Symbol{{
+				Name:        "identity",
+				Kind:        "Function",
+				TypeParams:  []string{"T"},
+				ReturnTypes: []string{"T"},
+				Params:      []model.ParamInfo{{Name: "value", Type: "T"}},
+			}}
+		case "transform":
+			return []model.Symbol{{
+				Name:        "transform",
+				Kind:        "Function",
+				TypeParams:  []string{"K", "V"},
+				ReturnTypes: []string{"V"},
+				Params:      []model.ParamInfo{{Name: "key", Type: "K"}, {Name: "val", Type: "V"}},
+			}}
+		case "noGeneric":
+			return []model.Symbol{{
+				Name:        "noGeneric",
+				Kind:        "Function",
+				ReturnTypes: []string{"String"},
+				Params:      []model.ParamInfo{{Name: "input", Type: "String"}},
+			}}
+		case "Container":
+			return []model.Symbol{{
+				Name:       "Container",
+				Kind:       "Class",
+				TypeParams: []string{"T"},
+			}}
+		}
+		return nil
+	}
+
+	tests := []struct {
+		name       string
+		methodName string
+		argTypes   []string
+		retType    string
+		expected   string
+	}{
+		{"U-1: Class<T> infer", "getBean", []string{"User"}, "T", "User"},
+		{"U-2: direct generic param", "identity", []string{"User"}, "T", "User"},
+		{"U-3: multi-generic first", "transform", []string{"String", "User"}, "K", "String"},
+		{"U-4: multi-generic second", "transform", []string{"String", "User"}, "V", "User"},
+		{"U-5: retType not in TypeParams", "identity", []string{"User"}, "String", "String"},
+		{"U-6: argTypes empty", "identity", []string{}, "T", "T"},
+		{"U-7: no TypeParams", "noGeneric", []string{"hello"}, "String", "String"},
+		{"U-8: method not found", "unknownMethod", []string{"User"}, "T", "T"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := &model.TypeEnv{Bindings: map[string]*model.TypeInfo{}}
+			result := substituteTypeParam(tt.retType, "Container", "container", env, "run", findByName, tt.methodName, tt.argTypes)
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSubstituteTypeParam_ClassLevelTakesPriority(t *testing.T) {
+	// U-9: receiver class has TypeParams + TypeEnv has TypeArgs → path 1 wins over path 3
+	findByName := func(name string) []model.Symbol {
+		switch name {
+		case "Container":
+			return []model.Symbol{{
+				Name:       "Container",
+				Kind:       "Class",
+				TypeParams: []string{"T"},
+			}}
+		case "get":
+			return []model.Symbol{{
+				Name:        "get",
+				Kind:        "Function",
+				TypeParams:  []string{"T"},
+				ReturnTypes: []string{"T"},
+				Params:      []model.ParamInfo{{Name: "index", Type: "int"}},
+			}}
+		}
+		return nil
+	}
+
+	env := &model.TypeEnv{
+		Bindings: map[string]*model.TypeInfo{
+			"run:container": {TypeName: "Container", TypeArgs: []model.TypeArg{{Name: "User"}}},
+		},
+	}
+
+	// Path 1 should resolve T → User via class-level TypeParams
+	result := substituteTypeParam("T", "Container", "container", env, "run", findByName, "get", []string{})
+	if result != "User" {
+		t.Errorf("U-9: expected User (path 1 priority), got %q", result)
+	}
+}

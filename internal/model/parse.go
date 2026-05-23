@@ -123,15 +123,16 @@ type TypeBinding struct {
 
 // PendingAssignment represents an unresolved variable assignment for fixpoint propagation.
 type PendingAssignment struct {
-	Kind            string `json:"kind"`                        // copy, call_result, field_access, method_call_result, destructure
-	LHS             string `json:"lhs"`                         // variable being assigned
-	Scope           string `json:"scope"`                       // enclosing block/function scope
-	RHS             string `json:"rhs,omitempty"`               // copy: source variable
-	Callee          string `json:"callee,omitempty"`            // call_result/destructure: function name
-	Receiver        string `json:"receiver,omitempty"`          // field_access/method_call_result: receiver variable
-	Field           string `json:"field,omitempty"`             // field_access: field name
-	Method          string `json:"method,omitempty"`            // method_call_result: method name
-	DestructuredKey string `json:"destructured_key,omitempty"`  // destructure: field name or index ("0", "1")
+	Kind            string   `json:"kind"`                        // copy, call_result, field_access, method_call_result, destructure
+	LHS             string   `json:"lhs"`                         // variable being assigned
+	Scope           string   `json:"scope"`                       // enclosing block/function scope
+	RHS             string   `json:"rhs,omitempty"`               // copy: source variable
+	Callee          string   `json:"callee,omitempty"`            // call_result/destructure: function name
+	Receiver        string   `json:"receiver,omitempty"`          // field_access/method_call_result: receiver variable
+	Field           string   `json:"field,omitempty"`             // field_access: field name
+	Method          string   `json:"method,omitempty"`            // method_call_result: method name
+	DestructuredKey string   `json:"destructured_key,omitempty"`  // destructure: field name or index ("0", "1")
+	ArgTypes        []string `json:"arg_types,omitempty"`         // call_result/method_call_result: inferred argument types
 }
 
 // ParseResult holds all extracted data from a single file.

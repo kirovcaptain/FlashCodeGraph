@@ -1029,3 +1029,82 @@ func TestExtractTypeArgsFromNode_Nested(t *testing.T) {
 		t.Errorf("TypeArgs[1].Args: got %v, want [{Name:User}]", found.TypeArgs[1].Args)
 	}
 }
+
+func TestExtractFunction_ParamTypeArgs(t *testing.T) {
+	code := []byte(`
+function getBean<T>(clazz: Constructor<T>): T { return null as any; }
+function identity<T>(value: T): T { return value; }
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "factory.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/factory.ts", RelPath: "factory.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	methods := map[string][]model.ParamInfo{}
+	for _, sym := range result.Symbols {
+		if sym.Kind == "Function" {
+			methods[sym.Name] = sym.Params
+		}
+	}
+
+	// getBean: Constructor<T> → TypeArgs=[{Name:"T"}]
+	params := methods["getBean"]
+	if len(params) != 1 {
+		t.Fatalf("getBean: expected 1 param, got %d", len(params))
+	}
+	if params[0].Type != "Constructor" {
+		t.Errorf("getBean param type: expected Constructor, got %q", params[0].Type)
+	}
+	if len(params[0].TypeArgs) != 1 || params[0].TypeArgs[0].Name != "T" {
+		t.Errorf("getBean param TypeArgs: expected [{Name:T}], got %v", params[0].TypeArgs)
+	}
+
+	// identity: value: T → no TypeArgs (type_identifier, not generic_type)
+	params = methods["identity"]
+	if len(params) != 1 {
+		t.Fatalf("identity: expected 1 param, got %d", len(params))
+	}
+	if len(params[0].TypeArgs) != 0 {
+		t.Errorf("identity param TypeArgs: expected empty, got %v", params[0].TypeArgs)
+	}
+}
+
+func TestExtractPendingAssignment_ArgTypes(t *testing.T) {
+	code := []byte(`
+function consume() {
+    const user = identity(new User());
+    const result = ctx.readValue(new Order());
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+
+	result := &model.ParseResult{FilePath: "consumer.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/consumer.ts", RelPath: "consumer.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	pending := map[string]model.PendingAssignment{}
+	for _, p := range result.PendingAssignments {
+		pending[p.LHS] = p
+	}
+
+	// call_result: identity(new User()) → ArgTypes=["User"]
+	userAssign := pending["user"]
+	if userAssign.Kind != "call_result" {
+		t.Fatalf("user: expected call_result, got %q", userAssign.Kind)
+	}
+	if len(userAssign.ArgTypes) != 1 || userAssign.ArgTypes[0] != "User" {
+		t.Errorf("user ArgTypes: expected [User], got %v", userAssign.ArgTypes)
+	}
+
+	// method_call_result: ctx.readValue(new Order()) → ArgTypes=["Order"]
+	resultAssign := pending["result"]
+	if resultAssign.Kind != "method_call_result" {
+		t.Fatalf("result: expected method_call_result, got %q", resultAssign.Kind)
+	}
+	if len(resultAssign.ArgTypes) != 1 || resultAssign.ArgTypes[0] != "Order" {
+		t.Errorf("result ArgTypes: expected [Order], got %v", resultAssign.ArgTypes)
+	}
+}
