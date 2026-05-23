@@ -101,6 +101,11 @@ func (goHelper *Helper) LookupMethodReturn(_, _ string) (string, bool) {
 	return "", false
 }
 
+// BuildExternalQualifiedName constructs a qualified name for an external Go method.
+func (goHelper *Helper) BuildExternalQualifiedName(typeName, methodName string) string {
+	return typeName + "." + methodName
+}
+
 // IsConstructor — Go does not have constructors.
 func (goHelper *Helper) IsConstructor(_ model.Symbol, _ string) bool {
 	return false

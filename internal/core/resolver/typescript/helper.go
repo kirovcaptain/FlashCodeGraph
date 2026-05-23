@@ -165,6 +165,11 @@ func (tsHelper *Helper) LookupMethodReturn(typeName, methodName string) (string,
 	return "", false
 }
 
+// BuildExternalQualifiedName constructs a qualified name for an external TS/JS method.
+func (tsHelper *Helper) BuildExternalQualifiedName(typeName, methodName string) string {
+	return typeName + "." + methodName
+}
+
 // IsConstructor returns true if the method is a TS/JS constructor.
 func (tsHelper *Helper) IsConstructor(method model.Symbol, _ string) bool {
 	return method.Name == "constructor"

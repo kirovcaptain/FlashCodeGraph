@@ -59,6 +59,9 @@ func (testGenericHelper) SetHeritage(_ []model.RawHeritage)                     
 func (testGenericHelper) ShouldFallthrough() bool                                    { return true }
 func (testGenericHelper) InferStringConcat(_ string) bool                            { return false }
 func (testGenericHelper) LookupMethodReturn(_, _ string) (string, bool)              { return "", false }
+func (testGenericHelper) BuildExternalQualifiedName(typeName, methodName string) string {
+	return typeName + "." + methodName
+}
 func (testGenericHelper) IsTypeAssignable(a, b string) bool                          { return a == b }
 func (testGenericHelper) ResolveOverload(_ []model.Symbol, _ []string) *model.Symbol { return nil }
 func (testGenericHelper) FilterGenerated(c []model.Symbol) []model.Symbol            { return c }
@@ -91,6 +94,9 @@ func (h *testJavaHelper) ShouldFallthrough() bool                  { return fals
 func (h *testJavaHelper) InferStringConcat(expr string) bool       { return false }
 func (h *testJavaHelper) LookupMethodReturn(_, _ string) (string, bool) {
 	return "", false
+}
+func (h *testJavaHelper) BuildExternalQualifiedName(typeName, methodName string) string {
+	return typeName + "." + methodName
 }
 
 func (h *testJavaHelper) ResolveSuperCall(call model.RawCall, funcCandidates []model.Symbol, heritage []model.RawHeritage, envs map[string]*model.TypeEnv, callerID string) ([]model.ResolvedRelation, bool) {

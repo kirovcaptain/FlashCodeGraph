@@ -235,6 +235,13 @@ func (javaHelper *Helper) LookupMethodReturn(typeName, methodName string) (strin
 	return javaHelper.externalMethods.Lookup(typeName, methodName)
 }
 
+func (javaHelper *Helper) BuildExternalQualifiedName(typeName, methodName string) string {
+	if packagePath, exists := jdkPackageMap[typeName]; exists {
+		return packagePath + "." + typeName + "." + methodName
+	}
+	return typeName + "." + methodName
+}
+
 func (javaHelper *Helper) extractPackage(filePath string) string {
 	for _, sym := range javaHelper.symbolTable.FindByFile(filePath) {
 		if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {

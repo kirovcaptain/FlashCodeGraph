@@ -228,18 +228,28 @@ func (resolver *Resolver) resolveCallNoCandidate(call model.RawCall, envs map[st
 		if len(matched) > 0 {
 			return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "receiver_type_internal", 1)}, nil
 		}
-		// Fallback: resolve as external via import path
+		// Second: check if method is known in external method registry (e.g. Stream.map from chain inference)
+		if _, known := langHelper.LookupMethodReturn(receiverType, call.CalledName); known {
+			qualifiedName := langHelper.BuildExternalQualifiedName(receiverType, call.CalledName)
+			externalID := "external:" + qualifiedName
+			resolver.symbolTable.AddBatch([]model.Symbol{{
+				ID: externalID, Name: call.CalledName,
+				QualifiedName: qualifiedName, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
+			}})
+			return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
+		}
+		// Third: resolve as external via import path
 		if env := envs[call.FilePath]; env != nil {
 			for _, imp := range env.Imports {
 				if imp.SymbolName == receiverType || (strings.Contains(receiverType, ".") && strings.HasPrefix(receiverType, imp.ModulePath)) {
-					fqn := imp.ModulePath + "." + call.CalledName
+					qualifiedName := imp.ModulePath + "." + call.CalledName
 					if strings.Contains(receiverType, ".") {
-						fqn = receiverType + "." + call.CalledName
+						qualifiedName = receiverType + "." + call.CalledName
 					}
-					externalID := "external:" + fqn
+					externalID := "external:" + qualifiedName
 					resolver.symbolTable.AddBatch([]model.Symbol{{
 						ID: externalID, Name: call.CalledName,
-						QualifiedName: fqn, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
+						QualifiedName: qualifiedName, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
 					}})
 					return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
 				}

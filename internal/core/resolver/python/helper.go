@@ -119,6 +119,11 @@ func (pythonHelper *Helper) LookupMethodReturn(_, _ string) (string, bool) {
 	return "", false
 }
 
+// BuildExternalQualifiedName constructs a qualified name for an external Python method.
+func (pythonHelper *Helper) BuildExternalQualifiedName(typeName, methodName string) string {
+	return typeName + "." + methodName
+}
+
 // IsConstructor returns true if the method is a Python __init__.
 func (pythonHelper *Helper) IsConstructor(method model.Symbol, _ string) bool {
 	return method.Name == "__init__"

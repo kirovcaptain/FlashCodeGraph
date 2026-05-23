@@ -46,6 +46,10 @@ type LanguageHelper interface {
 	// Used by inferExprType for chain resolution (e.g., Exception.getMessage → String).
 	LookupMethodReturn(typeName, methodName string) (string, bool)
 
+	// BuildExternalQualifiedName constructs a fully qualified name for an external method.
+	// e.g. ("Stream", "map") → "java.util.stream.Stream.map"
+	BuildExternalQualifiedName(typeName, methodName string) string
+
 	// IsConstructor returns true if the method is a constructor for the given class.
 	IsConstructor(method model.Symbol, className string) bool
 

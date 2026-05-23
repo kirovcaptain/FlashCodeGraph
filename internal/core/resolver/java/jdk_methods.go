@@ -1,5 +1,45 @@
 package java
 
+// jdkPackageMap maps short class name → package path for common JDK classes.
+// Used by BuildExternalQualifiedName to construct fully qualified external node IDs.
+var jdkPackageMap = map[string]string{
+	"Stream":             "java.util.stream",
+	"IntStream":          "java.util.stream",
+	"LongStream":         "java.util.stream",
+	"DoubleStream":       "java.util.stream",
+	"Collectors":         "java.util.stream",
+	"Optional":           "java.util",
+	"List":               "java.util",
+	"ArrayList":          "java.util",
+	"LinkedList":         "java.util",
+	"Map":                "java.util",
+	"HashMap":            "java.util",
+	"Set":                "java.util",
+	"HashSet":            "java.util",
+	"Collection":         "java.util",
+	"Collections":        "java.util",
+	"Iterator":           "java.util",
+	"Arrays":             "java.util",
+	"Objects":            "java.util",
+	"String":             "java.lang",
+	"StringBuilder":      "java.lang",
+	"StringBuffer":       "java.lang",
+	"Integer":            "java.lang",
+	"Long":               "java.lang",
+	"Double":             "java.lang",
+	"Boolean":            "java.lang",
+	"Object":             "java.lang",
+	"Class":              "java.lang",
+	"System":             "java.lang",
+	"Math":               "java.lang",
+	"CompletableFuture":  "java.util.concurrent",
+	"ExecutorService":    "java.util.concurrent",
+	"Future":             "java.util.concurrent",
+	"Files":              "java.nio.file",
+	"Path":               "java.nio.file",
+	"Paths":              "java.nio.file",
+}
+
 // jdkMethodReturns maps ClassName.methodName → return type for common JDK methods.
 // Consulted by resolveChainedReceiver when SymbolTable lookup fails.
 //
