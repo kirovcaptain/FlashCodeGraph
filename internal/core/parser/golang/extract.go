@@ -546,6 +546,19 @@ func extractLocalFuncLiteral(node *tree_sitter.Node, content []byte, filePath, p
 	}
 }
 
+// mergeGoScopeParents merges discovered block scope parent relationships into the ParseResult.
+func mergeGoScopeParents(result *model.ParseResult, parents map[string]string) {
+	if len(parents) == 0 {
+		return
+	}
+	if result.ScopeParents == nil {
+		result.ScopeParents = make(map[string]string)
+	}
+	for child, parent := range parents {
+		result.ScopeParents[child] = parent
+	}
+}
+
 func extractMultiReturnHints(body *tree_sitter.Node, content []byte, filePath, callerName string, result *model.ParseResult) {
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
 		if node.Kind() != "short_var_declaration" && node.Kind() != "assignment_statement" {
@@ -590,6 +603,10 @@ func extractMultiReturnHints(body *tree_sitter.Node, content []byte, filePath, c
 		}
 		funcExpr := funcNode.Utf8Text(content)
 
+		// Detect block scope for this declaration
+		blockScope := astutil.DetectBlockScope(node, callerName)
+		mergeGoScopeParents(result, blockScope.ScopeParents)
+
 		// Generate TypeHint for each variable (skip _)
 		for i, name := range varNames {
 			if name == "_" {
@@ -598,7 +615,7 @@ func extractMultiReturnHints(body *tree_sitter.Node, content []byte, filePath, c
 			result.TypeHints = append(result.TypeHints, model.TypeBinding{
 				VarName:       name,
 				Tier:          0,
-				Scope:         callerName,
+				Scope:         blockScope.ScopeKey,
 				FilePath:      filePath,
 				MultiReturnOf: funcExpr,
 				ReturnIndex:   i,
@@ -667,6 +684,8 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 		// Extract local anonymous functions assigned to variables
 		// (e.g. handler := func(w http.ResponseWriter) { ... })
 		if node.Kind() == "short_var_declaration" || node.Kind() == "var_declaration" {
+			blockScope := astutil.DetectBlockScope(node, fullCaller)
+			mergeGoScopeParents(result, blockScope.ScopeParents)
 			extractLocalFuncLiteral(node, content, filePath, fullCaller, result)
 		}
 		if node.Kind() == "call_expression" {
@@ -755,9 +774,12 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 
 			if calledName != "" {
 				flowContext := astutil.DetectFlowContext(node, content)
+				blockScope := astutil.DetectBlockScope(node, fullCaller)
+				mergeGoScopeParents(result, blockScope.ScopeParents)
 				result.Calls = append(result.Calls, model.RawCall{
 					CalledName:   calledName,
 					CallerName:   fullCaller,
+					CallerScope:  blockScope.ScopeKey,
 					CallerKind:   constants.KindFunction,
 					FilePath:     filePath,
 					Line:         int(node.StartPosition().Row) + 1,

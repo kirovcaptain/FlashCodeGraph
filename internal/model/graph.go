@@ -179,6 +179,8 @@ type ChainEdge struct {
 	DeclaredType string       `json:"declared_type,omitempty"`
 	FlowContext  string       `json:"flow_context,omitempty"`
 	FlowLine     int          `json:"flow_line,omitempty"`
+	ResolvedBy   string       `json:"resolved_by,omitempty"`
+	EventType    string       `json:"event_type,omitempty"`
 }
 
 // CompactChainEdge is a ChainEdge with merged lines for compact mode.
@@ -265,6 +267,12 @@ func EdgesToChainEdges(edges []Edge) []ChainEdge {
 			if lineNumber, ok := ToInt(value); ok {
 				chainEdge.FlowLine = lineNumber
 			}
+		}
+		if value, ok := edge.Properties["resolved_by"].(string); ok {
+			chainEdge.ResolvedBy = value
+		}
+		if value, ok := edge.Properties["event_type"].(string); ok {
+			chainEdge.EventType = value
 		}
 		chainEdges = append(chainEdges, chainEdge)
 	}

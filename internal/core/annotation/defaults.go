@@ -30,6 +30,7 @@ var DefaultAnnotations = map[string][]AnnotationDef{
 		{Name: "Cacheable", Category: "cache", Framework: "spring"},
 		{Name: "CacheEvict", Category: "cache", Framework: "spring"},
 		{Name: "EventListener", Category: "event_listener", EntryType: "event_handler", Framework: "spring"},
+		{Name: "TransactionalEventListener", Category: "event_listener", EntryType: "event_handler", Framework: "spring"},
 		{Name: "KafkaListener", Category: "event_listener", EntryType: "event_handler", Framework: "spring"},
 		{Name: "RabbitListener", Category: "event_listener", EntryType: "event_handler", Framework: "spring"},
 		{Name: "PostConstruct", Category: "lifecycle", Framework: "spring"},
@@ -77,6 +78,9 @@ var DefaultAnnotations = map[string][]AnnotationDef{
 	},
 	"rocketmq": {
 		{Name: "RocketMQMessageListener", Category: "event_listener", EntryType: "event_handler", Framework: "rocketmq"},
+	},
+	"guava": {
+		{Name: "Subscribe", Category: "event_listener", EntryType: "event_handler", Framework: "guava"},
 	},
 	"swagger2": {
 		{Name: "ApiOperation", Category: "doc", Framework: "swagger2"},

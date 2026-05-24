@@ -131,6 +131,7 @@ func (store *Store) Migrate(_ context.Context) error {
 		{"target_branch", "STRING"},
 		{"target_handler", "STRING"},
 		{"protocol", "STRING"},
+		{"event_type", "STRING"},
 	} {
 		store.execNoParams(fmt.Sprintf("ALTER TABLE CALLS ADD %s %s", column.name, column.colType))
 	}
@@ -784,13 +785,13 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 	var callsQueryTemplate, dispatchQueryTemplate string
 	switch direction {
 	case model.Outgoing:
-		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
+		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type", confidenceFilter)
 		dispatchQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
 	case model.Incoming:
-		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, r.line, r.declared_type, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line", confidenceFilter)
+		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, r.line, r.declared_type, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line, r.resolved_by, r.event_type", confidenceFilter)
 		dispatchQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line", confidenceFilter)
 	default:
-		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
+		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type", confidenceFilter)
 		dispatchQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:DISPATCHES]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
 	}
 
@@ -821,6 +822,8 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				sourceBranch, _ := row.GetValue(12)
 				startLine, _ := row.GetValue(13)
 				endLine, _ := row.GetValue(14)
+				resolvedByValue, _ := row.GetValue(15)
+				eventTypeValue, _ := row.GetValue(16)
 
 				neighborID := fmt.Sprint(targetID)
 				edgeProperties := map[string]any{"confidence": confidence}
@@ -833,6 +836,12 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 						declaredTypePrefixes[neighborID] = map[string]bool{}
 					}
 					declaredTypePrefixes[neighborID][declaredTypeStr+"."] = true
+				}
+				if resolvedByStr, ok := resolvedByValue.(string); ok && resolvedByStr != "" {
+					edgeProperties["resolved_by"] = resolvedByStr
+				}
+				if eventTypeStr, ok := eventTypeValue.(string); ok && eventTypeStr != "" {
+					edgeProperties["event_type"] = eventTypeStr
 				}
 				subgraph.Edges = append(subgraph.Edges, model.Edge{
 					SourceID:   fmt.Sprint(sourceID),

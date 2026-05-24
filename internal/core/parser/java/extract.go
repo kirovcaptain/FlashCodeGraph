@@ -722,6 +722,19 @@ func extractField(node *tree_sitter.Node, content []byte, filePath, packageName,
 	}
 }
 
+// mergeScopeParents merges discovered block scope parent relationships into the ParseResult.
+func mergeScopeParents(result *model.ParseResult, parents map[string]string) {
+	if len(parents) == 0 {
+		return
+	}
+	if result.ScopeParents == nil {
+		result.ScopeParents = make(map[string]string)
+	}
+	for child, parent := range parents {
+		result.ScopeParents[child] = parent
+	}
+}
+
 // extractJavaCalls walks a method body and extracts function calls.
 func extractCalls(bodyNode *tree_sitter.Node, content []byte, filePath, callerName, callerClass, packageName string, result *model.ParseResult) {
 	scope := callerName
@@ -743,19 +756,27 @@ func extractCalls(bodyNode *tree_sitter.Node, content []byte, filePath, callerNa
 			}
 		}
 		if node.Kind() == "method_invocation" {
-			extractMethodInvocation(node, content, filePath, scope, &lambdaCounter, result)
+			blockScope := astutil.DetectBlockScope(node, scope)
+			mergeScopeParents(result, blockScope.ScopeParents)
+			extractMethodInvocationWithScope(node, content, filePath, scope, blockScope.ScopeKey, &lambdaCounter, result)
 			return true
 		}
 		if node.Kind() == "object_creation_expression" {
-			extractConstructorCall(node, content, filePath, scope, &lambdaCounter, result)
+			blockScope := astutil.DetectBlockScope(node, scope)
+			mergeScopeParents(result, blockScope.ScopeParents)
+			extractConstructorCallWithScope(node, content, filePath, scope, blockScope.ScopeKey, &lambdaCounter, result)
 			return true
 		}
 		if node.Kind() == "local_variable_declaration" {
-			extractLocalVarTypeHint(node, content, scope, filePath, result)
-			extractPendingAssignment(node, content, scope, result)
-			extractDeclarativeLambda(node, content, filePath, scope, &lambdaCounter, result)
+			blockScope := astutil.DetectBlockScope(node, scope)
+			mergeScopeParents(result, blockScope.ScopeParents)
+			extractLocalVarTypeHint(node, content, blockScope.ScopeKey, filePath, result)
+			extractPendingAssignment(node, content, blockScope.ScopeKey, result)
+			extractDeclarativeLambda(node, content, filePath, blockScope.ScopeKey, &lambdaCounter, result)
 		}
 		if node.Kind() == "enhanced_for_statement" {
+			blockScope := astutil.DetectBlockScope(node, scope)
+			mergeScopeParents(result, blockScope.ScopeParents)
 			typeNode := node.ChildByFieldName("type")
 			nameNode := node.ChildByFieldName("name")
 			if typeNode != nil && nameNode != nil {
@@ -764,17 +785,18 @@ func extractCalls(bodyNode *tree_sitter.Node, content []byte, filePath, callerNa
 				if typeName != "" && varName != "" {
 					result.TypeHints = append(result.TypeHints, model.TypeBinding{
 						VarName: varName, TypeName: typeName,
-						Tier: 0, Scope: scope, FilePath: filePath,
+						Tier: 0, Scope: blockScope.ScopeKey, FilePath: filePath,
 					})
 				}
 			}
 		}
 		if node.Kind() == "catch_clause" {
+			blockScope := astutil.DetectBlockScope(node, scope)
+			mergeScopeParents(result, blockScope.ScopeParents)
 			// catch (Exception e) → TypeHint for e
 			for i := uint(0); i < node.ChildCount(); i++ {
 				child := node.Child(i)
 				if child.Kind() == "catch_formal_parameter" {
-					// catch_formal_parameter children: catch_type + identifier (name)
 					var pTypeNode *tree_sitter.Node
 					pNameNode := child.ChildByFieldName("name")
 					for j := uint(0); j < child.ChildCount(); j++ {
@@ -791,7 +813,7 @@ func extractCalls(bodyNode *tree_sitter.Node, content []byte, filePath, callerNa
 								VarName:  varName,
 								TypeName: typeName,
 								Tier:     0,
-								Scope:    scope,
+								Scope:    blockScope.ScopeKey,
 								FilePath: filePath,
 							})
 						}
@@ -1036,6 +1058,30 @@ func extractMethodInvocation(node *tree_sitter.Node, content []byte, filePath, q
 		FlowContext:  flowContext.Kind,
 		FlowLine:     flowContext.Line,
 	})
+}
+
+// extractMethodInvocationWithScope calls extractMethodInvocation and sets CallerScope on the direct RawCall produced.
+func extractMethodInvocationWithScope(node *tree_sitter.Node, content []byte, filePath, qualifiedCallerName, callerScope string, lambdaCounter *int, result *model.ParseResult) {
+	callsBefore := len(result.Calls)
+	extractMethodInvocation(node, content, filePath, qualifiedCallerName, lambdaCounter, result)
+	// Only set CallerScope on calls that belong to this caller (not recursively produced lambda body calls)
+	for i := callsBefore; i < len(result.Calls); i++ {
+		if result.Calls[i].CallerName == qualifiedCallerName {
+			result.Calls[i].CallerScope = callerScope
+		}
+	}
+}
+
+// extractConstructorCallWithScope calls extractConstructorCall and sets CallerScope on the direct RawCall produced.
+func extractConstructorCallWithScope(node *tree_sitter.Node, content []byte, filePath, qualifiedCallerName, callerScope string, lambdaCounter *int, result *model.ParseResult) {
+	callsBefore := len(result.Calls)
+	extractConstructorCall(node, content, filePath, qualifiedCallerName, lambdaCounter, result)
+	// Only set CallerScope on calls that belong to this caller (not recursively produced lambda body calls)
+	for i := callsBefore; i < len(result.Calls); i++ {
+		if result.Calls[i].CallerName == qualifiedCallerName {
+			result.Calls[i].CallerScope = callerScope
+		}
+	}
 }
 
 

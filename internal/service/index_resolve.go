@@ -133,6 +133,10 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 	overrideRelations := resolverInstance.DetectOverridesAndDispatches(allHeritage)
 	indexer.progress.EmitSub(PhaseResolving, SubDetectOverridesAndDispatches, fmt.Sprintf("%d overrides", len(overrideRelations)))
 
+	// Step 6.5: Event dispatch detection — match event publishers to event listeners.
+	eventDispatchRelations := resolverInstance.ResolveEventDispatches(allCalls, envs)
+	callRelations = append(callRelations, eventDispatchRelations...)
+
 	// Dump debug data
 	indexer.dump.OnRawCalls(allCalls)
 	indexer.dump.OnResolved(callRelations, callHints)

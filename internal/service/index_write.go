@@ -420,6 +420,9 @@ func (indexer *Indexer) writeRelations(ctx context.Context, relations []model.Re
 			if v, ok := relation.Metadata["ref_kind"]; ok && v != "" {
 				edge.Properties["ref_kind"] = v
 			}
+			if v, ok := relation.Metadata["event_type"]; ok && v != "" {
+				edge.Properties["event_type"] = v
+			}
 		}
 		edges = append(edges, edge)
 		result.RelationsByKind[string(relation.Kind)]++

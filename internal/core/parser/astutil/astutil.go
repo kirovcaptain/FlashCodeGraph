@@ -206,7 +206,7 @@ func DetectBlockScope(node *tree_sitter.Node, callerName string) BlockScope {
 		case "with_statement":
 			blockLines = append(blockLines, int(current.StartPosition().Row)+1)
 		case "function_declaration", "method_declaration", "function_definition",
-			"arrow_function", "lambda", "func_literal":
+			"arrow_function", "lambda", "lambda_expression", "func_literal":
 			goto done
 		}
 	}
