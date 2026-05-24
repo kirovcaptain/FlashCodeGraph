@@ -15,7 +15,9 @@ type RawCall struct {
 	ReceiverExpr  string `json:"receiver_expr,omitempty"`
 	FlowContext   string `json:"flow_context,omitempty"` // if/else/loop/defer/switch
 	FlowLine      int    `json:"flow_line,omitempty"`    // line of the control flow statement
-	IsPreResolved bool   `json:"is_pre_resolved,omitempty"` // CalledName is a full QualifiedName, resolve via FindByQualifiedName directly
+	IsPreResolved       bool   `json:"is_pre_resolved,omitempty"`       // CalledName is a full QualifiedName, resolve via FindByQualifiedName directly
+	LambdaOwnerMethod   string `json:"lambda_owner_method,omitempty"`   // for pre-resolved lambda: the method name that accepts this lambda as argument
+	LambdaOwnerReceiver string `json:"lambda_owner_receiver,omitempty"` // for pre-resolved lambda: the receiver expression of the owner method call
 }
 
 // RawImport represents an import statement extracted from AST.

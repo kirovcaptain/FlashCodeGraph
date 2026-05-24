@@ -3492,3 +3492,147 @@ func TestResolveCalls_DirectLambdaVariableCallWithAmbiguity(t *testing.T) {
 		t.Fatalf("direct lambda variable call should resolve to handler1 via LambdaSymbolID, got: %v", relations)
 	}
 }
+
+func TestInferLambdaParamTypes_ListGeneric(t *testing.T) {
+	// Simulates: List<Order> orders; orders.stream().map(order -> order.getName())
+	// Lambda param 'order' should be inferred as 'Order' from TypeArgs of 'orders'
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "process1", Name: "processOrders", QualifiedName: "com.example.Svc.processOrders", Kind: "Function", FilePath: "Svc.java"},
+		{ID: "lambda1", Name: "lambda$1", QualifiedName: "com.example.Svc.processOrders.lambda$1", Kind: "Function", FilePath: "Svc.java",
+			IsLambda: true, Params: []model.ParamInfo{{Name: "order", Type: ""}}},
+		{ID: "getName1", Name: "getName", QualifiedName: "com.example.Order.getName", Kind: "Function", FilePath: "Order.java"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		// Pre-resolved lambda call with owner info
+		{CalledName: "com.example.Svc.processOrders.lambda$1", CallerName: "com.example.Svc.processOrders",
+			FilePath: "Svc.java", Line: 5, IsPreResolved: true,
+			LambdaOwnerMethod: "map", LambdaOwnerReceiver: "orders.stream()"},
+		// Lambda body call: order.getName()
+		{CalledName: "getName", CallerName: "com.example.Svc.processOrders.lambda$1",
+			FilePath: "Svc.java", Line: 5, ReceiverExpr: "order"},
+	}
+	envs := map[string]*model.TypeEnv{
+		"Svc.java": {Bindings: map[string]*model.TypeInfo{
+			"com.example.Svc.processOrders:orders": {TypeName: "List", TypeArgs: []model.TypeArg{{Name: "Order"}}, Scope: "com.example.Svc.processOrders"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "getName1" {
+			found = true
+			t.Logf("resolved_by: %s, confidence: %f", rel.ResolvedBy, rel.Confidence)
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected order.getName() to resolve to Order.getName, got relations: %v", relations)
+	}
+}
+
+func TestInferLambdaParamTypes_NoOwnerReceiver(t *testing.T) {
+	// Lambda in constructor call — LambdaOwnerReceiver is empty, should not crash
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "lambda1", Name: "lambda$1", QualifiedName: "com.example.Svc.run.lambda$1", Kind: "Function", FilePath: "Svc.java",
+			IsLambda: true, Params: []model.ParamInfo{{Name: "x", Type: ""}}},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "com.example.Svc.run.lambda$1", CallerName: "com.example.Svc.run",
+			FilePath: "Svc.java", Line: 10, IsPreResolved: true,
+			LambdaOwnerMethod: "Thread", LambdaOwnerReceiver: ""},
+	}
+	envs := map[string]*model.TypeEnv{
+		"Svc.java": {Bindings: map[string]*model.TypeInfo{}},
+	}
+
+	// Should not panic — the pre-resolved call itself resolves (qualified_name_exact)
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	// Verify no crash and the pre-resolved call resolves normally
+	if len(relations) != 1 {
+		t.Errorf("expected 1 relation (pre-resolved lambda call), got %d", len(relations))
+	}
+}
+
+func TestInferLambdaParamTypes_NoOverwrite(t *testing.T) {
+	// TypeEnv already has a binding for the lambda param — should not overwrite
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "lambda1", Name: "lambda$1", QualifiedName: "com.example.Svc.process.lambda$1", Kind: "Function", FilePath: "Svc.java",
+			IsLambda: true, Params: []model.ParamInfo{{Name: "order", Type: ""}}},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "com.example.Svc.process.lambda$1", CallerName: "com.example.Svc.process",
+			FilePath: "Svc.java", Line: 5, IsPreResolved: true,
+			LambdaOwnerMethod: "map", LambdaOwnerReceiver: "orders"},
+	}
+	envs := map[string]*model.TypeEnv{
+		"Svc.java": {Bindings: map[string]*model.TypeInfo{
+			"com.example.Svc.process:orders":          {TypeName: "List", TypeArgs: []model.TypeArg{{Name: "Order"}}, Scope: "com.example.Svc.process"},
+			"com.example.Svc.process.lambda$1:order": {TypeName: "String", Tier: 0, Scope: "com.example.Svc.process.lambda$1"},
+		}},
+	}
+
+	resolver.ResolveCalls(calls, envs)
+
+	// Verify the existing binding was NOT overwritten
+	binding := envs["Svc.java"].Bindings["com.example.Svc.process.lambda$1:order"]
+	if binding == nil {
+		t.Fatal("expected binding to still exist")
+	}
+	if binding.TypeName != "String" {
+		t.Errorf("expected binding to remain 'String', got %q", binding.TypeName)
+	}
+}
+
+func TestInferLambdaParamTypes_ThisField(t *testing.T) {
+	// Simulates: this.orders.map(order => order.getName()) where orders: Order[]
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "lambda1", Name: "lambda$1", QualifiedName: "svc.OrderProcessor.processAll.lambda$1", Kind: "Function", FilePath: "svc.ts",
+			IsLambda: true, Params: []model.ParamInfo{{Name: "order", Type: ""}}},
+		{ID: "getName1", Name: "getName", QualifiedName: "svc.Order.getName", Kind: "Function", FilePath: "svc.ts"},
+	})
+	resolver := newTestResolver(table)
+
+	calls := []model.RawCall{
+		{CalledName: "svc.OrderProcessor.processAll.lambda$1", CallerName: "svc.OrderProcessor.processAll",
+			FilePath: "svc.ts", Line: 5, IsPreResolved: true,
+			LambdaOwnerMethod: "map", LambdaOwnerReceiver: "this.orders"},
+		{CalledName: "getName", CallerName: "svc.OrderProcessor.processAll.lambda$1",
+			FilePath: "svc.ts", Line: 5, ReceiverExpr: "order"},
+	}
+	envs := map[string]*model.TypeEnv{
+		"svc.ts": {Bindings: map[string]*model.TypeInfo{
+			"svc.OrderProcessor:orders": {TypeName: "Order[]", Scope: "svc.OrderProcessor"},
+		}},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	var found bool
+	for _, rel := range relations {
+		if rel.TargetID == "getName1" {
+			found = true
+			t.Logf("resolved_by: %s, confidence: %f", rel.ResolvedBy, rel.Confidence)
+			break
+		}
+	}
+	if !found {
+		// Check if TypeEnv was written
+		key := "svc.OrderProcessor.processAll.lambda$1:order"
+		if info, exists := envs["svc.ts"].Bindings[key]; exists {
+			t.Logf("TypeEnv binding exists: %s → %s", key, info.TypeName)
+		} else {
+			t.Logf("TypeEnv binding NOT found: %s", key)
+		}
+		t.Fatalf("expected order.getName() to resolve, got relations: %v", relations)
+	}
+}

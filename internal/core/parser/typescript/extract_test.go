@@ -1260,3 +1260,176 @@ func TestExtractLambda_TSReturnArrowNotLost(t *testing.T) {
 		t.Fatal("expected svc.run() call not to be lost in return arrow_function")
 	}
 }
+
+func TestExtractArrowFunctionParams_ExplicitType(t *testing.T) {
+	code := []byte(`
+export class Svc {
+    process() {
+        list.map((order: Order) => order.getName());
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{FilePath: "svc.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/svc.ts", RelPath: "svc.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda symbol")
+	}
+	if len(lambdaSymbol.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(lambdaSymbol.Params))
+	}
+	if lambdaSymbol.Params[0].Name != "order" {
+		t.Errorf("expected param name 'order', got %q", lambdaSymbol.Params[0].Name)
+	}
+	if lambdaSymbol.Params[0].Type != "Order" {
+		t.Errorf("expected param type 'Order', got %q", lambdaSymbol.Params[0].Type)
+	}
+	// Verify TypeHint produced
+	found := false
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "order" && hint.TypeName == "Order" && strings.Contains(hint.Scope, "lambda$1") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected TypeHint for lambda param 'order' with type 'Order'")
+	}
+}
+
+func TestExtractArrowFunctionParams_NoParens(t *testing.T) {
+	code := []byte(`
+export class Svc {
+    process() {
+        list.map(order => order.getName());
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{FilePath: "svc.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/svc.ts", RelPath: "svc.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda symbol")
+	}
+	if len(lambdaSymbol.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(lambdaSymbol.Params))
+	}
+	if lambdaSymbol.Params[0].Name != "order" {
+		t.Errorf("expected param name 'order', got %q", lambdaSymbol.Params[0].Name)
+	}
+	if lambdaSymbol.Params[0].Type != "" {
+		t.Errorf("expected empty param type, got %q", lambdaSymbol.Params[0].Type)
+	}
+}
+
+func TestExtractArrowFunction_OwnerInfo(t *testing.T) {
+	code := []byte(`
+export class Svc {
+    process() {
+        orders.map(order => order.getName());
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{FilePath: "svc.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/svc.ts", RelPath: "svc.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var lambdaCall *model.RawCall
+	for i := range result.Calls {
+		if result.Calls[i].IsPreResolved {
+			lambdaCall = &result.Calls[i]
+			break
+		}
+	}
+	if lambdaCall == nil {
+		t.Fatal("expected pre-resolved lambda call")
+	}
+	if lambdaCall.LambdaOwnerMethod != "map" {
+		t.Errorf("expected LambdaOwnerMethod='map', got %q", lambdaCall.LambdaOwnerMethod)
+	}
+	if lambdaCall.LambdaOwnerReceiver != "orders" {
+		t.Errorf("expected LambdaOwnerReceiver='orders', got %q", lambdaCall.LambdaOwnerReceiver)
+	}
+}
+
+func TestExtractArrowFunctions_ParamTypeHint(t *testing.T) {
+	code := []byte(`
+export class Svc {
+    process() {
+        const fn = (order: Order) => order.getName();
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{FilePath: "svc.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/svc.ts", RelPath: "svc.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	// Find TypeHint for the declarative lambda param
+	found := false
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "order" && hint.TypeName == "Order" && strings.Contains(hint.Scope, "fn") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected TypeHint for declarative arrow function param 'order' with type 'Order'")
+	}
+}
+
+func TestExtractArrowFunction_ThisFieldOwnerInfo(t *testing.T) {
+	code := []byte(`
+export class OrderProcessor {
+    private orders: Order[] = [];
+    processAll() {
+        this.orders.map(order => order.getName());
+    }
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{FilePath: "svc.ts", Language: "typescript"}
+	file := scanner.ScannedFile{Path: "/test/svc.ts", RelPath: "svc.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var lambdaCall *model.RawCall
+	for i := range result.Calls {
+		if result.Calls[i].IsPreResolved {
+			lambdaCall = &result.Calls[i]
+			break
+		}
+	}
+	if lambdaCall == nil {
+		t.Fatal("expected pre-resolved lambda call")
+	}
+	if lambdaCall.LambdaOwnerMethod != "map" {
+		t.Errorf("expected LambdaOwnerMethod='map', got %q", lambdaCall.LambdaOwnerMethod)
+	}
+	if lambdaCall.LambdaOwnerReceiver != "this.orders" {
+		t.Errorf("expected LambdaOwnerReceiver='this.orders', got %q", lambdaCall.LambdaOwnerReceiver)
+	}
+}

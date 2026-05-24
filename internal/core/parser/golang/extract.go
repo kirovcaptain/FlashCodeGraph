@@ -525,6 +525,18 @@ func extractLocalFuncLiteral(node *tree_sitter.Node, content []byte, filePath, p
 			FilePath:       filePath,
 			LambdaSymbolID: lambdaID,
 		})
+		// Produce TypeHints for func literal parameters (Go always has explicit types)
+		for _, param := range params {
+			if param.Type != "" && param.Name != "" {
+				result.TypeHints = append(result.TypeHints, model.TypeBinding{
+					VarName:  param.Name,
+					TypeName: param.Type,
+					Tier:     0,
+					Scope:    qualifiedName,
+					FilePath: filePath,
+				})
+			}
+		}
 		// Recursively extract calls from lambda body
 		bodyNode := valueNode.ChildByFieldName("body")
 		if bodyNode != nil {
@@ -695,6 +707,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 						lambdaName := fmt.Sprintf("lambda$%d", lambdaCounter)
 						lambdaQualifiedName := fullCaller + "." + lambdaName
 						lambdaID := astutil.GenerateSymbolID(filePath, lambdaQualifiedName, int(child.StartPosition().Row)+1)
+						lambdaParams := extractParams(child, content)
 						result.Symbols = append(result.Symbols, model.Symbol{
 							ID:            lambdaID,
 							Name:          lambdaName,
@@ -705,14 +718,29 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 							EndLine:       int(child.EndPosition().Row) + 1,
 							IsLambda:      true,
 							LambdaContext: fullCaller,
+							Params:        lambdaParams,
 						})
+						// Go func literal parameters always have explicit types — produce TypeHints
+						for _, param := range lambdaParams {
+							if param.Type != "" && param.Name != "" {
+								result.TypeHints = append(result.TypeHints, model.TypeBinding{
+									VarName:  param.Name,
+									TypeName: param.Type,
+									Tier:     0,
+									Scope:    lambdaQualifiedName,
+									FilePath: filePath,
+								})
+							}
+						}
 						result.Calls = append(result.Calls, model.RawCall{
-							CalledName:    lambdaQualifiedName,
-							CallerName:    fullCaller,
-							CallerKind:    constants.KindFunction,
-							FilePath:      filePath,
-							Line:          int(child.StartPosition().Row) + 1,
-							IsPreResolved: true,
+							CalledName:          lambdaQualifiedName,
+							CallerName:          fullCaller,
+							CallerKind:          constants.KindFunction,
+							FilePath:            filePath,
+							Line:                int(child.StartPosition().Row) + 1,
+							IsPreResolved:       true,
+							LambdaOwnerMethod:   calledName,
+							LambdaOwnerReceiver: receiverExpr,
 						})
 						lambdaBody := child.ChildByFieldName("body")
 						if lambdaBody != nil {
@@ -773,6 +801,10 @@ func extractTypeName(node *tree_sitter.Node, content []byte) string {
 		return node.Utf8Text(content)
 	case "pointer_type":
 		child := astutil.FindChildByKind(node, "type_identifier")
+		if child != nil {
+			return "*" + child.Utf8Text(content)
+		}
+		child = astutil.FindChildByKind(node, "qualified_type")
 		if child != nil {
 			return "*" + child.Utf8Text(content)
 		}

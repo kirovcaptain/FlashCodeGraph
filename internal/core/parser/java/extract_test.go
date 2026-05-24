@@ -1491,3 +1491,139 @@ class Service {
 		t.Fatal("expected RawCall from lambda$1 to execute")
 	}
 }
+
+func TestExtractLambdaParams_ExplicitType(t *testing.T) {
+	code := `package com.example;
+public class Svc {
+    void process() {
+        list.map((Order order) -> order.getName());
+    }
+}
+`
+	result := parseJavaFile(t, code, "Svc.java")
+	// Find lambda symbol
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda symbol to be extracted")
+	}
+	if len(lambdaSymbol.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(lambdaSymbol.Params))
+	}
+	if lambdaSymbol.Params[0].Name != "order" {
+		t.Errorf("expected param name 'order', got %q", lambdaSymbol.Params[0].Name)
+	}
+	if lambdaSymbol.Params[0].Type != "Order" {
+		t.Errorf("expected param type 'Order', got %q", lambdaSymbol.Params[0].Type)
+	}
+	// Verify TypeHint produced for explicit type
+	found := false
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "order" && hint.TypeName == "Order" && hint.Scope == lambdaSymbol.QualifiedName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected TypeHint for lambda param 'order' with type 'Order'")
+	}
+}
+
+func TestExtractLambdaParams_ImplicitSingle(t *testing.T) {
+	code := `package com.example;
+public class Svc {
+    void process() {
+        list.map(order -> order.getName());
+    }
+}
+`
+	result := parseJavaFile(t, code, "Svc.java")
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda symbol to be extracted")
+	}
+	if len(lambdaSymbol.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(lambdaSymbol.Params))
+	}
+	if lambdaSymbol.Params[0].Name != "order" {
+		t.Errorf("expected param name 'order', got %q", lambdaSymbol.Params[0].Name)
+	}
+	if lambdaSymbol.Params[0].Type != "" {
+		t.Errorf("expected empty param type for implicit lambda, got %q", lambdaSymbol.Params[0].Type)
+	}
+	// No TypeHint should be produced for implicit type
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "order" && hint.Scope == lambdaSymbol.QualifiedName {
+			t.Error("should not produce TypeHint for implicit lambda param")
+		}
+	}
+}
+
+func TestExtractLambdaParams_ImplicitMulti(t *testing.T) {
+	code := `package com.example;
+public class Svc {
+    void process() {
+        map.forEach((k, v) -> v.process());
+    }
+}
+`
+	result := parseJavaFile(t, code, "Svc.java")
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda symbol to be extracted")
+	}
+	if len(lambdaSymbol.Params) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(lambdaSymbol.Params))
+	}
+	if lambdaSymbol.Params[0].Name != "k" || lambdaSymbol.Params[1].Name != "v" {
+		t.Errorf("expected params [k, v], got [%s, %s]", lambdaSymbol.Params[0].Name, lambdaSymbol.Params[1].Name)
+	}
+	if lambdaSymbol.Params[0].Type != "" || lambdaSymbol.Params[1].Type != "" {
+		t.Errorf("expected empty types for implicit params, got [%s, %s]", lambdaSymbol.Params[0].Type, lambdaSymbol.Params[1].Type)
+	}
+}
+
+func TestExtractLambdaFromArgs_OwnerInfo(t *testing.T) {
+	code := `package com.example;
+public class Svc {
+    void process() {
+        orders.stream().map(order -> order.getName());
+    }
+}
+`
+	result := parseJavaFile(t, code, "Svc.java")
+	// Find the pre-resolved lambda call
+	var lambdaCall *model.RawCall
+	for i := range result.Calls {
+		if result.Calls[i].IsPreResolved {
+			lambdaCall = &result.Calls[i]
+			break
+		}
+	}
+	if lambdaCall == nil {
+		t.Fatal("expected pre-resolved lambda call")
+	}
+	if lambdaCall.LambdaOwnerMethod != "map" {
+		t.Errorf("expected LambdaOwnerMethod='map', got %q", lambdaCall.LambdaOwnerMethod)
+	}
+	if lambdaCall.LambdaOwnerReceiver != "orders.stream()" {
+		t.Errorf("expected LambdaOwnerReceiver='orders.stream()', got %q", lambdaCall.LambdaOwnerReceiver)
+	}
+}

@@ -115,6 +115,9 @@ func (resolver *Resolver) ResolveCalls(calls []model.RawCall, envs map[string]*m
 		}
 	}
 
+	// Infer implicit lambda parameter types and write into TypeEnv
+	resolver.inferLambdaParamTypes(calls, envs)
+
 	for _, call := range calls {
 		resolved, hint := resolver.resolveCall(call, envs)
 		relations = append(relations, resolved...)
@@ -1813,3 +1816,145 @@ func isSimpleIdentifier(expr string) bool {
 }
 
 // extractSimpleType is already defined elsewhere in this file.
+
+// inferLambdaParamTypes infers implicit lambda parameter types and writes them into TypeEnv.
+// Explicit types are already handled by Parser TypeHint → TypeInfer standard path.
+// This only handles parameters with no explicit type: infers from LambdaOwnerReceiver's TypeArgs.
+func (resolver *Resolver) inferLambdaParamTypes(calls []model.RawCall, envs map[string]*model.TypeEnv) {
+	for _, call := range calls {
+		if !call.IsPreResolved {
+			continue
+		}
+		lambdaSymbols := resolver.symbolTable.FindByQualifiedName(call.CalledName)
+		if len(lambdaSymbols) == 0 || len(lambdaSymbols[0].Params) == 0 {
+			continue
+		}
+		lambdaSymbol := lambdaSymbols[0]
+		env := envs[call.FilePath]
+		if env == nil {
+			continue
+		}
+
+		lambdaQualifiedName := call.CalledName
+
+		hasNeedInfer := false
+		for _, param := range lambdaSymbol.Params {
+			if param.Type == "" && param.Name != "" {
+				key := lambdaQualifiedName + ":" + param.Name
+				if _, exists := env.Bindings[key]; !exists {
+					hasNeedInfer = true
+					break
+				}
+			}
+		}
+		if !hasNeedInfer {
+			continue
+		}
+
+		inferredParams := resolver.inferLambdaTypeArgs(call, lambdaSymbol.Params, envs)
+		for _, inferred := range inferredParams {
+			if inferred.Type != "" && inferred.Name != "" {
+				key := lambdaQualifiedName + ":" + inferred.Name
+				if _, exists := env.Bindings[key]; !exists {
+					env.Bindings[key] = &model.TypeInfo{
+						TypeName: inferred.Type,
+						Tier:     2,
+						Scope:    lambdaQualifiedName,
+					}
+				}
+			}
+		}
+	}
+}
+
+// inferLambdaTypeArgs infers lambda parameter types from the owner method call's receiver type.
+// Returns only the parameters that were successfully inferred (Name+Type pairs).
+func (resolver *Resolver) inferLambdaTypeArgs(lambdaCall model.RawCall, params []model.ParamInfo, envs map[string]*model.TypeEnv) []model.ParamInfo {
+	if lambdaCall.LambdaOwnerReceiver == "" {
+		return nil
+	}
+
+	env := envs[lambdaCall.FilePath]
+	if env == nil {
+		return nil
+	}
+
+	// Extract root receiver from LambdaOwnerReceiver
+	receiver := lambdaCall.LambdaOwnerReceiver
+	if dotIndex := strings.IndexAny(receiver, "."); dotIndex > 0 {
+		receiver = receiver[:dotIndex]
+	}
+
+	scope := effectiveCallerScope(lambdaCall)
+	info := lookupBindingWithScopeChain(env, scope, receiver)
+
+	// Handle this.field pattern: "this.orders" → lookup field "orders" on the enclosing class
+	// Enter this branch if receiver is "this"/"self" and info has no useful TypeArgs
+	if (receiver == "this" || receiver == "self") && (info == nil || (len(info.TypeArgs) == 0 && !strings.HasSuffix(info.TypeName, "[]"))) {
+		fieldName := lambdaCall.LambdaOwnerReceiver
+		// Strip "this." or "self." prefix
+		if strings.HasPrefix(fieldName, "this.") {
+			fieldName = fieldName[5:]
+		} else if strings.HasPrefix(fieldName, "self.") {
+			fieldName = fieldName[5:]
+		}
+		// Strip trailing method calls (e.g. "orders.stream()" → "orders")
+		if dotIdx := strings.IndexAny(fieldName, "."); dotIdx > 0 {
+			fieldName = fieldName[:dotIdx]
+		}
+		// Lookup field type on enclosing class (go up from lambda → method → class)
+		callerName := lambdaCall.CallerName // e.g. "pkg.Class.method"
+		// Walk up to class level: strip lambda segments
+		classScope := callerName
+		for {
+			lastDot := strings.LastIndex(classScope, ".")
+			if lastDot < 0 {
+				break
+			}
+			classScope = classScope[:lastDot]
+			// Check if this scope has the field binding
+			key := classScope + ":" + fieldName
+			if fieldInfo, exists := env.Bindings[key]; exists {
+				info = fieldInfo
+				break
+			}
+			// Also check globalBindings (class-level fields)
+			if typeName, exists := resolver.globalBindings[key]; exists {
+				info = &model.TypeInfo{TypeName: typeName}
+				// Try to get TypeArgs from the actual binding in any env
+				for _, e := range envs {
+					if fullInfo, ok := e.Bindings[key]; ok {
+						info = fullInfo
+						break
+					}
+				}
+				break
+			}
+		}
+	}
+
+	if info == nil {
+		return nil
+	}
+
+	var typeArgs []string
+	if len(info.TypeArgs) > 0 {
+		for _, typeArg := range info.TypeArgs {
+			typeArgs = append(typeArgs, typeArg.Name)
+		}
+	} else if strings.HasSuffix(info.TypeName, "[]") {
+		typeArgs = []string{strings.TrimSuffix(info.TypeName, "[]")}
+	}
+
+	if len(typeArgs) == 0 {
+		return nil
+	}
+
+	var inferredParams []model.ParamInfo
+	for paramIndex, param := range params {
+		if param.Type == "" && param.Name != "" && paramIndex < len(typeArgs) && typeArgs[paramIndex] != "" {
+			inferredParams = append(inferredParams, model.ParamInfo{Name: param.Name, Type: typeArgs[paramIndex]})
+		}
+	}
+	return inferredParams
+}

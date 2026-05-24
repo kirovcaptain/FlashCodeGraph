@@ -617,6 +617,19 @@ func extractArrowFunctions(node *tree_sitter.Node, content []byte, filePath, cal
 					})
 				}
 
+				// Produce TypeHints for explicitly typed arrow function parameters
+				for _, param := range paramTypes {
+					if param.Type != "" && param.Name != "" {
+						result.TypeHints = append(result.TypeHints, model.TypeBinding{
+							VarName:  param.Name,
+							TypeName: param.Type,
+							Tier:     0,
+							Scope:    qualifiedName,
+							FilePath: filePath,
+						})
+					}
+				}
+
 				body := valueNode.ChildByFieldName("body")
 				if body != nil {
 					if body.Kind() == "statement_block" {
@@ -705,6 +718,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 						lambdaName := fmt.Sprintf("lambda$%d", lambdaCounter)
 						lambdaQualifiedName := qualifiedCallerName + "." + lambdaName
 						lambdaID := astutil.GenerateSymbolID(filePath, lambdaQualifiedName, int(child.StartPosition().Row)+1)
+						lambdaParams := extractArrowFunctionParams(child, content)
 						result.Symbols = append(result.Symbols, model.Symbol{
 							ID:            lambdaID,
 							Name:          lambdaName,
@@ -715,14 +729,29 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 							EndLine:       int(child.EndPosition().Row) + 1,
 							IsLambda:      true,
 							LambdaContext: qualifiedCallerName,
+							Params:        lambdaParams,
 						})
+						// Produce TypeHints for explicitly typed arrow function parameters
+						for _, param := range lambdaParams {
+							if param.Type != "" && param.Name != "" {
+								result.TypeHints = append(result.TypeHints, model.TypeBinding{
+									VarName:  param.Name,
+									TypeName: param.Type,
+									Tier:     0,
+									Scope:    lambdaQualifiedName,
+									FilePath: filePath,
+								})
+							}
+						}
 						result.Calls = append(result.Calls, model.RawCall{
-							CalledName:    lambdaQualifiedName,
-							CallerName:    qualifiedCallerName,
-							CallerKind:    constants.KindFunction,
-							FilePath:      filePath,
-							Line:          int(child.StartPosition().Row) + 1,
-							IsPreResolved: true,
+							CalledName:          lambdaQualifiedName,
+							CallerName:          qualifiedCallerName,
+							CallerKind:          constants.KindFunction,
+							FilePath:            filePath,
+							Line:                int(child.StartPosition().Row) + 1,
+							IsPreResolved:       true,
+							LambdaOwnerMethod:   calledName,
+							LambdaOwnerReceiver: receiverExpr,
 						})
 						lambdaBody := child.ChildByFieldName("body")
 						if lambdaBody != nil {
@@ -815,6 +844,25 @@ func extractParams(node *tree_sitter.Node, content []byte) []model.ParamInfo {
 		}
 	}
 	return params
+}
+
+// extractArrowFunctionParams extracts parameter information from an arrow_function node.
+// Handles both parenthesized and non-parenthesized forms:
+// - (order: Order) => ... → [{Name:"order", Type:"Order"}]
+// - order => ... → [{Name:"order", Type:""}]
+// - (order) => ... → [{Name:"order", Type:""}]
+func extractArrowFunctionParams(arrowNode *tree_sitter.Node, content []byte) []model.ParamInfo {
+	// Try standard extractParams first (handles formal_parameters case)
+	params := extractParams(arrowNode, content)
+	if len(params) > 0 {
+		return params
+	}
+	// Fallback: single identifier without parentheses (order => ...)
+	firstNamed := arrowNode.NamedChild(0)
+	if firstNamed != nil && firstNamed.Kind() == "identifier" {
+		return []model.ParamInfo{{Name: firstNamed.Utf8Text(content), Type: ""}}
+	}
+	return nil
 }
 
 // extractTypeParams extracts generic type parameter names from a node's type_parameters child.

@@ -460,3 +460,102 @@ func process() {
 		t.Fatal("expected svc.Background() call not to be lost in go func_literal")
 	}
 }
+
+func TestExtractFuncLiteralParams_Argument(t *testing.T) {
+	code := []byte(`package main
+
+func process() {
+    stream.Map(func(order *Order) string {
+        return order.GetName()
+    })
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{FilePath: "main.go", Language: "go"}
+	file := scanner.ScannedFile{Path: "/test/main.go", RelPath: "main.go", Language: "go"}
+	Extract(root, code, file, result)
+
+	var lambdaSymbol *model.Symbol
+	for i := range result.Symbols {
+		if result.Symbols[i].IsLambda {
+			lambdaSymbol = &result.Symbols[i]
+			break
+		}
+	}
+	if lambdaSymbol == nil {
+		t.Fatal("expected lambda symbol")
+	}
+	if len(lambdaSymbol.Params) == 0 {
+		t.Fatal("expected params to be extracted")
+	}
+	if lambdaSymbol.Params[0].Name != "order" {
+		t.Errorf("expected param name 'order', got %q", lambdaSymbol.Params[0].Name)
+	}
+	if lambdaSymbol.Params[0].Type != "*Order" {
+		t.Errorf("expected param type '*Order', got %q", lambdaSymbol.Params[0].Type)
+	}
+}
+
+func TestExtractFuncLiteralParams_TypeHint(t *testing.T) {
+	code := []byte(`package main
+
+func process() {
+    stream.Map(func(order *Order) string {
+        return order.GetName()
+    })
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{FilePath: "main.go", Language: "go"}
+	file := scanner.ScannedFile{Path: "/test/main.go", RelPath: "main.go", Language: "go"}
+	Extract(root, code, file, result)
+
+	found := false
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "order" && hint.TypeName == "*Order" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected TypeHint for func literal param 'order' with type '*Order'")
+	}
+}
+
+func TestExtractLocalFuncLiteral_ParamTypeHint(t *testing.T) {
+	code := []byte(`package main
+
+import "net/http"
+
+func setup() {
+    handler := func(w http.ResponseWriter, r *http.Request) {
+        w.Write(nil)
+    }
+    _ = handler
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{FilePath: "main.go", Language: "go"}
+	file := scanner.ScannedFile{Path: "/test/main.go", RelPath: "main.go", Language: "go"}
+	Extract(root, code, file, result)
+
+	foundW := false
+	foundR := false
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "w" && hint.TypeName == "http.ResponseWriter" {
+			foundW = true
+		}
+		if hint.VarName == "r" && hint.TypeName == "*http.Request" {
+			foundR = true
+		}
+	}
+	if !foundW {
+		t.Error("expected TypeHint for 'w' with type 'http.ResponseWriter'")
+	}
+	if !foundR {
+		t.Error("expected TypeHint for 'r' with type '*http.Request'")
+	}
+}
