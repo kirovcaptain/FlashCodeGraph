@@ -774,6 +774,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 				flowContext := astutil.DetectFlowContext(node, content)
 				blockScope := astutil.DetectBlockScope(node, qualifiedCallerName)
 				mergeScopeParents(result, blockScope.ScopeParents)
+				chainID, chainDepth := computeTSChainInfo(node)
 				result.Calls = append(result.Calls, model.RawCall{
 					CalledName:   calledName,
 					CallerName:   qualifiedCallerName,
@@ -786,6 +787,8 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 					ReceiverExpr: receiverExpr,
 					FlowContext:  flowContext.Kind,
 					FlowLine:     flowContext.Line,
+					ChainID:      chainID,
+					ChainDepth:   chainDepth,
 				})
 			}
 		}
@@ -1275,4 +1278,99 @@ func extractCalleeName(valueNode *tree_sitter.Node, content []byte) string {
 		return valueNode.Utf8Text(content)
 	}
 	return ""
+}
+
+// computeTSChainInfo determines the chain position of a call_expression node in TS/JS.
+// TS chain structure: call_expression → function(member_expression) → object(call_expression)
+// Returns (chainID, chainDepth). chainID is the outermost call's line number (1-based).
+// Returns (0, 0) if the node is not part of a chain.
+func computeTSChainInfo(node *tree_sitter.Node) (int, int) {
+	// Check if this call has an inner chained call
+	funcNode := node.ChildByFieldName("function")
+	hasInnerChainedCall := false
+	if funcNode != nil && funcNode.Kind() == "member_expression" {
+		objectNode := funcNode.ChildByFieldName("object")
+		if objectNode != nil && objectNode.Kind() == "call_expression" {
+			hasInnerChainedCall = true
+		}
+	}
+
+	// Check if this call is the inner part of an outer chain
+	hasOuterChainedCall := false
+	parent := node.Parent()
+	if parent != nil && parent.Kind() == "member_expression" {
+		grandparent := parent.Parent()
+		if grandparent != nil && grandparent.Kind() == "call_expression" {
+			grandparentFunc := grandparent.ChildByFieldName("function")
+			if grandparentFunc != nil && sameTSASTNode(grandparentFunc, parent) {
+				hasOuterChainedCall = true
+			}
+		}
+	}
+
+	if !hasInnerChainedCall && !hasOuterChainedCall {
+		return 0, 0
+	}
+
+	// Walk up to find the outermost call_expression in the chain
+	outermost := node
+	for {
+		outermostParent := outermost.Parent()
+		if outermostParent == nil || outermostParent.Kind() != "member_expression" {
+			break
+		}
+		grandparent := outermostParent.Parent()
+		if grandparent == nil || grandparent.Kind() != "call_expression" {
+			break
+		}
+		grandparentFunc := grandparent.ChildByFieldName("function")
+		if grandparentFunc == nil || !sameTSASTNode(grandparentFunc, outermostParent) {
+			break
+		}
+		outermost = grandparent
+	}
+	chainID := int(outermost.StartPosition().Row) + 1
+
+	// Count total depth from outermost inward
+	totalDepth := 0
+	current := outermost
+	for {
+		currentFunc := current.ChildByFieldName("function")
+		if currentFunc == nil || currentFunc.Kind() != "member_expression" {
+			break
+		}
+		inner := currentFunc.ChildByFieldName("object")
+		if inner == nil || inner.Kind() != "call_expression" {
+			break
+		}
+		totalDepth++
+		current = inner
+	}
+
+	// Count distance from outermost to current node
+	distanceFromOutermost := 0
+	current = outermost
+	for !sameTSASTNode(current, node) {
+		currentFunc := current.ChildByFieldName("function")
+		if currentFunc == nil || currentFunc.Kind() != "member_expression" {
+			break
+		}
+		inner := currentFunc.ChildByFieldName("object")
+		if inner == nil || inner.Kind() != "call_expression" {
+			break
+		}
+		current = inner
+		distanceFromOutermost++
+	}
+
+	chainDepth := totalDepth - distanceFromOutermost
+	return chainID, chainDepth
+}
+
+// sameTSASTNode compares two tree-sitter nodes by byte range and kind (pointer equality is unreliable).
+func sameTSASTNode(a, b *tree_sitter.Node) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.StartByte() == b.StartByte() && a.EndByte() == b.EndByte() && a.Kind() == b.Kind()
 }

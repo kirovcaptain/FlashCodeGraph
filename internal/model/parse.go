@@ -18,6 +18,8 @@ type RawCall struct {
 	IsPreResolved       bool   `json:"is_pre_resolved,omitempty"`       // CalledName is a full QualifiedName, resolve via FindByQualifiedName directly
 	LambdaOwnerMethod   string `json:"lambda_owner_method,omitempty"`   // for pre-resolved lambda: the method name that accepts this lambda as argument
 	LambdaOwnerReceiver string `json:"lambda_owner_receiver,omitempty"` // for pre-resolved lambda: the receiver expression of the owner method call
+	ChainID             int    `json:"chain_id,omitempty"`              // chained call identifier (outermost line number), 0 = not chained
+	ChainDepth          int    `json:"chain_depth,omitempty"`           // depth within the chain, 0 = innermost
 }
 
 // RawImport represents an import statement extracted from AST.

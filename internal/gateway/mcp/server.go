@@ -451,6 +451,9 @@ func (srv *Server) handleQueryCallChain(ctx context.Context, request mcp.CallToo
 	if mode == "compact" {
 		subgraph = service.CompactSubgraphEdges(subgraph)
 	}
+	if mode == "full" {
+		subgraph = service.AssembleChainNodes(subgraph)
+	}
 
 	warning := checkStalenessWarning(ctx, path, branchName)
 	normalizeQueryNodeProperties(subgraph)

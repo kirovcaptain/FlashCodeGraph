@@ -1064,10 +1064,15 @@ func extractMethodInvocation(node *tree_sitter.Node, content []byte, filePath, q
 func extractMethodInvocationWithScope(node *tree_sitter.Node, content []byte, filePath, qualifiedCallerName, callerScope string, lambdaCounter *int, result *model.ParseResult) {
 	callsBefore := len(result.Calls)
 	extractMethodInvocation(node, content, filePath, qualifiedCallerName, lambdaCounter, result)
-	// Only set CallerScope on calls that belong to this caller (not recursively produced lambda body calls)
+	// Set CallerScope and ChainID/ChainDepth on calls that belong to this caller (not recursively produced lambda body calls)
+	chainID, chainDepth := computeJavaChainInfo(node)
 	for i := callsBefore; i < len(result.Calls); i++ {
 		if result.Calls[i].CallerName == qualifiedCallerName {
 			result.Calls[i].CallerScope = callerScope
+			if chainID > 0 {
+				result.Calls[i].ChainID = chainID
+				result.Calls[i].ChainDepth = chainDepth
+			}
 		}
 	}
 }
@@ -1650,3 +1655,75 @@ func countComplexity(node *tree_sitter.Node, content []byte) int {
 }
 
 // walkNamedChildren iterates named children recursively.
+
+// computeJavaChainInfo determines the chain position of a method_invocation node.
+// Returns (chainID, chainDepth). chainID is the outermost call's line number (1-based).
+// chainDepth is 0 for the innermost call, increasing outward.
+// Returns (0, 0) if the node is not part of a chain (single call or no nesting).
+func computeJavaChainInfo(node *tree_sitter.Node) (int, int) {
+	objectNode := node.ChildByFieldName("object")
+	hasInnerMethodInvocation := objectNode != nil && objectNode.Kind() == "method_invocation"
+
+	hasOuterMethodInvocation := false
+	parent := node.Parent()
+	if parent != nil && parent.Kind() == "method_invocation" {
+		parentObject := parent.ChildByFieldName("object")
+		if parentObject != nil && sameASTNode(parentObject, node) {
+			hasOuterMethodInvocation = true
+		}
+	}
+
+	if !hasInnerMethodInvocation && !hasOuterMethodInvocation {
+		return 0, 0
+	}
+
+	// Walk up to find the outermost method_invocation in the chain
+	outermost := node
+	for {
+		parentNode := outermost.Parent()
+		if parentNode == nil || parentNode.Kind() != "method_invocation" {
+			break
+		}
+		parentObject := parentNode.ChildByFieldName("object")
+		if parentObject == nil || !sameASTNode(parentObject, outermost) {
+			break
+		}
+		outermost = parentNode
+	}
+	chainID := int(outermost.StartPosition().Row) + 1
+
+	// Count total depth from outermost inward
+	totalDepth := 0
+	current := outermost
+	for {
+		inner := current.ChildByFieldName("object")
+		if inner == nil || inner.Kind() != "method_invocation" {
+			break
+		}
+		totalDepth++
+		current = inner
+	}
+
+	// Count distance from outermost to current node
+	distanceFromOutermost := 0
+	current = outermost
+	for !sameASTNode(current, node) {
+		inner := current.ChildByFieldName("object")
+		if inner == nil {
+			break
+		}
+		current = inner
+		distanceFromOutermost++
+	}
+
+	chainDepth := totalDepth - distanceFromOutermost
+	return chainID, chainDepth
+}
+
+// sameASTNode compares two tree-sitter nodes by byte range and kind (pointer equality is unreliable).
+func sameASTNode(a, b *tree_sitter.Node) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.StartByte() == b.StartByte() && a.EndByte() == b.EndByte() && a.Kind() == b.Kind()
+}

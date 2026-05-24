@@ -891,24 +891,24 @@ func (store *Store) TraverseCallChain(ctx context.Context, nodeID string, depth 
 	case model.Outgoing:
 		callsCypher = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id IN $ids" + confidenceFilter +
 			" RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, 'CALLS', r.cross_service, r.via_route, r.target_project, r.target_handler," +
-			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type"
+			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type, r.chain_id, r.chain_depth"
 		dispatchesCypher = "MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE a.id IN $ids" +
 			" RETURN a.id, b.id, r.confidence, NULL AS line, NULL AS flow_context, NULL AS flow_line, NULL AS declared_type, NULL AS polymorphic, 'DISPATCHES', NULL AS cross_service, NULL AS via_route, NULL AS target_project, NULL AS target_handler," +
-			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type"
+			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type, NULL AS chain_id, NULL AS chain_depth"
 	case model.Incoming:
 		callsCypher = "MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id IN $ids" + confidenceFilter +
 			" RETURN b.id, a.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, 'CALLS', r.cross_service, r.via_route, r.target_project, r.target_handler," +
-			" a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line, r.resolved_by, r.event_type"
+			" a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line, r.resolved_by, r.event_type, r.chain_id, r.chain_depth"
 		dispatchesCypher = "MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE b.id IN $ids" +
 			" RETURN b.id, a.id, r.confidence, NULL AS line, NULL AS flow_context, NULL AS flow_line, NULL AS declared_type, NULL AS polymorphic, 'DISPATCHES', NULL AS cross_service, NULL AS via_route, NULL AS target_project, NULL AS target_handler," +
-			" a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line, r.resolved_by, r.event_type"
+			" a.name, a.file_path, a.qualified_name, a.is_getter, a.is_setter, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line, r.resolved_by, r.event_type, NULL AS chain_id, NULL AS chain_depth"
 	default:
 		callsCypher = "MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id IN $ids" + confidenceFilter +
 			" RETURN a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, 'CALLS', r.cross_service, r.via_route, r.target_project, r.target_handler," +
-			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type"
+			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type, r.chain_id, r.chain_depth"
 		dispatchesCypher = "MATCH (a:Function)-[r:DISPATCHES]-(b:Function) WHERE a.id IN $ids" +
 			" RETURN a.id, b.id, r.confidence, NULL AS line, NULL AS flow_context, NULL AS flow_line, NULL AS declared_type, NULL AS polymorphic, 'DISPATCHES', NULL AS cross_service, NULL AS via_route, NULL AS target_project, NULL AS target_handler," +
-			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type"
+			" b.name, b.file_path, b.qualified_name, b.is_getter, b.is_setter, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type, NULL AS chain_id, NULL AS chain_depth"
 	}
 
 	for level := 0; level < depth && len(queue) > 0; level++ {
@@ -1158,6 +1158,17 @@ func parseBFSResults(rows []interface{}) []bfsEdgeNodeResult {
 		if len(cols) > 24 && cols[24] != nil {
 			if eventType, ok := cols[24].(string); ok && eventType != "" {
 				edge.Properties["event_type"] = eventType
+			}
+		}
+		// Parse chain_id and chain_depth (columns 25-26)
+		if len(cols) > 25 && cols[25] != nil {
+			if chainID, ok := asInt(cols[25]); ok && chainID > 0 {
+				edge.Properties["chain_id"] = chainID
+			}
+		}
+		if len(cols) > 26 && cols[26] != nil {
+			if chainDepth, ok := asInt(cols[26]); ok {
+				edge.Properties["chain_depth"] = chainDepth
 			}
 		}
 

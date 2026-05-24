@@ -405,6 +405,9 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 	if callchainMode == "compact" {
 		subgraph = service.CompactSubgraphEdges(subgraph)
 	}
+	if callchainMode == "full" {
+		subgraph = service.AssembleChainNodes(subgraph)
+	}
 
 	// Add root node to subgraph for tree rendering
 	subgraph.Nodes = append([]model.Node{*node}, subgraph.Nodes...)

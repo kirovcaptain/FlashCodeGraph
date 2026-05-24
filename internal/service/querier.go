@@ -543,6 +543,169 @@ func filterTruncatedNodes(truncated []string, excluded map[string]bool, nodes []
 	return filtered
 }
 
+
+// AssembleChainNodes groups chained call edges (chain_id > 0) into Chain virtual nodes.
+// Only used in mode=full. Replaces multiple caller→chainStep edges with a single
+// caller→chain:N edge, and creates a Chain node with steps/qualified_steps/lambda_bindings.
+func AssembleChainNodes(sg *model.Subgraph) *model.Subgraph {
+	if sg == nil {
+		return sg
+	}
+
+	// Build node lookup for qualified_name
+	nodeByID := map[string]model.Node{}
+	for _, node := range sg.Nodes {
+		nodeByID[node.ID] = node
+	}
+
+	// Group edges by (source_id, chain_id) — each group is one chain from one caller
+	type chainKey struct {
+		sourceID string
+		chainID  int
+	}
+	chainGroups := map[chainKey][]model.Edge{}
+	var nonChainEdges []model.Edge
+
+	for _, edge := range sg.Edges {
+		chainID, _ := model.ToInt(edge.Properties["chain_id"])
+		if chainID > 0 {
+			// Skip lambda pre-resolved edges — they belong to the lambda, not the chain
+			targetNode, exists := nodeByID[edge.TargetID]
+			isLambdaTarget := false
+			if exists {
+				qualifiedName, _ := targetNode.Properties["qualified_name"].(string)
+				isLambdaTarget = strings.Contains(qualifiedName, ".lambda$")
+			}
+			if !isLambdaTarget {
+				key := chainKey{sourceID: edge.SourceID, chainID: chainID}
+				chainGroups[key] = append(chainGroups[key], edge)
+			} else {
+				nonChainEdges = append(nonChainEdges, edge)
+			}
+		} else {
+			nonChainEdges = append(nonChainEdges, edge)
+		}
+	}
+
+	if len(chainGroups) == 0 {
+		return sg
+	}
+
+	// For each chain group, create a Chain virtual node
+	var chainNodes []model.Node
+	var chainEdges []model.Edge
+	consumedNodeIDs := map[string]bool{}
+
+	for key, edges := range chainGroups {
+		// Sort by chain_depth ascending (innermost first)
+		sortEdgesByChainDepth(edges)
+
+		// Build steps and qualified_steps
+		var steps []string
+		var qualifiedSteps []string
+		lambdaBindings := map[string]string{}
+
+		for _, edge := range edges {
+			targetNode, exists := nodeByID[edge.TargetID]
+			if !exists {
+				continue
+			}
+			name, _ := targetNode.Properties["name"].(string)
+			qualifiedName, _ := targetNode.Properties["qualified_name"].(string)
+			steps = append(steps, name)
+			qualifiedSteps = append(qualifiedSteps, qualifiedName)
+			consumedNodeIDs[edge.TargetID] = true
+		}
+
+		// Find lambda bindings: lambda edges from same source with matching chain_depth
+		for _, edge := range nonChainEdges {
+			if edge.SourceID != key.sourceID {
+				continue
+			}
+			targetNode, exists := nodeByID[edge.TargetID]
+			if !exists {
+				continue
+			}
+			qualifiedName, _ := targetNode.Properties["qualified_name"].(string)
+			if !strings.Contains(qualifiedName, ".lambda$") {
+				continue
+			}
+			// Match lambda to chain step by chain_depth
+			lambdaChainDepth, hasDepth := model.ToInt(edge.Properties["chain_depth"])
+			if !hasDepth {
+				continue
+			}
+			for _, chainEdge := range edges {
+				chainEdgeDepth, _ := model.ToInt(chainEdge.Properties["chain_depth"])
+				if lambdaChainDepth == chainEdgeDepth {
+					chainTargetNode := nodeByID[chainEdge.TargetID]
+					stepName, _ := chainTargetNode.Properties["name"].(string)
+					lambdaName, _ := targetNode.Properties["name"].(string)
+					if stepName != "" && lambdaName != "" {
+						lambdaBindings[stepName] = lambdaName
+					}
+					break
+				}
+			}
+		}
+
+		// Create Chain virtual node
+		chainNodeID := fmt.Sprintf("chain:%d", key.chainID)
+		chainNodeProps := map[string]any{
+			"steps":           steps,
+			"qualified_steps": qualifiedSteps,
+		}
+		if len(lambdaBindings) > 0 {
+			chainNodeProps["lambda_bindings"] = lambdaBindings
+		}
+		chainNodes = append(chainNodes, model.Node{
+			ID:         chainNodeID,
+			Kind:       "Chain",
+			Properties: chainNodeProps,
+		})
+
+		// Create single edge from caller to Chain node
+		chainEdges = append(chainEdges, model.Edge{
+			SourceID:   key.sourceID,
+			TargetID:   chainNodeID,
+			Kind:       model.RelCalls,
+			Properties: map[string]any{"line": key.chainID},
+		})
+	}
+
+	// Rebuild nodes: keep non-consumed nodes + add chain nodes
+	var finalNodes []model.Node
+	for _, node := range sg.Nodes {
+		if !consumedNodeIDs[node.ID] {
+			finalNodes = append(finalNodes, node)
+		}
+	}
+	finalNodes = append(finalNodes, chainNodes...)
+
+	// Rebuild edges: non-chain edges (excluding edges to consumed nodes) + chain edges
+	var finalEdges []model.Edge
+	for _, edge := range nonChainEdges {
+		if !consumedNodeIDs[edge.TargetID] && !consumedNodeIDs[edge.SourceID] {
+			finalEdges = append(finalEdges, edge)
+		}
+	}
+	finalEdges = append(finalEdges, chainEdges...)
+
+	return &model.Subgraph{Nodes: finalNodes, Edges: finalEdges, TruncatedNodes: sg.TruncatedNodes}
+}
+
+// sortEdgesByChainDepth sorts edges by chain_depth ascending (innermost=0 first).
+func sortEdgesByChainDepth(edges []model.Edge) {
+	for i := 1; i < len(edges); i++ {
+		for j := i; j > 0; j-- {
+			depthJ, _ := model.ToInt(edges[j].Properties["chain_depth"])
+			depthJMinus1, _ := model.ToInt(edges[j-1].Properties["chain_depth"])
+			if depthJ < depthJMinus1 {
+				edges[j], edges[j-1] = edges[j-1], edges[j]
+			}
+		}
+	}
+}
 // FilterCoreSubgraph removes accessor (is_getter/is_setter) and external (file_path=="[external]") nodes
 // and their associated edges from a subgraph, returning a simplified core call chain.
 func FilterCoreSubgraph(sg *model.Subgraph) *model.Subgraph {

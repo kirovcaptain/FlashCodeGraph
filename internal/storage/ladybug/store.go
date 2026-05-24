@@ -83,7 +83,7 @@ func (store *Store) Migrate(_ context.Context) error {
 		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_FUNC (FROM Class TO Function, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS IFACE_CONTAINS_FUNC (FROM Interface TO Function, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_VAR (FROM Class TO Variable, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS CALLS (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, line INT32, declared_type STRING, polymorphic BOOLEAN, flow_context STRING, flow_line INT32, via_route STRING, cross_service BOOLEAN, consumer_interface STRING, target_service STRING, target_project STRING, target_branch STRING, target_handler STRING, protocol STRING, MANY_MANY)`,
+		`CREATE REL TABLE IF NOT EXISTS CALLS (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, line INT32, declared_type STRING, polymorphic BOOLEAN, flow_context STRING, flow_line INT32, via_route STRING, cross_service BOOLEAN, consumer_interface STRING, target_service STRING, target_project STRING, target_branch STRING, target_handler STRING, protocol STRING, chain_id INT32, chain_depth INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS EXTENDS (FROM Class TO Class, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS IMPLEMENTS (FROM Class TO Interface, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, symbol_name STRING, alias STRING, MANY_MANY)`,
@@ -134,6 +134,8 @@ func (store *Store) Migrate(_ context.Context) error {
 		{"target_handler", "STRING"},
 		{"protocol", "STRING"},
 		{"event_type", "STRING"},
+		{"chain_id", "INT32"},
+		{"chain_depth", "INT32"},
 	} {
 		store.execNoParams(fmt.Sprintf("ALTER TABLE CALLS ADD %s %s", column.name, column.colType))
 	}
@@ -882,13 +884,13 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 	var callsQueryTemplate, dispatchQueryTemplate string
 	switch direction {
 	case model.Outgoing:
-		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type", confidenceFilter)
+		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type, r.chain_id, r.chain_depth", confidenceFilter)
 		dispatchQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
 	case model.Incoming:
-		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, r.line, r.declared_type, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line, r.resolved_by, r.event_type", confidenceFilter)
+		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, r.line, r.declared_type, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line, r.resolved_by, r.event_type, r.chain_id, r.chain_depth", confidenceFilter)
 		dispatchQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:DISPATCHES]->(b:Function) WHERE b.id = $id %s RETURN b.id, a.id, a.name, a.file_path, r.confidence, a.is_getter, a.is_setter, a.qualified_name, a.is_constructor, a.source_project, a.source_branch, a.start_line, a.end_line", confidenceFilter)
 	default:
-		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type", confidenceFilter)
+		callsQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:CALLS]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, r.line, r.declared_type, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line, r.resolved_by, r.event_type, r.chain_id, r.chain_depth", confidenceFilter)
 		dispatchQueryTemplate = fmt.Sprintf("MATCH (a:Function)-[r:DISPATCHES]-(b:Function) WHERE a.id = $id %s RETURN a.id, b.id, b.name, b.file_path, r.confidence, b.is_getter, b.is_setter, b.qualified_name, b.is_constructor, b.source_project, b.source_branch, b.start_line, b.end_line", confidenceFilter)
 	}
 
@@ -921,6 +923,8 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				endLine, _ := row.GetValue(14)
 				resolvedByValue, _ := row.GetValue(15)
 				eventTypeValue, _ := row.GetValue(16)
+				chainIDValue, _ := row.GetValue(17)
+				chainDepthValue, _ := row.GetValue(18)
 
 				neighborID := fmt.Sprint(targetID)
 				edgeProperties := map[string]any{"confidence": confidence}
@@ -939,6 +943,16 @@ func (store *Store) traverseBFS(nodeID string, depth int, direction model.Direct
 				}
 				if eventTypeStr, ok := eventTypeValue.(string); ok && eventTypeStr != "" {
 					edgeProperties["event_type"] = eventTypeStr
+				}
+				if chainIDValue != nil {
+					if chainID := toIntValue(chainIDValue); chainID > 0 {
+						edgeProperties["chain_id"] = chainID
+					}
+				}
+				if chainDepthValue != nil {
+					if chainDepth := toIntValue(chainDepthValue); chainDepth >= 0 {
+						edgeProperties["chain_depth"] = chainDepth
+					}
 				}
 				subgraph.Edges = append(subgraph.Edges, model.Edge{
 					SourceID:   fmt.Sprint(sourceID),
@@ -1811,5 +1825,21 @@ func sanitizeSliceForLadybug(value any) any {
 			return anySlice
 		}
 		return value
+	}
+}
+
+// toIntValue converts various numeric types to int.
+func toIntValue(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int32:
+		return int(n)
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
 	}
 }

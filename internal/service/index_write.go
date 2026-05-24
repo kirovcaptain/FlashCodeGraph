@@ -423,6 +423,10 @@ func (indexer *Indexer) writeRelations(ctx context.Context, relations []model.Re
 			if v, ok := relation.Metadata["event_type"]; ok && v != "" {
 				edge.Properties["event_type"] = v
 			}
+			if relation.ChainID > 0 {
+				edge.Properties["chain_id"] = relation.ChainID
+				edge.Properties["chain_depth"] = relation.ChainDepth
+			}
 		}
 		edges = append(edges, edge)
 		result.RelationsByKind[string(relation.Kind)]++

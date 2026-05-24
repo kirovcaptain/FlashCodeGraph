@@ -37,6 +37,8 @@ type ResolvedRelation struct {
 	Line        int               `json:"line"`
 	FlowContext string            `json:"flow_context,omitempty"`
 	FlowLine    int               `json:"flow_line,omitempty"`
+	ChainID     int               `json:"chain_id,omitempty"`
+	ChainDepth  int               `json:"chain_depth,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 

@@ -1556,6 +1556,8 @@ func makeRelation(sourceID, targetID string, call model.RawCall, confidence floa
 		Line:        call.Line,
 		FlowContext: call.FlowContext,
 		FlowLine:    call.FlowLine,
+		ChainID:     call.ChainID,
+		ChainDepth:  call.ChainDepth,
 		Metadata: map[string]string{"file_path": call.FilePath, "arg_count": strconv.Itoa(call.ArgCount), "called_name": call.CalledName, "receiver_expr": call.ReceiverExpr},
 	}
 }
@@ -1577,6 +1579,8 @@ func makeMultiRelations(sourceID string, candidates []model.Symbol, call model.R
 			Line:        call.Line,
 			FlowContext: call.FlowContext,
 			FlowLine:    call.FlowLine,
+			ChainID:     call.ChainID,
+			ChainDepth:  call.ChainDepth,
 			Metadata:    map[string]string{"file_path": call.FilePath, "arg_count": strconv.Itoa(call.ArgCount), "called_name": call.CalledName, "receiver_expr": call.ReceiverExpr},
 		})
 	}

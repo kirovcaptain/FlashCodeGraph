@@ -172,6 +172,39 @@ func printCallNode(nodeID string, nodeMap map[string]*model.Node, children map[s
 	name := nodeID
 	filePath := ""
 	if node != nil {
+		// Chain virtual node: render as "step1 → step2 → step3 [chain]"
+		if node.Kind == "Chain" {
+			connector := "├── "
+			if isLast {
+				connector = "└── "
+			}
+			steps, _ := node.Properties["steps"].([]string)
+			chainLabel := strings.Join(steps, " → ") + " [chain]"
+			fmt.Printf("%s%s%s\n", prefix, connector, chainLabel)
+			// Show lambda bindings as children in chain order (by step index)
+			lambdaBindings, _ := node.Properties["lambda_bindings"].(map[string]string)
+			childPrefix := prefix + "│   "
+			if isLast {
+				childPrefix = prefix + "    "
+			}
+			if len(lambdaBindings) > 0 && currentDepth < maxDepth {
+				// Order by step position in the chain
+				var orderedBindings []string
+				for _, step := range steps {
+					if lambda, ok := lambdaBindings[step]; ok {
+						orderedBindings = append(orderedBindings, step+"→"+lambda)
+					}
+				}
+				for i, entry := range orderedBindings {
+					lambdaConnector := "├── "
+					if i == len(orderedBindings)-1 {
+						lambdaConnector = "└── "
+					}
+					fmt.Printf("%s%s%s\n", childPrefix, lambdaConnector, entry)
+				}
+			}
+			return
+		}
 		name, _ = node.Properties["name"].(string)
 		if qn, ok := node.Properties["qualified_name"].(string); ok && qn != "" {
 			name = qn
