@@ -232,7 +232,7 @@ func (resolver *Resolver) resolveCallNoCandidate(call model.RawCall, envs map[st
 			return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "receiver_type_internal", 1)}, nil
 		}
 		// Second: check if method is known in external method registry (e.g. Stream.map from chain inference)
-		if returnType, known := langHelper.LookupMethodReturn(receiverType, call.CalledName); known {
+		if returnType, known := langHelper.LookupMethodReturn(receiverType, call.CalledName, call.ArgTypes); known {
 			qualifiedName := langHelper.BuildExternalQualifiedName(receiverType, call.CalledName)
 			externalID := "external:" + qualifiedName
 			resolver.symbolTable.AddBatch([]model.Symbol{{
@@ -960,7 +960,7 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 	}
 
 	// Fallback: language-specific method return type lookup
-	if methodReturnType, ok := langHelper.LookupMethodReturn(typeSeg, methodName); ok {
+	if methodReturnType, ok := langHelper.LookupMethodReturn(typeSeg, methodName, nil); ok {
 		switch methodReturnType.Name {
 		case "":
 			return "" // terminal operation
@@ -1452,7 +1452,7 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 					}
 				}
 				// Try JDK table
-				if ret, ok := langHelper.LookupMethodReturn(objType, methodName); ok && ret.Name != "" && ret.Name != "SELF" {
+				if ret, ok := langHelper.LookupMethodReturn(objType, methodName, nil); ok && ret.Name != "" && ret.Name != "SELF" {
 					return ret.Name
 				}
 			}

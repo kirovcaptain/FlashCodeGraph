@@ -44,7 +44,8 @@ type LanguageHelper interface {
 
 	// LookupMethodReturn returns the return type of a method on a given type.
 	// Used by inferExprType for chain resolution (e.g., Exception.getMessage → String).
-	LookupMethodReturn(typeName, methodName string) (model.ReturnType, bool)
+	// argTypes is used for overload disambiguation; pass nil when disambiguation is not needed.
+	LookupMethodReturn(typeName, methodName string, argTypes []string) (model.ReturnType, bool)
 
 	// BuildExternalQualifiedName constructs a fully qualified name for an external method.
 	// e.g. ("Stream", "map") → "java.util.stream.Stream.map"

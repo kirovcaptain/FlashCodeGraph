@@ -935,6 +935,15 @@ func extractReturnTypeStructured(node *tree_sitter.Node, content []byte) model.R
 		args := extractTypeArgsFromNode(astutil.FindChildByKind(node, "type_arguments"), content)
 		return model.ReturnType{Name: baseName, Args: args}
 	}
+	if node.Kind() == "array_type" {
+		// tree-sitter AST: array_type → [type_identifier, "[]"]
+		// Use NamedChild(0) to skip punctuation nodes
+		elementNode := node.NamedChild(0)
+		if elementNode != nil {
+			elementType := extractReturnTypeStructured(elementNode, content)
+			return model.ReturnType{Name: "Array", Args: []model.TypeArg{{Name: elementType.Name, Args: elementType.Args}}}
+		}
+	}
 	return model.ReturnType{Name: extractTypeName(node, content)}
 }
 

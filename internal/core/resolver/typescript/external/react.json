@@ -1,15 +1,15 @@
 {
-  "useState.0": "T",
-  "useState.1": "Function",
-  "useRef.current": "T",
-  "useContext": "T",
-  "useMemo": "T",
-  "useCallback": "T",
-  "useReducer.0": "T",
-  "useReducer.1": "Function",
-  "createContext": "Context",
-  "createElement": "ReactElement",
-  "forwardRef": "ForwardRefExoticComponent",
-  "memo": "MemoExoticComponent",
-  "lazy": "LazyExoticComponent"
+  "useState.0()": "T",
+  "useState.1()": "Function",
+  "useRef.current()": "T",
+  "useContext()": "T",
+  "useMemo()": "T",
+  "useCallback()": "T",
+  "useReducer.0()": "T",
+  "useReducer.1()": "Function",
+  "createContext()": "Context",
+  "createElement()": "ReactElement",
+  "forwardRef()": "ForwardRefExoticComponent",
+  "memo()": "MemoExoticComponent",
+  "lazy()": "LazyExoticComponent"
 }

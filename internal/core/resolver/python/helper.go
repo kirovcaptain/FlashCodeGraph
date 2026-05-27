@@ -115,7 +115,7 @@ func (pythonHelper *Helper) InferStringConcat(expr string) bool {
 }
 
 // LookupMethodReturn — no built-in method return table for Python.
-func (pythonHelper *Helper) LookupMethodReturn(_, _ string) (model.ReturnType, bool) {
+func (pythonHelper *Helper) LookupMethodReturn(_, _ string, _ []string) (model.ReturnType, bool) {
 	return model.ReturnType{}, false
 }
 

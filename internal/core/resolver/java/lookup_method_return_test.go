@@ -40,7 +40,7 @@ func TestLookupMethodReturn_Structured(t *testing.T) {
 	}
 
 	for _, testCase := range tests {
-		returnType, found := helper.LookupMethodReturn(testCase.typeName, testCase.methodName)
+		returnType, found := helper.LookupMethodReturn(testCase.typeName, testCase.methodName, nil)
 		if found != testCase.expectFound {
 			t.Errorf("LookupMethodReturn(%s, %s): found=%v, want %v", testCase.typeName, testCase.methodName, found, testCase.expectFound)
 			continue
@@ -57,7 +57,7 @@ func TestLookupMethodReturn_Structured(t *testing.T) {
 	}
 
 	// Verify U-6 nested args: Map.entrySet → Set<Entry<K, V>>
-	returnType, _ := helper.LookupMethodReturn("Map", "entrySet")
+	returnType, _ := helper.LookupMethodReturn("Map", "entrySet", nil)
 	if len(returnType.Args) == 1 {
 		entryArg := returnType.Args[0]
 		if entryArg.Name != "Entry" || len(entryArg.Args) != 2 {
@@ -66,7 +66,7 @@ func TestLookupMethodReturn_Structured(t *testing.T) {
 	}
 
 	// Verify U-1 args: List.stream → Stream<T>, T is the arg
-	returnType, _ = helper.LookupMethodReturn("List", "stream")
+	returnType, _ = helper.LookupMethodReturn("List", "stream", nil)
 	if len(returnType.Args) == 1 && returnType.Args[0].Name != "T" {
 		t.Errorf("List.stream: expected arg T, got %q", returnType.Args[0].Name)
 	}

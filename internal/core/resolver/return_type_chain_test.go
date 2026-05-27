@@ -11,7 +11,7 @@ type testListJDKHelper struct {
 	testJavaHelper
 }
 
-func (h *testListJDKHelper) LookupMethodReturn(typeName, methodName string) (model.ReturnType, bool) {
+func (h *testListJDKHelper) LookupMethodReturn(typeName, methodName string, _ []string) (model.ReturnType, bool) {
 	if typeName == "List" && methodName == "get" {
 		return model.ReturnType{Name: "T"}, true
 	}
@@ -30,7 +30,7 @@ type testNestedMapHelper struct {
 	testJavaHelper
 }
 
-func (h *testNestedMapHelper) LookupMethodReturn(typeName, methodName string) (model.ReturnType, bool) {
+func (h *testNestedMapHelper) LookupMethodReturn(typeName, methodName string, _ []string) (model.ReturnType, bool) {
 	switch typeName + "." + methodName {
 	case "Map.get":
 		return model.ReturnType{Name: "V"}, true

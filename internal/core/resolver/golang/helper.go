@@ -97,7 +97,7 @@ func (goHelper *Helper) InferStringConcat(expr string) bool {
 }
 
 // LookupMethodReturn — no built-in method return table for Go.
-func (goHelper *Helper) LookupMethodReturn(_, _ string) (model.ReturnType, bool) {
+func (goHelper *Helper) LookupMethodReturn(_, _ string, _ []string) (model.ReturnType, bool) {
 	return model.ReturnType{}, false
 }
 

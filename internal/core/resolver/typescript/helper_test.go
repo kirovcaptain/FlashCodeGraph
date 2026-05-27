@@ -240,7 +240,7 @@ func TestTSHelper_LookupMethodReturn_WithExternalMethods(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		result, found := helper.LookupMethodReturn(tc.typeName, tc.methodName)
+		result, found := helper.LookupMethodReturn(tc.typeName, tc.methodName, nil)
 		if found != tc.found {
 			t.Errorf("LookupMethodReturn(%s, %s): found=%v, want %v", tc.typeName, tc.methodName, found, tc.found)
 			continue
@@ -255,7 +255,7 @@ func TestTSHelper_LookupMethodReturn_WithExternalMethods(t *testing.T) {
 func TestTSHelper_LookupMethodReturn_NilManager(t *testing.T) {
 	helper := tshelper.NewHelper()
 
-	result, found := helper.LookupMethodReturn("Router", "get")
+	result, found := helper.LookupMethodReturn("Router", "get", nil)
 	if found {
 		t.Error("should not find anything without ExternalMethodManager")
 	}

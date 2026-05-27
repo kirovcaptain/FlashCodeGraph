@@ -158,9 +158,9 @@ func (tsHelper *Helper) InferStringConcat(expr string) bool {
 }
 
 // LookupMethodReturn looks up external library method return types for TS/JS.
-func (tsHelper *Helper) LookupMethodReturn(typeName, methodName string) (model.ReturnType, bool) {
+func (tsHelper *Helper) LookupMethodReturn(typeName, methodName string, argTypes []string) (model.ReturnType, bool) {
 	if tsHelper.externalMethods != nil {
-		return tsHelper.externalMethods.Lookup(typeName, methodName)
+		return tsHelper.externalMethods.Lookup(typeName, methodName, argTypes)
 	}
 	return model.ReturnType{}, false
 }
@@ -170,8 +170,13 @@ func (tsHelper *Helper) BuildExternalQualifiedName(typeName, methodName string) 
 	return typeName + "." + methodName
 }
 
-// LookupClassTypeParams — no built-in class type params for TS (yet).
-func (tsHelper *Helper) LookupClassTypeParams(_ string) []string { return nil }
+// LookupClassTypeParams returns the generic type parameters for an external TS/JS class.
+func (tsHelper *Helper) LookupClassTypeParams(typeName string) []string {
+	if tsHelper.externalMethods != nil {
+		return tsHelper.externalMethods.LookupClassTypeParams(typeName)
+	}
+	return nil
+}
 
 // IsConstructor returns true if the method is a TS/JS constructor.
 func (tsHelper *Helper) IsConstructor(method model.Symbol, _ string) bool {

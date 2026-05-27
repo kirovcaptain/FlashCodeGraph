@@ -1,0 +1,19 @@
+{
+  "java.util.Optional": "T",
+
+  "java.util.Optional.map(Function)": "Optional<T>",
+  "java.util.Optional.flatMap(Function)": "Optional<T>",
+  "java.util.Optional.filter(Predicate)": "Optional<T>",
+  "java.util.Optional.or(Supplier)": "Optional<T>",
+  "java.util.Optional.orElse(T)": "T",
+  "java.util.Optional.orElseGet(Supplier)": "T",
+  "java.util.Optional.orElseThrow()": "T",
+  "java.util.Optional.get()": "T",
+  "java.util.Optional.ifPresent(Consumer)": "",
+  "java.util.Optional.isPresent()": "boolean",
+  "java.util.Optional.isEmpty()": "boolean",
+  "java.util.Optional.stream()": "Stream<T>",
+  "java.util.Optional.of(T)": "Optional",
+  "java.util.Optional.ofNullable(T)": "Optional",
+  "java.util.Optional.empty()": "Optional"
+}

@@ -1,0 +1,26 @@
+{
+  "java.util.concurrent.CompletableFuture": "T",
+  "java.util.concurrent.Future": "T",
+
+  "java.util.concurrent.Future.get()": "T",
+  "java.util.concurrent.Future.isDone()": "boolean",
+  "java.util.concurrent.Future.cancel(boolean)": "boolean",
+  "java.util.concurrent.Future.isCancelled()": "boolean",
+
+  "java.util.concurrent.CompletableFuture.get()": "T",
+  "java.util.concurrent.CompletableFuture.join()": "T",
+  "java.util.concurrent.CompletableFuture.thenApply(Function)": "CompletableFuture<T>",
+  "java.util.concurrent.CompletableFuture.thenAccept(Consumer)": "CompletableFuture<T>",
+  "java.util.concurrent.CompletableFuture.thenRun(Runnable)": "CompletableFuture<T>",
+  "java.util.concurrent.CompletableFuture.thenCompose(Function)": "CompletableFuture<T>",
+  "java.util.concurrent.CompletableFuture.exceptionally(Function)": "CompletableFuture<T>",
+  "java.util.concurrent.CompletableFuture.whenComplete(BiConsumer)": "CompletableFuture<T>",
+  "java.util.concurrent.CompletableFuture.handle(BiFunction)": "CompletableFuture<T>",
+  "java.util.concurrent.CompletableFuture.supplyAsync(Supplier)": "CompletableFuture",
+  "java.util.concurrent.CompletableFuture.runAsync(Runnable)": "CompletableFuture",
+  "java.util.concurrent.CompletableFuture.allOf()": "CompletableFuture",
+  "java.util.concurrent.CompletableFuture.anyOf()": "CompletableFuture",
+  "java.util.concurrent.CompletableFuture.completedFuture(T)": "CompletableFuture",
+  "java.util.concurrent.CompletableFuture.isDone()": "boolean",
+  "java.util.concurrent.CompletableFuture.complete(T)": "boolean"
+}

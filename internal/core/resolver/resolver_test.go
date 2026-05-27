@@ -17,7 +17,7 @@ var testJDKReturns = map[string]string{
 	"DateUtil.parseDate": "DateTime", "DateTime.getTime": "long",
 }
 
-func (h *testJavaJDKHelper) LookupMethodReturn(typeName, methodName string) (model.ReturnType, bool) {
+func (h *testJavaJDKHelper) LookupMethodReturn(typeName, methodName string, _ []string) (model.ReturnType, bool) {
 	ret, ok := testJDKReturns[typeName+"."+methodName]
 	if !ok {
 		return model.ReturnType{}, false
@@ -61,7 +61,7 @@ type testGenericHelper struct{}
 func (testGenericHelper) SetHeritage(_ []model.RawHeritage)                          {}
 func (testGenericHelper) ShouldFallthrough() bool                                    { return true }
 func (testGenericHelper) InferStringConcat(_ string) bool                            { return false }
-func (testGenericHelper) LookupMethodReturn(_, _ string) (model.ReturnType, bool) {
+func (testGenericHelper) LookupMethodReturn(_, _ string, _ []string) (model.ReturnType, bool) {
 	return model.ReturnType{}, false
 }
 func (testGenericHelper) BuildExternalQualifiedName(typeName, methodName string) string {
@@ -98,7 +98,7 @@ type testJavaHelper struct {
 func (h *testJavaHelper) SetHeritage(heritage []model.RawHeritage) { h.heritage = heritage }
 func (h *testJavaHelper) ShouldFallthrough() bool                  { return false }
 func (h *testJavaHelper) InferStringConcat(expr string) bool       { return false }
-func (h *testJavaHelper) LookupMethodReturn(_, _ string) (model.ReturnType, bool) {
+func (h *testJavaHelper) LookupMethodReturn(_, _ string, _ []string) (model.ReturnType, bool) {
 	return model.ReturnType{}, false
 }
 func (h *testJavaHelper) BuildExternalQualifiedName(typeName, methodName string) string {
