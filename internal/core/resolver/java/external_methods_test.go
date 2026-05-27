@@ -12,7 +12,7 @@ func TestExternalMethodManager_JDKLookup(t *testing.T) {
 	manager := java.NewExternalMethodManager(nil, "")
 	// JDK method should be found
 	ret, found := manager.Lookup("List", "stream")
-	if !found || ret != "Stream" {
+	if !found || ret.Name != "Stream" {
 		t.Fatalf("expected Stream, got %q found=%v", ret, found)
 	}
 }
@@ -24,7 +24,7 @@ func TestExternalMethodManager_EmbedLookup(t *testing.T) {
 	if !found {
 		t.Fatal("expected BeanUtils.copyProperties to be found")
 	}
-	if ret != "" {
+	if ret.Name != "" {
 		t.Fatalf("expected empty return (void), got %q", ret)
 	}
 }
@@ -48,7 +48,7 @@ func TestExternalMethodManager_UserDefinedOverrides(t *testing.T) {
 	manager := java.NewExternalMethodManager(nil, tmpDir)
 	// User-defined should override JDK
 	ret, found := manager.Lookup("List", "stream")
-	if !found || ret != "CustomStream" {
+	if !found || ret.Name != "CustomStream" {
 		t.Fatalf("expected CustomStream, got %q found=%v", ret, found)
 	}
 }
@@ -63,7 +63,7 @@ func TestExternalMethodManager_InvalidJSON(t *testing.T) {
 	manager := java.NewExternalMethodManager(nil, tmpDir)
 	// Good file should still load
 	ret, found := manager.Lookup("Foo", "bar")
-	if !found || ret != "String" {
+	if !found || ret.Name != "String" {
 		t.Fatalf("expected String, got %q found=%v", ret, found)
 	}
 }

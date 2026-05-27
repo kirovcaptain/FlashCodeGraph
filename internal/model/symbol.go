@@ -8,6 +8,12 @@ type ParamInfo struct {
 	HasDefault bool      `json:"default,omitempty"`
 }
 
+// ReturnType describes a function/method return type with optional generic type arguments.
+type ReturnType struct {
+	Name string    `json:"name"`
+	Args []TypeArg `json:"args,omitempty"`
+}
+
 // Symbol represents a code symbol extracted from source.
 type Symbol struct {
 	ID              string `json:"id"`
@@ -18,7 +24,7 @@ type Symbol struct {
 	StartLine       int    `json:"start_line"`
 	EndLine         int    `json:"end_line"`
 	Params          []ParamInfo `json:"params,omitempty"`
-	ReturnTypes     []string `json:"return_types,omitempty"`
+	ReturnTypes     []ReturnType `json:"return_types,omitempty"`
 	Visibility      string `json:"visibility,omitempty"`
 	ClassType       string   `json:"class_type,omitempty"`      // class/abstract_class/interface/enum/struct
 	TypeParams      []string `json:"type_params,omitempty"`     // generic type parameters: ["T", "U"]
@@ -63,4 +69,112 @@ type FieldDeclaration struct {
 	OwnerQualifiedName string `json:"owner_qualified_name"` // owning class qualified_name
 	FilePath           string `json:"file_path"`
 	Line               int    `json:"line"`
+}
+
+// StringsToReturnTypes converts a []string to []ReturnType (each string parsed for generics).
+func StringsToReturnTypes(typeNames []string) []ReturnType {
+	if len(typeNames) == 0 {
+		return nil
+	}
+	result := make([]ReturnType, len(typeNames))
+	for i, name := range typeNames {
+		result[i] = ParseReturnType(name)
+	}
+	return result
+}
+
+// FormatReturnType formats a ReturnType as a human-readable string (e.g. "List<User>").
+func FormatReturnType(returnType ReturnType) string {
+	if len(returnType.Args) == 0 {
+		return returnType.Name
+	}
+	argStrings := make([]string, len(returnType.Args))
+	for i, arg := range returnType.Args {
+		argStrings[i] = FormatReturnType(ReturnType{Name: arg.Name, Args: arg.Args})
+	}
+	return returnType.Name + "<" + joinStrings(argStrings, ", ") + ">"
+}
+
+// FormatReturnTypes formats a slice of ReturnType as a string slice for display.
+func FormatReturnTypes(returnTypes []ReturnType) []string {
+	if len(returnTypes) == 0 {
+		return nil
+	}
+	result := make([]string, len(returnTypes))
+	for i, returnType := range returnTypes {
+		result[i] = FormatReturnType(returnType)
+	}
+	return result
+}
+
+// ParseReturnType parses a type string (e.g. "List<User>") into a ReturnType struct.
+// Handles nested generics: "Map<String, List<User>>" → {Name:"Map", Args:[{Name:"String"}, {Name:"List", Args:[{Name:"User"}]}]}
+func ParseReturnType(typeString string) ReturnType {
+	idx := indexOfGenericOpen(typeString)
+	if idx < 0 {
+		return ReturnType{Name: typeString}
+	}
+	baseName := typeString[:idx]
+	inner := typeString[idx+1 : len(typeString)-1]
+	argStrings := splitTopLevelCommas(inner)
+	args := make([]TypeArg, len(argStrings))
+	for i, argString := range argStrings {
+		parsed := ParseReturnType(argString)
+		args[i] = TypeArg{Name: parsed.Name, Args: parsed.Args}
+	}
+	return ReturnType{Name: baseName, Args: args}
+}
+
+// splitTopLevelCommas splits a string by commas not inside angle brackets.
+func splitTopLevelCommas(s string) []string {
+	var result []string
+	depth := 0
+	start := 0
+	for i, ch := range s {
+		switch ch {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		case ',':
+			if depth == 0 {
+				result = append(result, trimSpace(s[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	result = append(result, trimSpace(s[start:]))
+	return result
+}
+
+func indexOfGenericOpen(s string) int {
+	for i, ch := range s {
+		if ch == '<' {
+			return i
+		}
+	}
+	return -1
+}
+
+func joinStrings(parts []string, separator string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	result := parts[0]
+	for _, part := range parts[1:] {
+		result += separator + part
+	}
+	return result
+}
+
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+	for start < end && s[start] == ' ' {
+		start++
+	}
+	for end > start && s[end-1] == ' ' {
+		end--
+	}
+	return s[start:end]
 }

@@ -137,7 +137,7 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 				Annotations:   annotations,
 				IsGetter:      isGetter,
 				IsSetter:      isSetter,
-				ReturnTypes:   returnTypes,
+				ReturnTypes:   model.StringsToReturnTypes(returnTypes),
 			})
 		}
 	}
@@ -275,10 +275,10 @@ func unmarshalParams(s string) []model.ParamInfo {
 	return params
 }
 
-// firstReturnType returns the first return type or empty string.
-func firstReturnType(returnTypes []string) string {
+// firstReturnType returns the first return type name or empty string.
+func firstReturnType(returnTypes []model.ReturnType) string {
 	if len(returnTypes) > 0 {
-		return returnTypes[0]
+		return returnTypes[0].Name
 	}
 	return ""
 }

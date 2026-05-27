@@ -107,29 +107,25 @@ func extractImport(node *tree_sitter.Node, content []byte, filePath string, resu
 
 // extractAmbientReturnTypes extracts return types from a type_annotation node.
 // Handles tuple types [A, B] as multiple return types, otherwise single type.
-func extractAmbientReturnTypes(returnTypeNode *tree_sitter.Node, content []byte) []string {
+func extractAmbientReturnTypes(returnTypeNode *tree_sitter.Node, content []byte) []model.ReturnType {
 	// type_annotation children: ":" + actual_type_node
 	// If actual type is tuple_type, extract each element as a separate return type
 	for i := uint(0); i < returnTypeNode.ChildCount(); i++ {
 		child := returnTypeNode.Child(i)
 		if child.Kind() == "tuple_type" {
-			// [UserService, OrderService] → ["UserService", "OrderService"]
-			var types []string
+			// [UserService, OrderService] → [{Name:"UserService"}, {Name:"OrderService"}]
+			var types []model.ReturnType
 			for j := uint(0); j < child.ChildCount(); j++ {
 				elem := child.Child(j)
 				if elem.IsNamed() {
-					types = append(types, elem.Utf8Text(content))
+					types = append(types, extractReturnTypeStructured(elem, content))
 				}
 			}
 			return types
 		}
 	}
 	// Non-tuple: single return type (e.g. ": QueryResult")
-	typeName := extractTypeName(returnTypeNode, content)
-	if typeName != "" {
-		return []string{typeName}
-	}
-	return nil
+	return []model.ReturnType{extractReturnTypeStructured(returnTypeNode, content)}
 }
 
 // extractAmbientDeclaration handles `declare function/class/interface` statements.
@@ -144,7 +140,7 @@ func extractAmbientDeclaration(node *tree_sitter.Node, content []byte, file scan
 			}
 			funcName := nameNode.Utf8Text(content)
 			qualifiedName := buildQualifiedName(file.RelPath, funcName)
-			var returnTypes []string
+			var returnTypes []model.ReturnType
 			returnTypeNode := child.ChildByFieldName("return_type")
 			if returnTypeNode != nil {
 				returnTypes = extractAmbientReturnTypes(returnTypeNode, content)
@@ -911,12 +907,35 @@ func extractTypeArgsFromNode(typeArgsNode *tree_sitter.Node, content []byte) []m
 	return typeArgs
 }
 
-func extractReturnTypes(node *tree_sitter.Node, content []byte) []string {
+func extractReturnTypes(node *tree_sitter.Node, content []byte) []model.ReturnType {
 	returnTypeNode := node.ChildByFieldName("return_type")
 	if returnTypeNode == nil {
 		return nil
 	}
-	return []string{extractTypeName(returnTypeNode, content)}
+	return []model.ReturnType{extractReturnTypeStructured(returnTypeNode, content)}
+}
+
+// extractReturnTypeStructured extracts a return type as a structured ReturnType with generic args.
+func extractReturnTypeStructured(node *tree_sitter.Node, content []byte) model.ReturnType {
+	// type_annotation wraps the actual type: ": Type"
+	if node.Kind() == "type_annotation" {
+		for i := uint(0); i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child.IsNamed() {
+				return extractReturnTypeStructured(child, content)
+			}
+		}
+	}
+	if node.Kind() == "generic_type" {
+		nameNode := node.ChildByFieldName("name")
+		baseName := ""
+		if nameNode != nil {
+			baseName = nameNode.Utf8Text(content)
+		}
+		args := extractTypeArgsFromNode(astutil.FindChildByKind(node, "type_arguments"), content)
+		return model.ReturnType{Name: baseName, Args: args}
+	}
+	return model.ReturnType{Name: extractTypeName(node, content)}
 }
 
 func extractTypeName(node *tree_sitter.Node, content []byte) string {

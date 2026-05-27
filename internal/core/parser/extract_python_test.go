@@ -118,8 +118,8 @@ def process(data):
 
 	// Check return type annotation
 	for _, symbol := range result.Symbols {
-		if symbol.Name == "read_file" && symbol.ReturnTypes[0] != "str" {
-			t.Fatalf("expected return type str, got %s", symbol.ReturnTypes[0])
+		if symbol.Name == "read_file" && symbol.ReturnTypes[0].Name != "str" {
+			t.Fatalf("expected return type str, got %s", symbol.ReturnTypes[0].Name)
 		}
 	}
 

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 //go:embed external/*.json
@@ -75,19 +77,13 @@ func (manager *ExternalMethodManager) loadJSON(data []byte, source string) {
 
 // Lookup returns the return type for a method on a given class/module, or a function's return type.
 // Key format: "ClassName.methodName" or "functionName.fieldIndex"
-func (manager *ExternalMethodManager) Lookup(className, methodName string) (string, bool) {
+func (manager *ExternalMethodManager) Lookup(className, methodName string) (model.ReturnType, bool) {
 	if manager == nil {
-		return "", false
+		return model.ReturnType{}, false
 	}
-	returnType, found := manager.methods[className+"."+methodName]
-	return returnType, found
-}
-
-// LookupFunction returns the return type for a standalone function call.
-func (manager *ExternalMethodManager) LookupFunction(functionName string) (string, bool) {
-	if manager == nil {
-		return "", false
+	returnTypeString, found := manager.methods[className+"."+methodName]
+	if !found {
+		return model.ReturnType{}, false
 	}
-	returnType, found := manager.methods[functionName]
-	return returnType, found
+	return model.ParseReturnType(returnTypeString), true
 }

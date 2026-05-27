@@ -286,21 +286,30 @@ func (resolver *Resolver) buildQualifiedParentMap(heritage []model.RawHeritage) 
 
 // lookupFieldInHierarchy walks the inheritance chain to find a field's type.
 func (resolver *Resolver) lookupFieldInHierarchy(callerName, fieldName string, envs map[string]*model.TypeEnv) string {
-	dotIdx := strings.LastIndex(callerName, ".")
-	if dotIdx < 0 {
-		return ""
-	}
-	classQN := callerName[:dotIdx]
-
-	// O(1) lookup via globalBindings instead of iterating all envs
-	if typeName, exists := resolver.globalBindings[classQN+":"+fieldName]; exists {
-		return typeName
+	// Walk up caller name segments: lambda$1 → method → class
+	// This handles lambda bodies accessing outer class fields.
+	qualifiedName := callerName
+	for {
+		dotIndex := strings.LastIndex(qualifiedName, ".")
+		if dotIndex < 0 {
+			break
+		}
+		qualifiedName = qualifiedName[:dotIndex]
+		if typeName, exists := resolver.globalBindings[qualifiedName+":"+fieldName]; exists {
+			return typeName
+		}
 	}
 
 	// Walk up parent classes using heritageByChild index
-	className := classQN
-	if lastDot := strings.LastIndex(classQN, "."); lastDot >= 0 {
-		className = classQN[lastDot+1:]
+	// Use the first segment (one level up from callerName) as starting class
+	dotIndex := strings.LastIndex(callerName, ".")
+	if dotIndex < 0 {
+		return ""
+	}
+	startingQualifiedName := callerName[:dotIndex]
+	className := startingQualifiedName
+	if lastDot := strings.LastIndex(startingQualifiedName, "."); lastDot >= 0 {
+		className = startingQualifiedName[lastDot+1:]
 	}
 	visited := map[string]bool{className: true}
 	queue := []string{className}

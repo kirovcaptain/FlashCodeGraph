@@ -123,7 +123,7 @@ func NoReturn() {}
 	retMap := make(map[string][]string)
 	for _, sym := range result.Symbols {
 		if sym.Kind == "Function" {
-			retMap[sym.Name] = sym.ReturnTypes
+			retMap[sym.Name] = model.FormatReturnTypes(sym.ReturnTypes)
 		}
 	}
 

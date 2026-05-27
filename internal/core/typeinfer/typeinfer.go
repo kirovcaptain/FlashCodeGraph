@@ -96,7 +96,7 @@ func (infer *TypeInfer) InferLocal(result *model.ParseResult) *model.TypeEnv {
 	// Tier 2c: local return type inference
 	// If a call targets a function in the same file with a known return_type,
 	// infer the type of the call result variable.
-	symbolReturnTypes := make(map[string][]string)
+	symbolReturnTypes := make(map[string][]model.ReturnType)
 	for _, sym := range result.Symbols {
 		if sym.Kind == constants.KindFunction && len(sym.ReturnTypes) > 0 {
 			symbolReturnTypes[sym.Name] = sym.ReturnTypes
@@ -113,7 +113,7 @@ func (infer *TypeInfer) InferLocal(result *model.ParseResult) *model.TypeEnv {
 		key := scopedKey(call.CallerName, call.CalledName+"_result")
 		if _, exists := env.Bindings[key]; !exists {
 			env.Bindings[key] = &model.TypeInfo{
-				TypeName: retTypes[0],
+				TypeName: retTypes[0].Name,
 				Tier:     2,
 				Scope:    call.CallerName,
 			}
@@ -145,11 +145,12 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 				continue
 			}
 			var typeName string
+			var typeArgs []model.TypeArg
 			switch p.Kind {
 			case "copy":
 				typeName = lookupInEnv(env, p.Scope, p.RHS)
 			case "call_result":
-				typeName = lookupReturnType(p.Callee, findByName, p.ArgTypes)
+				typeName, typeArgs = lookupReturnTypeWithArgs(p.Callee, findByName, p.ArgTypes)
 			case "field_access":
 				receiverType := lookupInEnv(env, p.Scope, p.Receiver)
 				if receiverType != "" {
@@ -167,7 +168,7 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 			case "method_call_result":
 				receiverType := lookupInEnv(env, p.Scope, p.Receiver)
 				if receiverType != "" {
-					typeName = lookupMethodReturnTypeWithArgs(env, p.Scope, p.Receiver, receiverType, p.Method, findByName, p.ArgTypes)
+					typeName, typeArgs = lookupMethodReturnWithTypeArgs(env, p.Scope, p.Receiver, receiverType, p.Method, findByName, p.ArgTypes)
 				}
 			case "destructure":
 				returnType := lookupReturnType(p.Callee, findByName, nil)
@@ -177,7 +178,7 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 						idx, _ := strconv.Atoi(p.DestructuredKey)
 						for _, fn := range findByName(p.Callee) {
 							if fn.Kind == constants.KindFunction && idx < len(fn.ReturnTypes) {
-								typeName = fn.ReturnTypes[idx]
+								typeName = fn.ReturnTypes[idx].Name
 								break
 							}
 						}
@@ -192,7 +193,7 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 				}
 			}
 			if typeName != "" {
-				env.Bindings[key] = &model.TypeInfo{TypeName: typeName, Tier: 2, Scope: p.Scope}
+				env.Bindings[key] = &model.TypeInfo{TypeName: typeName, TypeArgs: typeArgs, Tier: 2, Scope: p.Scope}
 				resolved[i] = true
 				changed = true
 			}
@@ -279,10 +280,16 @@ func lookupBindingInEnv(env *model.TypeEnv, scope, varName string) *model.TypeIn
 }
 
 func lookupReturnType(callee string, findByName func(string) []model.Symbol, argTypes []string) string {
+	typeName, _ := lookupReturnTypeWithArgs(callee, findByName, argTypes)
+	return typeName
+}
+
+func lookupReturnTypeWithArgs(callee string, findByName func(string) []model.Symbol, argTypes []string) (string, []model.TypeArg) {
 	symbols := findByName(callee)
 	for _, s := range symbols {
 		if s.Kind == constants.KindFunction && len(s.ReturnTypes) > 0 {
-			retType := s.ReturnTypes[0]
+			retType := s.ReturnTypes[0].Name
+			retTypeArgs := s.ReturnTypes[0].Args
 			// Path 3: method-level generic return type inference
 			if len(s.TypeParams) > 0 && len(argTypes) > 0 {
 				for _, typeParam := range s.TypeParams {
@@ -294,11 +301,11 @@ func lookupReturnType(callee string, findByName func(string) []model.Symbol, arg
 							continue
 						}
 						if param.Type == typeParam {
-							return argTypes[i]
+							return argTypes[i], nil
 						}
 						for _, paramTypeArg := range param.TypeArgs {
 							if paramTypeArg.Name == typeParam {
-								return argTypes[i]
+								return argTypes[i], nil
 							}
 						}
 					}
@@ -309,13 +316,13 @@ func lookupReturnType(callee string, findByName func(string) []model.Symbol, arg
 			for _, candidate := range candidates {
 				if candidate.Kind == constants.KindClass || candidate.Kind == constants.KindInterface ||
 					candidate.Kind == "abstract_class" || candidate.ClassType == "struct" {
-					return candidate.QualifiedName
+					return candidate.QualifiedName, retTypeArgs
 				}
 			}
-			return retType
+			return retType, retTypeArgs
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func lookupFieldType(receiverType, fieldName string, findByName func(string) []model.Symbol) string {
@@ -325,7 +332,7 @@ func lookupFieldType(receiverType, fieldName string, findByName func(string) []m
 	symbols := findByName(getterName)
 	for _, s := range symbols {
 		if s.Kind == constants.KindFunction && strings.Contains(s.QualifiedName, lastSegmentFromType(receiverType)+".") && len(s.ReturnTypes) > 0 {
-			return s.ReturnTypes[0]
+			return s.ReturnTypes[0].Name
 		}
 	}
 	return ""
@@ -336,7 +343,7 @@ func lookupMethodReturnType(receiverType, methodName string, findByName func(str
 	typeSeg := lastSegmentFromType(receiverType)
 	for _, s := range symbols {
 		if s.Kind == constants.KindFunction && strings.Contains(s.QualifiedName, typeSeg+".") && len(s.ReturnTypes) > 0 {
-			return s.ReturnTypes[0]
+			return s.ReturnTypes[0].Name
 		}
 	}
 	return ""
@@ -352,22 +359,35 @@ var containerElementIndex = map[string]int{
 }
 
 func lookupMethodReturnTypeWithArgs(env *model.TypeEnv, scope, receiver, receiverType, methodName string, findByName func(string) []model.Symbol, argTypes []string) string {
+	typeName, _ := lookupMethodReturnWithTypeArgs(env, scope, receiver, receiverType, methodName, findByName, argTypes)
+	return typeName
+}
+
+func lookupMethodReturnWithTypeArgs(env *model.TypeEnv, scope, receiver, receiverType, methodName string, findByName func(string) []model.Symbol, argTypes []string) (string, []model.TypeArg) {
 	// First try normal method lookup
-	result := lookupMethodReturnType(receiverType, methodName, findByName)
-	if result != "" {
-		// Check if result is a generic type parameter that needs substitution
-		result = substituteTypeParam(result, receiverType, receiver, env, scope, findByName, methodName, argTypes)
-		return result
-	}
-	// Container generic resolution: List<User>.get → User
 	typeSeg := lastSegmentFromType(receiverType)
-	if elemIdx, ok := containerElementIndex[typeSeg]; ok {
-		typeArgs := lookupTypeArgs(env, scope, receiver)
-		if elemIdx < len(typeArgs) {
-			return typeArgs[elemIdx].Name
+	symbols := findByName(methodName)
+	for _, symbol := range symbols {
+		if symbol.Kind == constants.KindFunction && strings.Contains(symbol.QualifiedName, typeSeg+".") && len(symbol.ReturnTypes) > 0 {
+			returnTypeName := symbol.ReturnTypes[0].Name
+			returnTypeArgs := symbol.ReturnTypes[0].Args
+			// Check if result is a generic type parameter that needs substitution
+			substituted := substituteTypeParam(returnTypeName, receiverType, receiver, env, scope, findByName, methodName, argTypes)
+			if substituted != returnTypeName {
+				// Type param was substituted, TypeArgs don't apply
+				return substituted, nil
+			}
+			return returnTypeName, returnTypeArgs
 		}
 	}
-	return ""
+	// Container generic resolution: List<User>.get → User
+	if elementIndex, ok := containerElementIndex[typeSeg]; ok {
+		typeArgs := lookupTypeArgs(env, scope, receiver)
+		if elementIndex < len(typeArgs) {
+			return typeArgs[elementIndex].Name, nil
+		}
+	}
+	return "", nil
 }
 
 // substituteTypeParam replaces a generic type parameter (e.g. "T") with the actual type argument.
@@ -428,15 +448,10 @@ func LookupTypeArgs(env *model.TypeEnv, scope, varName string) []model.TypeArg {
 }
 
 func lookupTypeArgs(env *model.TypeEnv, scope, varName string) []model.TypeArg {
-	key := scopedKey(scope, varName)
-	if info, exists := env.Bindings[key]; exists && len(info.TypeArgs) > 0 {
+	// Reuse lookupBindingInEnv which supports ScopeParents chain traversal
+	info := lookupBindingInEnv(env, scope, varName)
+	if info != nil && len(info.TypeArgs) > 0 {
 		return info.TypeArgs
-	}
-	if dotIdx := strings.LastIndex(scope, "."); dotIdx >= 0 {
-		classKey := scopedKey(scope[:dotIdx], varName)
-		if info, exists := env.Bindings[classKey]; exists && len(info.TypeArgs) > 0 {
-			return info.TypeArgs
-		}
 	}
 	return nil
 }
@@ -493,7 +508,7 @@ func (infer *TypeInfer) Propagate(
 						key := scopedKey(call.CallerName, call.CalledName+"_result")
 						if _, exists := env.Bindings[key]; !exists {
 							env.Bindings[key] = &model.TypeInfo{
-								TypeName: symbol.ReturnTypes[0],
+								TypeName: symbol.ReturnTypes[0].Name,
 								Tier:     2,
 								Scope:    call.CallerName,
 							}
@@ -525,7 +540,7 @@ func (infer *TypeInfer) InferMultiReturn(env *model.TypeEnv, findByName func(str
 			funcExpr := info.MultiReturnOf
 			index := info.ReturnIndex
 
-			var returnTypes []string
+			var returnTypes []model.ReturnType
 
 			if strings.Contains(funcExpr, ".") {
 				// Try as package.Function first (e.g. "kuzu.New")
@@ -566,7 +581,7 @@ func (infer *TypeInfer) InferMultiReturn(env *model.TypeEnv, findByName func(str
 			}
 
 			if index < len(returnTypes) {
-				info.TypeName = returnTypes[index]
+				info.TypeName = returnTypes[index].Name
 				info.MultiReturnOf = "" // resolved
 				changed = true
 			}

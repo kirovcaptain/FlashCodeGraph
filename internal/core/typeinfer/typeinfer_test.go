@@ -142,7 +142,7 @@ func TestPropagate_CrossFile(t *testing.T) {
 		{
 			FilePath: "dao.go",
 			Symbols: []model.Symbol{
-				{Name: "FindById", QualifiedName: "dao.FindById", Kind: "Function", ReturnTypes: []string{"User"}, IsExported: true},
+				{Name: "FindById", QualifiedName: "dao.FindById", Kind: "Function", ReturnTypes: []model.ReturnType{{Name: "User"}}, IsExported: true},
 			},
 		},
 		{
@@ -286,7 +286,7 @@ func TestInferLocal_LocalReturnType(t *testing.T) {
 	result := &model.ParseResult{
 		FilePath: "main.go",
 		Symbols: []model.Symbol{
-			{Name: "getUser", Kind: "Function", ReturnTypes: []string{"User"}, FilePath: "main.go"},
+			{Name: "getUser", Kind: "Function", ReturnTypes: []model.ReturnType{{Name: "User"}}, FilePath: "main.go"},
 			{Name: "process", Kind: "Function", FilePath: "main.go"},
 		},
 		Calls: []model.RawCall{
@@ -329,8 +329,8 @@ func TestInferMultiReturn_StructField(t *testing.T) {
 	findByName := func(name string) []model.Symbol {
 		if name == "New" {
 			return []model.Symbol{
-				{Name: "New", QualifiedName: "kuzu.New", ReturnTypes: []string{"*kuzu.Store", "error"}},
-				{Name: "New", QualifiedName: "falkor.New", ReturnTypes: []string{"*falkor.Store", "error"}},
+				{Name: "New", QualifiedName: "kuzu.New", ReturnTypes: []model.ReturnType{{Name: "*kuzu.Store"}, {Name: "error"}}},
+				{Name: "New", QualifiedName: "falkor.New", ReturnTypes: []model.ReturnType{{Name: "*falkor.Store"}, {Name: "error"}}},
 			}
 		}
 		return nil
@@ -372,7 +372,7 @@ func TestInferMultiReturn_ReceiverMethod(t *testing.T) {
 	findByName := func(name string) []model.Symbol {
 		if name == "Connect" {
 			return []model.Symbol{
-				{Name: "Connect", QualifiedName: "Database.Connect", ReturnTypes: []string{"*Connection", "error"}},
+				{Name: "Connect", QualifiedName: "Database.Connect", ReturnTypes: []model.ReturnType{{Name: "*Connection"}, {Name: "error"}}},
 			}
 		}
 		return nil
@@ -398,7 +398,7 @@ func TestResolveFixpoint_MethodCallResult(t *testing.T) {
 	}
 	findByName := func(name string) []model.Symbol {
 		if name == "getAddress" {
-			return []model.Symbol{{Name: "getAddress", QualifiedName: "com.example.UserService.getAddress", Kind: "Function", ReturnTypes: []string{"Address"}}}
+			return []model.Symbol{{Name: "getAddress", QualifiedName: "com.example.UserService.getAddress", Kind: "Function", ReturnTypes: []model.ReturnType{{Name: "Address"}}}}
 		}
 		return nil
 	}
@@ -421,9 +421,9 @@ func TestResolveFixpoint_Chain(t *testing.T) {
 	findByName := func(name string) []model.Symbol {
 		switch name {
 		case "getUser":
-			return []model.Symbol{{Name: "getUser", Kind: "Function", ReturnTypes: []string{"User"}}}
+			return []model.Symbol{{Name: "getUser", Kind: "Function", ReturnTypes: []model.ReturnType{{Name: "User"}}}}
 		case "getAddress":
-			return []model.Symbol{{Name: "getAddress", QualifiedName: "User.getAddress", Kind: "Function", ReturnTypes: []string{"Address"}}}
+			return []model.Symbol{{Name: "getAddress", QualifiedName: "User.getAddress", Kind: "Function", ReturnTypes: []model.ReturnType{{Name: "Address"}}}}
 		}
 		return nil
 	}
@@ -485,7 +485,7 @@ func TestResolveFixpoint_UserDefinedGeneric(t *testing.T) {
 	findByName := func(name string) []model.Symbol {
 		switch name {
 		case "getData":
-			return []model.Symbol{{Name: "getData", QualifiedName: "TKPayResponseWrapper.getData", Kind: "Function", ReturnTypes: []string{"T"}, IsSynthetic: true}}
+			return []model.Symbol{{Name: "getData", QualifiedName: "TKPayResponseWrapper.getData", Kind: "Function", ReturnTypes: []model.ReturnType{{Name: "T"}}, IsSynthetic: true}}
 		case "TKPayResponseWrapper":
 			return []model.Symbol{{Name: "TKPayResponseWrapper", Kind: "Class", TypeParams: []string{"T"}}}
 		}
@@ -601,7 +601,7 @@ func TestResolveFixpoint_DestructureObject(t *testing.T) {
 	// Simulate findByName returning useQuery with return type
 	findByName := func(name string) []model.Symbol {
 		if name == "useQuery" {
-			return []model.Symbol{{Kind: "Function", ReturnTypes: []string{"QueryResult"}}}
+			return []model.Symbol{{Kind: "Function", ReturnTypes: []model.ReturnType{{Name: "QueryResult"}}}}
 		}
 		return nil
 	}
@@ -645,7 +645,7 @@ func TestResolveFixpoint_DestructureArray(t *testing.T) {
 
 	findByName := func(name string) []model.Symbol {
 		if name == "useState" {
-			return []model.Symbol{{Kind: "Function", ReturnTypes: []string{"number", "Function"}}}
+			return []model.Symbol{{Kind: "Function", ReturnTypes: []model.ReturnType{{Name: "number"}, {Name: "Function"}}}}
 		}
 		return nil
 	}
@@ -695,7 +695,7 @@ func TestSubstituteTypeParam_MethodLevelGeneric(t *testing.T) {
 				Name:        "getBean",
 				Kind:        "Function",
 				TypeParams:  []string{"T"},
-				ReturnTypes: []string{"T"},
+				ReturnTypes: []model.ReturnType{{Name: "T"}},
 				Params:      []model.ParamInfo{{Name: "clazz", Type: "Class", TypeArgs: []model.TypeArg{{Name: "T"}}}},
 			}}
 		case "identity":
@@ -703,7 +703,7 @@ func TestSubstituteTypeParam_MethodLevelGeneric(t *testing.T) {
 				Name:        "identity",
 				Kind:        "Function",
 				TypeParams:  []string{"T"},
-				ReturnTypes: []string{"T"},
+				ReturnTypes: []model.ReturnType{{Name: "T"}},
 				Params:      []model.ParamInfo{{Name: "value", Type: "T"}},
 			}}
 		case "transform":
@@ -711,14 +711,14 @@ func TestSubstituteTypeParam_MethodLevelGeneric(t *testing.T) {
 				Name:        "transform",
 				Kind:        "Function",
 				TypeParams:  []string{"K", "V"},
-				ReturnTypes: []string{"V"},
+				ReturnTypes: []model.ReturnType{{Name: "V"}},
 				Params:      []model.ParamInfo{{Name: "key", Type: "K"}, {Name: "val", Type: "V"}},
 			}}
 		case "noGeneric":
 			return []model.Symbol{{
 				Name:        "noGeneric",
 				Kind:        "Function",
-				ReturnTypes: []string{"String"},
+				ReturnTypes: []model.ReturnType{{Name: "String"}},
 				Params:      []model.ParamInfo{{Name: "input", Type: "String"}},
 			}}
 		case "Container":
@@ -774,7 +774,7 @@ func TestSubstituteTypeParam_ClassLevelTakesPriority(t *testing.T) {
 				Name:        "get",
 				Kind:        "Function",
 				TypeParams:  []string{"T"},
-				ReturnTypes: []string{"T"},
+				ReturnTypes: []model.ReturnType{{Name: "T"}},
 				Params:      []model.ParamInfo{{Name: "index", Type: "int"}},
 			}}
 		}

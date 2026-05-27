@@ -348,7 +348,7 @@ func extractFunction(node *tree_sitter.Node, content []byte, filePath, className
 		StartLine:     int(node.StartPosition().Row) + 1,
 		EndLine:       int(node.EndPosition().Row) + 1,
 		Params:        paramTypes,
-		ReturnTypes:   returnTypes,
+		ReturnTypes:   model.StringsToReturnTypes(returnTypes),
 		IsStatic:      isStatic,
 		IsExported:    isExported,
 		IsConstructor: funcName == "__init__",

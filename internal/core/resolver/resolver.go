@@ -232,13 +232,16 @@ func (resolver *Resolver) resolveCallNoCandidate(call model.RawCall, envs map[st
 			return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "receiver_type_internal", 1)}, nil
 		}
 		// Second: check if method is known in external method registry (e.g. Stream.map from chain inference)
-		if _, known := langHelper.LookupMethodReturn(receiverType, call.CalledName); known {
+		if returnType, known := langHelper.LookupMethodReturn(receiverType, call.CalledName); known {
 			qualifiedName := langHelper.BuildExternalQualifiedName(receiverType, call.CalledName)
 			externalID := "external:" + qualifiedName
 			resolver.symbolTable.AddBatch([]model.Symbol{{
 				ID: externalID, Name: call.CalledName,
 				QualifiedName: qualifiedName, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
+				ReturnTypes: []model.ReturnType{returnType},
 			}})
+			// Ensure the owning class external Symbol exists (with TypeParams for generic substitution)
+			resolver.ensureExternalClassSymbol(receiverType, langHelper)
 			return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
 		}
 		// Third: resolve as external via import path
@@ -945,21 +948,35 @@ func (resolver *Resolver) resolveChainedReceiverInternal(expr string, call model
 	candidates := resolver.symbolTable.FindByName(methodName)
 	for _, candidate := range candidates {
 		if candidate.Kind == constants.KindFunction && strings.Contains(candidate.QualifiedName, typeSeg+".") && len(candidate.ReturnTypes) > 0 {
-			retType := candidate.ReturnTypes[0]
-			retType = resolver.substituteGenericParam(retType, baseType, baseExpr, call, envs)
-			return retType
+			returnType := candidate.ReturnTypes[0]
+			resolvedType := resolver.substituteGenericParam(returnType.Name, baseType, baseExpr, call, envs)
+			// If return type has generic args and was not substituted, substitute Args and cache
+			if len(returnType.Args) > 0 && resolvedType == returnType.Name {
+				resolvedArgs := resolver.substituteTypeArgs(returnType.Args, baseType, baseExpr, call, envs)
+				resolver.chainedTypeArgs[resolvedType] = resolvedArgs
+			}
+			return resolvedType
 		}
 	}
 
 	// Fallback: language-specific method return type lookup
-	if methodRet, ok := langHelper.LookupMethodReturn(typeSeg, methodName); ok {
-		switch methodRet {
+	if methodReturnType, ok := langHelper.LookupMethodReturn(typeSeg, methodName); ok {
+		switch methodReturnType.Name {
 		case "":
 			return "" // terminal operation
 		case "SELF":
 			return baseType
 		default:
-			return methodRet
+			// Ensure external class Symbol exists for generic substitution
+			resolver.ensureExternalClassSymbol(typeSeg, langHelper)
+			// Try to substitute generic type parameter (e.g. "T" → "User" via chainedTypeArgs)
+			resolvedName := resolver.substituteGenericParam(methodReturnType.Name, baseType, baseExpr, call, envs)
+			// Propagate TypeArgs: substitute generic params in Args, cache for next chain level
+			if len(methodReturnType.Args) > 0 && resolvedName == methodReturnType.Name {
+				resolvedArgs := resolver.substituteTypeArgs(methodReturnType.Args, baseType, baseExpr, call, envs)
+				resolver.chainedTypeArgs[resolvedName] = resolvedArgs
+			}
+			return resolvedName
 		}
 	}
 
@@ -995,10 +1012,14 @@ func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiver
 				if typeArgs == nil {
 					typeArgs = resolver.chainedTypeArgs[receiverVar]
 				}
+				// Fallback: lookup by receiverType (e.g. "List" when receiverVar is "repo.findAll()")
+				if typeArgs == nil {
+					typeArgs = resolver.chainedTypeArgs[receiverType]
+				}
 				if idx < len(typeArgs) {
 					matched := typeArgs[idx]
 					if len(matched.Args) > 0 && resolver.chainedTypeArgs != nil {
-						resolver.chainedTypeArgs[receiverVar+"."+retType] = matched.Args
+						resolver.chainedTypeArgs[matched.Name] = matched.Args
 					}
 					return matched.Name
 				}
@@ -1021,7 +1042,7 @@ func (resolver *Resolver) substituteGenericParam(retType, receiverType, receiver
 				if typeParam == retType && idx < len(heritageEntry.TypeArgs) {
 					matched := heritageEntry.TypeArgs[idx]
 					if len(matched.Args) > 0 && resolver.chainedTypeArgs != nil {
-						resolver.chainedTypeArgs[receiverVar+"."+retType] = matched.Args
+						resolver.chainedTypeArgs[matched.Name] = matched.Args
 					}
 					return matched.Name
 				}
@@ -1143,6 +1164,49 @@ func (resolver *Resolver) findClassSymbol(typeName string) *model.Symbol {
 
 // findCallerID locates the Function node ID for the caller of a raw call.
 // Matches by file path and line range; falls back to first function in same file.
+
+// ensureExternalClassSymbol creates an external class Symbol (with TypeParams) if not already present.
+// This enables substituteGenericParam to find the class's TypeParams for generic substitution.
+
+// substituteTypeArgs replaces generic parameters in TypeArgs using chainedTypeArgs/TypeEnv.
+// e.g. [{Name:"T"}] with List's TypeArgs=[User] → [{Name:"User"}]
+func (resolver *Resolver) substituteTypeArgs(args []model.TypeArg, receiverType, receiverVar string, call model.RawCall, envs map[string]*model.TypeEnv) []model.TypeArg {
+	result := make([]model.TypeArg, len(args))
+	for i, arg := range args {
+		substituted := resolver.substituteGenericParam(arg.Name, receiverType, receiverVar, call, envs)
+		result[i] = model.TypeArg{Name: substituted, Args: arg.Args}
+	}
+	return result
+}
+
+func (resolver *Resolver) ensureExternalClassSymbol(typeName string, langHelper LanguageHelper) {
+	// Check if class already exists in SymbolTable
+	existing := resolver.symbolTable.FindByName(typeName)
+	for _, symbol := range existing {
+		if symbol.Kind == constants.KindClass || symbol.Kind == constants.KindInterface {
+			return // already exists
+		}
+	}
+	// Get TypeParams from language helper
+	typeParams := langHelper.LookupClassTypeParams(typeName)
+	if len(typeParams) == 0 {
+		return // no generic info available
+	}
+	classQualifiedName := langHelper.BuildExternalQualifiedName(typeName, "")
+	if strings.HasSuffix(classQualifiedName, ".") {
+		classQualifiedName = classQualifiedName[:len(classQualifiedName)-1]
+	}
+	externalClassID := "external:" + classQualifiedName
+	resolver.symbolTable.AddBatch([]model.Symbol{{
+		ID:            externalClassID,
+		Name:          typeName,
+		QualifiedName: classQualifiedName,
+		Kind:          constants.KindInterface,
+		FilePath:      constants.FilePathExternal,
+		TypeParams:    typeParams,
+	}})
+}
+
 func (resolver *Resolver) findCallerID(call model.RawCall) string {
 	candidates := resolver.symbolTable.FindByName(lastSegment(call.CallerName))
 	var fallback string
@@ -1362,7 +1426,7 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 		candidates := resolver.symbolTable.FindByName(methodName)
 		for _, candidate := range candidates {
 			if candidate.Kind == constants.KindFunction && candidate.FilePath == call.FilePath && len(candidate.ReturnTypes) > 0 {
-				return extractSimpleType(candidate.ReturnTypes[0])
+				return extractSimpleType(candidate.ReturnTypes[0].Name)
 			}
 		}
 		return ""
@@ -1384,12 +1448,12 @@ func (resolver *Resolver) inferExprType(expr string, call model.RawCall, env *mo
 				candidates := resolver.symbolTable.FindByName(methodName)
 				for _, candidate := range candidates {
 					if candidate.Kind == constants.KindFunction && strings.Contains(candidate.QualifiedName, objType+".") && len(candidate.ReturnTypes) > 0 {
-						return extractSimpleType(candidate.ReturnTypes[0])
+						return extractSimpleType(candidate.ReturnTypes[0].Name)
 					}
 				}
 				// Try JDK table
-				if ret, ok := langHelper.LookupMethodReturn(objType, methodName); ok && ret != "" && ret != "SELF" {
-					return ret
+				if ret, ok := langHelper.LookupMethodReturn(objType, methodName); ok && ret.Name != "" && ret.Name != "SELF" {
+					return ret.Name
 				}
 			}
 		}
@@ -1693,7 +1757,7 @@ func (resolver *Resolver) resolveSwitchConditionType(ref model.RawConstRef, env 
 			if receiverTypeName != "" {
 				method := resolver.FindMethodInHierarchy(lastSegment(receiverTypeName), ref.SwitchMethodName, resolver.heritage)
 				if method != nil && len(method.ReturnTypes) > 0 {
-					return method.ReturnTypes[0]
+					return method.ReturnTypes[0].Name
 				}
 			}
 		}
@@ -1711,8 +1775,8 @@ func (resolver *Resolver) inferConstantReturnTypeByMethodName(methodName string)
 		if candidate.Kind != constants.KindFunction || len(candidate.ReturnTypes) == 0 {
 			continue
 		}
-		returnType := candidate.ReturnTypes[0]
-		typeCandidates := resolver.symbolTable.FindByName(lastSegment(returnType))
+		returnTypeName := candidate.ReturnTypes[0].Name
+		typeCandidates := resolver.symbolTable.FindByName(lastSegment(returnTypeName))
 		isConstantClass := false
 		for _, tc := range typeCandidates {
 			if tc.Kind == constants.KindClass &&
@@ -1727,8 +1791,8 @@ func (resolver *Resolver) inferConstantReturnTypeByMethodName(methodName string)
 			continue
 		}
 		if uniqueReturnType == "" {
-			uniqueReturnType = returnType
-		} else if uniqueReturnType != returnType {
+			uniqueReturnType = returnTypeName
+		} else if uniqueReturnType != returnTypeName {
 			return ""
 		}
 	}
@@ -1883,71 +1947,28 @@ func (resolver *Resolver) inferLambdaTypeArgs(lambdaCall model.RawCall, params [
 		return nil
 	}
 
-	// Extract root receiver from LambdaOwnerReceiver
-	receiver := lambdaCall.LambdaOwnerReceiver
-	if dotIndex := strings.IndexAny(receiver, "."); dotIndex > 0 {
-		receiver = receiver[:dotIndex]
-	}
-
+	ownerReceiver := lambdaCall.LambdaOwnerReceiver
 	scope := effectiveCallerScope(lambdaCall)
-	info := lookupBindingWithScopeChain(env, scope, receiver)
+	langHelper := resolver.helperFor(lambdaCall)
 
-	// Handle this.field pattern: "this.orders" → lookup field "orders" on the enclosing class
-	// Enter this branch if receiver is "this"/"self" and info has no useful TypeArgs
-	if (receiver == "this" || receiver == "self") && (info == nil || (len(info.TypeArgs) == 0 && !strings.HasSuffix(info.TypeName, "[]"))) {
-		fieldName := lambdaCall.LambdaOwnerReceiver
-		// Strip "this." or "self." prefix
-		if strings.HasPrefix(fieldName, "this.") {
-			fieldName = fieldName[5:]
-		} else if strings.HasPrefix(fieldName, "self.") {
-			fieldName = fieldName[5:]
+	var typeArgs []model.TypeArg
+
+	if strings.Contains(ownerReceiver, ".") {
+		// Chained expression (e.g. "repo.findAll().stream()", "this.orders.stream()", "orders.stream()")
+		receiverType := resolver.resolveChainedReceiver(ownerReceiver, lambdaCall, envs, langHelper)
+		if receiverType != "" {
+			typeArgs = resolver.chainedTypeArgs[receiverType]
 		}
-		// Strip trailing method calls (e.g. "orders.stream()" → "orders")
-		if dotIdx := strings.IndexAny(fieldName, "."); dotIdx > 0 {
-			fieldName = fieldName[:dotIdx]
-		}
-		// Lookup field type on enclosing class (go up from lambda → method → class)
-		callerName := lambdaCall.CallerName // e.g. "pkg.Class.method"
-		// Walk up to class level: strip lambda segments
-		classScope := callerName
-		for {
-			lastDot := strings.LastIndex(classScope, ".")
-			if lastDot < 0 {
-				break
-			}
-			classScope = classScope[:lastDot]
-			// Check if this scope has the field binding
-			key := classScope + ":" + fieldName
-			if fieldInfo, exists := env.Bindings[key]; exists {
-				info = fieldInfo
-				break
-			}
-			// Also check globalBindings (class-level fields)
-			if typeName, exists := resolver.globalBindings[key]; exists {
-				info = &model.TypeInfo{TypeName: typeName}
-				// Try to get TypeArgs from the actual binding in any env
-				for _, e := range envs {
-					if fullInfo, ok := e.Bindings[key]; ok {
-						info = fullInfo
-						break
-					}
-				}
-				break
+	} else {
+		// Simple variable (e.g. "orders") — lookup TypeArgs directly from TypeEnv
+		info := lookupBindingWithScopeChain(env, scope, ownerReceiver)
+		if info != nil {
+			if len(info.TypeArgs) > 0 {
+				typeArgs = info.TypeArgs
+			} else if strings.HasSuffix(info.TypeName, "[]") {
+				typeArgs = []model.TypeArg{{Name: strings.TrimSuffix(info.TypeName, "[]")}}
 			}
 		}
-	}
-
-	if info == nil {
-		return nil
-	}
-
-	var typeArgs []string
-	if len(info.TypeArgs) > 0 {
-		for _, typeArg := range info.TypeArgs {
-			typeArgs = append(typeArgs, typeArg.Name)
-		}
-	} else if strings.HasSuffix(info.TypeName, "[]") {
-		typeArgs = []string{strings.TrimSuffix(info.TypeName, "[]")}
 	}
 
 	if len(typeArgs) == 0 {
@@ -1956,8 +1977,8 @@ func (resolver *Resolver) inferLambdaTypeArgs(lambdaCall model.RawCall, params [
 
 	var inferredParams []model.ParamInfo
 	for paramIndex, param := range params {
-		if param.Type == "" && param.Name != "" && paramIndex < len(typeArgs) && typeArgs[paramIndex] != "" {
-			inferredParams = append(inferredParams, model.ParamInfo{Name: param.Name, Type: typeArgs[paramIndex]})
+		if param.Type == "" && param.Name != "" && paramIndex < len(typeArgs) && typeArgs[paramIndex].Name != "" {
+			inferredParams = append(inferredParams, model.ParamInfo{Name: param.Name, Type: typeArgs[paramIndex].Name})
 		}
 	}
 	return inferredParams

@@ -386,10 +386,10 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 	}
 
 	// Return type
-	var returnTypes []string
+	var returnTypes []model.ReturnType
 	typeNode := node.ChildByFieldName("type")
 	if typeNode != nil {
-		returnTypes = []string{ExtractTypeName(typeNode, content)}
+		returnTypes = []model.ReturnType{extractReturnType(typeNode, content)}
 	}
 
 	// Parameters
@@ -509,7 +509,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 }
 
 // isAccessorGetter checks if a method is a simple getter (getXxx/isXxx with no params, no branches, single-line body).
-func isAccessorGetter(name string, isStatic bool, paramCount int, returnTypes []string, complexity int, node *tree_sitter.Node) bool {
+func isAccessorGetter(name string, isStatic bool, paramCount int, returnTypes []model.ReturnType, complexity int, node *tree_sitter.Node) bool {
 	if isStatic || paramCount != 0 || len(returnTypes) == 0 {
 		return false
 	}
@@ -524,14 +524,14 @@ func isAccessorGetter(name string, isStatic bool, paramCount int, returnTypes []
 }
 
 // isAccessorSetter checks if a method is a simple setter (setXxx with one param, void return, no branches, single-line body).
-func isAccessorSetter(name string, isStatic bool, paramCount int, returnTypes []string, complexity int, node *tree_sitter.Node) bool {
+func isAccessorSetter(name string, isStatic bool, paramCount int, returnTypes []model.ReturnType, complexity int, node *tree_sitter.Node) bool {
 	if isStatic || paramCount != 1 {
 		return false
 	}
 	if !strings.HasPrefix(name, "set") || len(name) <= 3 {
 		return false
 	}
-	if len(returnTypes) > 0 && !(len(returnTypes) == 1 && returnTypes[0] == "void") {
+	if len(returnTypes) > 0 && !(len(returnTypes) == 1 && returnTypes[0].Name == "void") {
 		return false
 	}
 	if complexity > 1 {
@@ -588,7 +588,7 @@ func generateLombokAccessors(classAnnotations []model.StructuredAnnotation, fiel
 				Kind:          constants.KindFunction,
 				FilePath:      filePath,
 				StartLine:     field.line,
-				ReturnTypes:   []string{field.typeName},
+				ReturnTypes:   []model.ReturnType{{Name: field.typeName}},
 				Params:        nil,
 				IsSynthetic:   true,
 				IsGetter:      true,
@@ -1516,6 +1516,29 @@ func extractTypeParams(node *tree_sitter.Node, content []byte) []string {
 		}
 	}
 	return typeParams
+}
+
+// extractReturnType extracts a return type as a structured ReturnType with generic args.
+func extractReturnType(node *tree_sitter.Node, content []byte) model.ReturnType {
+	switch node.Kind() {
+	case "generic_type":
+		baseName := ""
+		for i := uint(0); i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child.Kind() == "type_identifier" {
+				baseName = child.Utf8Text(content)
+				break
+			}
+		}
+		args := ExtractTypeArgs(node, content)
+		return model.ReturnType{Name: baseName, Args: args}
+	case "array_type":
+		elemType := node.ChildByFieldName("element")
+		if elemType != nil {
+			return model.ReturnType{Name: ExtractTypeName(elemType, content) + "[]"}
+		}
+	}
+	return model.ReturnType{Name: ExtractTypeName(node, content)}
 }
 
 // extractTypeName extracts a type name, handling generics.

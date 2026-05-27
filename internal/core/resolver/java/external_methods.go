@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 //go:embed external/*.json
@@ -86,10 +88,13 @@ func (manager *ExternalMethodManager) loadJSON(data []byte, source string) {
 //   - "T": returns container's first generic type arg
 //   - "V": returns Map's value type arg
 //   - "": terminal operation (void/boolean/int), chain ends
-func (manager *ExternalMethodManager) Lookup(className, methodName string) (string, bool) {
+func (manager *ExternalMethodManager) Lookup(className, methodName string) (model.ReturnType, bool) {
 	if manager == nil {
-		return "", false
+		return model.ReturnType{}, false
 	}
-	returnType, found := manager.methods[className+"."+methodName]
-	return returnType, found
+	returnTypeString, found := manager.methods[className+"."+methodName]
+	if !found {
+		return model.ReturnType{}, false
+	}
+	return model.ParseReturnType(returnTypeString), true
 }

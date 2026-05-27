@@ -44,11 +44,15 @@ type LanguageHelper interface {
 
 	// LookupMethodReturn returns the return type of a method on a given type.
 	// Used by inferExprType for chain resolution (e.g., Exception.getMessage → String).
-	LookupMethodReturn(typeName, methodName string) (string, bool)
+	LookupMethodReturn(typeName, methodName string) (model.ReturnType, bool)
 
 	// BuildExternalQualifiedName constructs a fully qualified name for an external method.
 	// e.g. ("Stream", "map") → "java.util.stream.Stream.map"
 	BuildExternalQualifiedName(typeName, methodName string) string
+
+	// LookupClassTypeParams returns the generic type parameters for an external class.
+	// e.g. "List" → ["T"], "Map" → ["K", "V"]. Returns nil if unknown.
+	LookupClassTypeParams(typeName string) []string
 
 	// IsConstructor returns true if the method is a constructor for the given class.
 	IsConstructor(method model.Symbol, className string) bool

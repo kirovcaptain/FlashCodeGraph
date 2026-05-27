@@ -51,50 +51,50 @@ var jdkPackageMap = map[string]string{
 //   "": terminal operation, chain ends
 var jdkMethodReturns = map[string]string{
 	// Collection / List / Set
-	"List.stream": "Stream", "List.iterator": "Iterator", "List.get": "T",
-	"List.set": "T", "List.remove": "T", "List.subList": "List",
+	"List.stream": "Stream<T>", "List.iterator": "Iterator<T>", "List.get": "T",
+	"List.set": "T", "List.remove": "T", "List.subList": "List<T>",
 	"List.toArray": "Object[]", "List.size": "int", "List.isEmpty": "boolean",
 	"List.contains": "boolean", "List.add": "boolean", "List.indexOf": "int",
 	"List.lastIndexOf": "int", "List.addAll": "boolean", "List.removeAll": "boolean",
 	"List.retainAll": "boolean", "List.clear": "", "List.sort": "",
-	"List.containsAll": "boolean", "List.listIterator": "Iterator",
+	"List.containsAll": "boolean", "List.listIterator": "Iterator<T>",
 	"List.of": "List", "List.copyOf": "List",
-	"Set.stream": "Stream", "Set.iterator": "Iterator", "Set.toArray": "Object[]",
+	"Set.stream": "Stream<T>", "Set.iterator": "Iterator<T>", "Set.toArray": "Object[]",
 	"Set.size": "int", "Set.isEmpty": "boolean", "Set.contains": "boolean",
 	"Set.add": "boolean", "Set.remove": "boolean", "Set.addAll": "boolean",
 	"Set.clear": "", "Set.of": "Set", "Set.copyOf": "Set",
-	"Collection.stream": "Stream", "Collection.iterator": "Iterator", "Collection.toArray": "Object[]",
+	"Collection.stream": "Stream<T>", "Collection.iterator": "Iterator<T>", "Collection.toArray": "Object[]",
 	"Collection.size": "int", "Collection.isEmpty": "boolean", "Collection.contains": "boolean",
 	"Collection.add": "boolean", "Collection.remove": "boolean", "Collection.addAll": "boolean",
 	"Collection.clear": "", "Collection.removeAll": "boolean",
-	"ArrayList.stream": "Stream", "LinkedList.stream": "Stream",
+	"ArrayList.stream": "Stream<T>", "LinkedList.stream": "Stream<T>",
 
 	// Stream
-	"Stream.filter": "Stream", "Stream.map": "Stream", "Stream.flatMap": "Stream",
-	"Stream.sorted": "Stream", "Stream.distinct": "Stream", "Stream.peek": "Stream",
-	"Stream.limit": "Stream", "Stream.skip": "Stream",
+	"Stream.filter": "Stream<T>", "Stream.map": "Stream<T>", "Stream.flatMap": "Stream<T>",
+	"Stream.sorted": "Stream<T>", "Stream.distinct": "Stream<T>", "Stream.peek": "Stream<T>",
+	"Stream.limit": "Stream<T>", "Stream.skip": "Stream<T>",
 	"Stream.mapToInt": "IntStream", "Stream.mapToLong": "LongStream", "Stream.mapToDouble": "DoubleStream",
 	"Stream.of": "Stream", "Stream.empty": "Stream", "Stream.concat": "Stream",
 	"Stream.generate": "Stream", "Stream.iterate": "Stream",
-	"Stream.collect": "T", "Stream.toList": "List", "Stream.forEach": "",
+	"Stream.collect": "T", "Stream.toList": "List<T>", "Stream.forEach": "",
 	"Stream.forEachOrdered": "",
 	"Stream.findFirst": "Optional", "Stream.findAny": "Optional",
-	"Stream.reduce": "Optional", "Stream.min": "Optional", "Stream.max": "Optional",
+	"Stream.reduce": "Optional<T>", "Stream.min": "Optional<T>", "Stream.max": "Optional<T>",
 	"Stream.count": "long", "Stream.toArray": "Object[]",
 	"Stream.anyMatch": "boolean", "Stream.allMatch": "boolean", "Stream.noneMatch": "boolean",
 
 	// Optional
-	"Optional.map": "Optional", "Optional.flatMap": "Optional", "Optional.filter": "Optional",
-	"Optional.or": "Optional",
+	"Optional.map": "Optional<T>", "Optional.flatMap": "Optional<T>", "Optional.filter": "Optional<T>",
+	"Optional.or": "Optional<T>",
 	"Optional.orElse": "T", "Optional.orElseGet": "T", "Optional.orElseThrow": "T",
 	"Optional.get": "T", "Optional.ifPresent": "", "Optional.isPresent": "boolean",
 	"Optional.isEmpty": "boolean",
-	"Optional.stream": "Stream",
+	"Optional.stream": "Stream<T>",
 	"Optional.of": "Optional", "Optional.ofNullable": "Optional", "Optional.empty": "Optional",
 
 	// Map
 	"Map.get": "V", "Map.getOrDefault": "V", "Map.put": "V", "Map.remove": "V",
-	"Map.entrySet": "Set", "Map.keySet": "Set", "Map.values": "Collection",
+	"Map.entrySet": "Set<Entry<K, V>>", "Map.keySet": "Set<K>", "Map.values": "Collection<V>",
 	"Map.containsKey": "boolean", "Map.containsValue": "boolean", "Map.size": "int", "Map.isEmpty": "boolean",
 	"Map.putAll": "", "Map.clear": "", "Map.putIfAbsent": "V",
 	"Map.replace": "V", "Map.computeIfAbsent": "V", "Map.computeIfPresent": "V",
@@ -112,13 +112,13 @@ var jdkMethodReturns = map[string]string{
 	// Future
 	"Future.get": "T", "Future.isDone": "boolean", "Future.cancel": "boolean", "Future.isCancelled": "boolean",
 	"CompletableFuture.get": "T", "CompletableFuture.join": "T",
-	"CompletableFuture.thenApply": "CompletableFuture",
-	"CompletableFuture.thenAccept": "CompletableFuture",
-	"CompletableFuture.thenRun": "CompletableFuture",
-	"CompletableFuture.thenCompose": "CompletableFuture",
-	"CompletableFuture.exceptionally": "CompletableFuture",
-	"CompletableFuture.whenComplete": "CompletableFuture",
-	"CompletableFuture.handle": "CompletableFuture",
+	"CompletableFuture.thenApply": "CompletableFuture<T>",
+	"CompletableFuture.thenAccept": "CompletableFuture<T>",
+	"CompletableFuture.thenRun": "CompletableFuture<T>",
+	"CompletableFuture.thenCompose": "CompletableFuture<T>",
+	"CompletableFuture.exceptionally": "CompletableFuture<T>",
+	"CompletableFuture.whenComplete": "CompletableFuture<T>",
+	"CompletableFuture.handle": "CompletableFuture<T>",
 	"CompletableFuture.supplyAsync": "CompletableFuture",
 	"CompletableFuture.runAsync": "CompletableFuture",
 	"CompletableFuture.allOf": "CompletableFuture",
@@ -772,4 +772,17 @@ func jdkTypeDepth(child, parent string) int {
 		}
 	}
 	return best
+}
+
+// jdkClassTypeParams maps JDK class short name → generic type parameters.
+var jdkClassTypeParams = map[string][]string{
+	"List": {"T"}, "ArrayList": {"T"}, "LinkedList": {"T"},
+	"Set": {"T"}, "HashSet": {"T"},
+	"Collection": {"T"},
+	"Map": {"K", "V"}, "HashMap": {"K", "V"}, "LinkedHashMap": {"K", "V"},
+	"ConcurrentHashMap": {"K", "V"}, "TreeMap": {"K", "V"},
+	"Optional": {"T"},
+	"Stream": {"T"}, "IntStream": {}, "LongStream": {}, "DoubleStream": {},
+	"Iterator": {"T"},
+	"CompletableFuture": {"T"}, "Future": {"T"},
 }

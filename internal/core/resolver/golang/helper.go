@@ -97,14 +97,17 @@ func (goHelper *Helper) InferStringConcat(expr string) bool {
 }
 
 // LookupMethodReturn — no built-in method return table for Go.
-func (goHelper *Helper) LookupMethodReturn(_, _ string) (string, bool) {
-	return "", false
+func (goHelper *Helper) LookupMethodReturn(_, _ string) (model.ReturnType, bool) {
+	return model.ReturnType{}, false
 }
 
 // BuildExternalQualifiedName constructs a qualified name for an external Go method.
 func (goHelper *Helper) BuildExternalQualifiedName(typeName, methodName string) string {
 	return typeName + "." + methodName
 }
+
+// LookupClassTypeParams — no built-in class type params for Go.
+func (goHelper *Helper) LookupClassTypeParams(_ string) []string { return nil }
 
 // IsConstructor — Go does not have constructors.
 func (goHelper *Helper) IsConstructor(_ model.Symbol, _ string) bool {

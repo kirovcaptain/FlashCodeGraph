@@ -17,9 +17,12 @@ var testJDKReturns = map[string]string{
 	"DateUtil.parseDate": "DateTime", "DateTime.getTime": "long",
 }
 
-func (h *testJavaJDKHelper) LookupMethodReturn(typeName, methodName string) (string, bool) {
+func (h *testJavaJDKHelper) LookupMethodReturn(typeName, methodName string) (model.ReturnType, bool) {
 	ret, ok := testJDKReturns[typeName+"."+methodName]
-	return ret, ok
+	if !ok {
+		return model.ReturnType{}, false
+	}
+	return model.ParseReturnType(ret), true
 }
 
 func (h *testJavaJDKHelper) IsTypeAssignable(argType, paramType string) bool {
@@ -58,10 +61,13 @@ type testGenericHelper struct{}
 func (testGenericHelper) SetHeritage(_ []model.RawHeritage)                          {}
 func (testGenericHelper) ShouldFallthrough() bool                                    { return true }
 func (testGenericHelper) InferStringConcat(_ string) bool                            { return false }
-func (testGenericHelper) LookupMethodReturn(_, _ string) (string, bool)              { return "", false }
+func (testGenericHelper) LookupMethodReturn(_, _ string) (model.ReturnType, bool) {
+	return model.ReturnType{}, false
+}
 func (testGenericHelper) BuildExternalQualifiedName(typeName, methodName string) string {
 	return typeName + "." + methodName
 }
+func (testGenericHelper) LookupClassTypeParams(_ string) []string                    { return nil }
 func (testGenericHelper) IsTypeAssignable(a, b string) bool                          { return a == b }
 func (testGenericHelper) ResolveOverload(_ []model.Symbol, _ []string) *model.Symbol { return nil }
 func (testGenericHelper) FilterGenerated(c []model.Symbol) []model.Symbol            { return c }
@@ -92,11 +98,15 @@ type testJavaHelper struct {
 func (h *testJavaHelper) SetHeritage(heritage []model.RawHeritage) { h.heritage = heritage }
 func (h *testJavaHelper) ShouldFallthrough() bool                  { return false }
 func (h *testJavaHelper) InferStringConcat(expr string) bool       { return false }
-func (h *testJavaHelper) LookupMethodReturn(_, _ string) (string, bool) {
-	return "", false
+func (h *testJavaHelper) LookupMethodReturn(_, _ string) (model.ReturnType, bool) {
+	return model.ReturnType{}, false
 }
 func (h *testJavaHelper) BuildExternalQualifiedName(typeName, methodName string) string {
 	return typeName + "." + methodName
+}
+func (h *testJavaHelper) LookupClassTypeParams(typeName string) []string {
+	params := map[string][]string{"List": {"T"}, "Map": {"K", "V"}, "Optional": {"T"}, "CompletableFuture": {"T"}, "Stream": {"T"}}
+	return params[typeName]
 }
 
 func (h *testJavaHelper) ResolveSuperCall(call model.RawCall, funcCandidates []model.Symbol, heritage []model.RawHeritage, envs map[string]*model.TypeEnv, callerID string) ([]model.ResolvedRelation, bool) {
@@ -1303,7 +1313,7 @@ func TestResolveCalls_EnrichArgTypes_MethodCall(t *testing.T) {
 	table.AddBatch([]model.Symbol{
 		{ID: "sf1", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: []model.ParamInfo{{Name: "code", Type: "ExceptionCode"}}},
 		{ID: "sf2", Name: "setFail", QualifiedName: "com.example.ApiResult.setFail", Kind: "Function", FilePath: "ApiResult.java", Params: []model.ParamInfo{{Name: "msg", Type: "String"}}},
-		{ID: "gc", Name: "getCode", QualifiedName: "com.example.Controller.getCode", Kind: "Function", FilePath: "Controller.java", ReturnTypes: []string{"ExceptionCode"}},
+		{ID: "gc", Name: "getCode", QualifiedName: "com.example.Controller.getCode", Kind: "Function", FilePath: "Controller.java", ReturnTypes: []model.ReturnType{{Name: "ExceptionCode"}}},
 		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
 	})
 
@@ -1481,9 +1491,9 @@ func TestResolveCalls_EnrichArgTypes_ChainedExpr(t *testing.T) {
 	// coinAccountDao.get(command.getUserId()) — getUserId returns Long, disambiguates get(String) vs get(Long)
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "get_str", Name: "get", QualifiedName: "com.example.CoinAccountDao.get", Kind: "Function", FilePath: "CoinAccountDao.java", Params: []model.ParamInfo{{Name: "id", Type: "String"}}, ReturnTypes: []string{"CoinAccount"}},
-		{ID: "get_long", Name: "get", QualifiedName: "com.example.CoinAccountDao.get", Kind: "Function", FilePath: "CoinAccountDao.java", Params: []model.ParamInfo{{Name: "userId", Type: "Long"}}, ReturnTypes: []string{"CoinAccount"}},
-		{ID: "getUserId", Name: "getUserId", QualifiedName: "com.example.Command.getUserId", Kind: "Function", FilePath: "Command.java", ReturnTypes: []string{"Long"}},
+		{ID: "get_str", Name: "get", QualifiedName: "com.example.CoinAccountDao.get", Kind: "Function", FilePath: "CoinAccountDao.java", Params: []model.ParamInfo{{Name: "id", Type: "String"}}, ReturnTypes: []model.ReturnType{{Name: "CoinAccount"}}},
+		{ID: "get_long", Name: "get", QualifiedName: "com.example.CoinAccountDao.get", Kind: "Function", FilePath: "CoinAccountDao.java", Params: []model.ParamInfo{{Name: "userId", Type: "Long"}}, ReturnTypes: []model.ReturnType{{Name: "CoinAccount"}}},
+		{ID: "getUserId", Name: "getUserId", QualifiedName: "com.example.Command.getUserId", Kind: "Function", FilePath: "Command.java", ReturnTypes: []model.ReturnType{{Name: "Long"}}},
 		{ID: "c_dao", Name: "CoinAccountDao", QualifiedName: "com.example.CoinAccountDao", Kind: "Class", FilePath: "CoinAccountDao.java"},
 		{ID: "c_cmd", Name: "Command", QualifiedName: "com.example.Command", Kind: "Class", FilePath: "Command.java"},
 		{ID: "caller1", Name: "recharge", QualifiedName: "com.example.Service.recharge", Kind: "Function", FilePath: "Service.java"},
@@ -1574,7 +1584,7 @@ func TestResolveCalls_EnrichArgTypes_ChainedExpr_MethodParam(t *testing.T) {
 	table.AddBatch([]model.Symbol{
 		{ID: "get_int", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: []model.ParamInfo{{Name: "id", Type: "Integer"}}},
 		{ID: "get_long", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: []model.ParamInfo{{Name: "userId", Type: "Long"}}},
-		{ID: "getUserId", Name: "getUserId", QualifiedName: "com.example.Reqs.getUserId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}},
+		{ID: "getUserId", Name: "getUserId", QualifiedName: "com.example.Reqs.getUserId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []model.ReturnType{{Name: "Long"}}},
 		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.example.UserInfoDao", Kind: "Class", FilePath: "UserInfoDao.java"},
 		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "Class", FilePath: "Reqs.java"},
 		{ID: "caller1", Name: "handle", QualifiedName: "com.example.Controller.handle", Kind: "Function", FilePath: "Controller.java"},
@@ -1629,7 +1639,7 @@ func TestResolveCalls_EnrichArgTypes_RealCase_UserController(t *testing.T) {
 		// Lombok-generated getter
 		{ID: "getUserId", Name: "getUserId", QualifiedName: "com.example.app.admin.model.request.user.GetLastCycleSummaryReqs.getUserId", Kind: "Function",
 			FilePath: "admin/src/main/java/com/example/app/admin/model/request/user/GetLastCycleSummaryReqs.java",
-			ReturnTypes: []string{"Long"}, IsSynthetic: true},
+			ReturnTypes: []model.ReturnType{{Name: "Long"}}, IsSynthetic: true},
 		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.example.app.core.dao.UserInfoDao", Kind: "Class", FilePath: "app-core/src/main/java/com/example/app/core/dao/UserInfoDao.java"},
 		{ID: "c_reqs", Name: "GetLastCycleSummaryReqs", QualifiedName: "com.example.app.admin.model.request.user.GetLastCycleSummaryReqs", Kind: "Class",
 			FilePath: "admin/src/main/java/com/example/app/admin/model/request/user/GetLastCycleSummaryReqs.java"},
@@ -1682,7 +1692,7 @@ func TestResolveCalls_EnrichArgTypes_RealCase_ShortScope(t *testing.T) {
 	table.AddBatch([]model.Symbol{
 		{ID: "get_int", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: []model.ParamInfo{{Name: "id", Type: "Integer"}}},
 		{ID: "get_long", Name: "get", QualifiedName: "com.example.UserInfoDao.get", Kind: "Function", FilePath: "UserInfoDao.java", Params: []model.ParamInfo{{Name: "userId", Type: "Long"}}},
-		{ID: "getBId", Name: "getUserId", QualifiedName: "com.example.Reqs.getUserId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"Long"}, IsSynthetic: true},
+		{ID: "getBId", Name: "getUserId", QualifiedName: "com.example.Reqs.getUserId", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []model.ReturnType{{Name: "Long"}}, IsSynthetic: true},
 		{ID: "c_dao", Name: "UserInfoDao", QualifiedName: "com.example.UserInfoDao", Kind: "Class", FilePath: "UserInfoDao.java"},
 		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "Class", FilePath: "Reqs.java"},
 		{ID: "caller1", Name: "getLastCycleSummary", QualifiedName: "com.example.Controller.getLastCycleSummary", Kind: "Function", FilePath: "Controller.java"},
@@ -1731,17 +1741,17 @@ func TestResolveCalls_TypeMulti_CrossModuleSameClass(t *testing.T) {
 	table.AddBatch([]model.Symbol{
 		// biz-core UserInfo
 		{ID: "biz_getUserId", Name: "getUserId", QualifiedName: "com.example.biz.core.domain.UserInfo.getUserId", Kind: "Function",
-			FilePath: "app-core/src/main/java/com/example/app/core/domain/UserInfo.java", ReturnTypes: []string{"Long"}},
+			FilePath: "app-core/src/main/java/com/example/app/core/domain/UserInfo.java", ReturnTypes: []model.ReturnType{{Name: "Long"}}},
 		{ID: "biz_userinfo", Name: "UserInfo", QualifiedName: "com.example.biz.core.domain.UserInfo", Kind: "Class",
 			FilePath: "app-core/src/main/java/com/example/app/core/domain/UserInfo.java"},
 		// admin UserInfo
 		{ID: "admin_getUserId", Name: "getUserId", QualifiedName: "com.example.admin.entity.UserInfo.getUserId", Kind: "Function",
-			FilePath: "admin/src/main/java/com/example/app/admin/entity/UserInfo.java", ReturnTypes: []string{"Long"}},
+			FilePath: "admin/src/main/java/com/example/app/admin/entity/UserInfo.java", ReturnTypes: []model.ReturnType{{Name: "Long"}}},
 		{ID: "admin_userinfo", Name: "UserInfo", QualifiedName: "com.example.admin.entity.UserInfo", Kind: "Class",
 			FilePath: "admin/src/main/java/com/example/app/admin/entity/UserInfo.java"},
 		// analysis UserInfo
 		{ID: "analysis_getUserId", Name: "getUserId", QualifiedName: "com.example.analysis.domain.UserInfo.getUserId", Kind: "Function",
-			FilePath: "app-analysis-core/src/main/java/com/example/app/analysis/domain/UserInfo.java", ReturnTypes: []string{"Long"}},
+			FilePath: "app-analysis-core/src/main/java/com/example/app/analysis/domain/UserInfo.java", ReturnTypes: []model.ReturnType{{Name: "Long"}}},
 		// Caller in biz-core service
 		{ID: "caller1", Name: "process", QualifiedName: "com.example.biz.core.service.PaymentService.process", Kind: "Function",
 			FilePath: "app-core/src/main/java/com/example/app/core/service/PaymentService.java"},
@@ -1934,9 +1944,9 @@ func TestResolveCalls_EnrichArgTypes_JDKChainedExpr(t *testing.T) {
 	// Uses testJavaJDKHelper which delegates LookupMethodReturn to the real JDK table.
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "get_str", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "code", Type: "String"}, {Name: "codeType", Type: "Integer"}}, ReturnTypes: []string{"InvitationCode"}},
-		{ID: "get_long", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "userId", Type: "Long"}, {Name: "codeType", Type: "Integer"}}, ReturnTypes: []string{"InvitationCode"}},
-		{ID: "reqs_getCode", Name: "getInvitationCode", QualifiedName: "com.example.Reqs.getInvitationCode", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"String"}},
+		{ID: "get_str", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "code", Type: "String"}, {Name: "codeType", Type: "Integer"}}, ReturnTypes: []model.ReturnType{{Name: "InvitationCode"}}},
+		{ID: "get_long", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "userId", Type: "Long"}, {Name: "codeType", Type: "Integer"}}, ReturnTypes: []model.ReturnType{{Name: "InvitationCode"}}},
+		{ID: "reqs_getCode", Name: "getInvitationCode", QualifiedName: "com.example.Reqs.getInvitationCode", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []model.ReturnType{{Name: "String"}}},
 		{ID: "c_dao", Name: "Dao", QualifiedName: "com.example.Dao", Kind: "Class", FilePath: "Dao.java"},
 		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "Class", FilePath: "Reqs.java"},
 		{ID: "caller", Name: "changeBasicInfo", QualifiedName: "com.example.Controller.changeBasicInfo", Kind: "Function", FilePath: "Controller.java"},
@@ -1988,10 +1998,10 @@ func TestResolveCalls_EnrichArgTypes_JDKChainedExpr_PartialArgType(t *testing.T)
 	// (enum method not indexed), should still disambiguate if String vs Long is enough.
 	table := NewSymbolTable()
 	table.AddBatch([]model.Symbol{
-		{ID: "get_str_int", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "code", Type: "String"}, {Name: "codeType", Type: "Integer"}}, ReturnTypes: []string{"InvitationCode"}},
-		{ID: "get_long_int", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "userId", Type: "Long"}, {Name: "codeType", Type: "Integer"}}, ReturnTypes: []string{"InvitationCode"}},
-		{ID: "get_str_only", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "code", Type: "String"}}, ReturnTypes: []string{"InvitationCode"}},
-		{ID: "reqs_getCode", Name: "getInvitationCode", QualifiedName: "com.example.Reqs.getInvitationCode", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []string{"String"}},
+		{ID: "get_str_int", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "code", Type: "String"}, {Name: "codeType", Type: "Integer"}}, ReturnTypes: []model.ReturnType{{Name: "InvitationCode"}}},
+		{ID: "get_long_int", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "userId", Type: "Long"}, {Name: "codeType", Type: "Integer"}}, ReturnTypes: []model.ReturnType{{Name: "InvitationCode"}}},
+		{ID: "get_str_only", Name: "getInvitationCode", QualifiedName: "com.example.Dao.getInvitationCode", Kind: "Function", FilePath: "Dao.java", Params: []model.ParamInfo{{Name: "code", Type: "String"}}, ReturnTypes: []model.ReturnType{{Name: "InvitationCode"}}},
+		{ID: "reqs_getCode", Name: "getInvitationCode", QualifiedName: "com.example.Reqs.getInvitationCode", Kind: "Function", FilePath: "Reqs.java", ReturnTypes: []model.ReturnType{{Name: "String"}}},
 		{ID: "c_dao", Name: "Dao", QualifiedName: "com.example.Dao", Kind: "Class", FilePath: "Dao.java"},
 		{ID: "c_reqs", Name: "Reqs", QualifiedName: "com.example.Reqs", Kind: "Class", FilePath: "Reqs.java"},
 		{ID: "caller", Name: "changeBasicInfo", QualifiedName: "com.example.Controller.changeBasicInfo", Kind: "Function", FilePath: "Controller.java"},
@@ -2501,7 +2511,7 @@ func TestResolveConstRefs_SwitchMethodCall(t *testing.T) {
 		Name:          "getStatus",
 		QualifiedName: "com.example.Order.getStatus",
 		Kind:          "Function",
-		ReturnTypes:   []string{"com.example.OrderStatus"},
+		ReturnTypes: []model.ReturnType{{Name: "com.example.OrderStatus"}},
 	})
 	table.Add(model.Symbol{
 		ID:            "func1",
@@ -3503,16 +3513,20 @@ func TestInferLambdaParamTypes_ListGeneric(t *testing.T) {
 			IsLambda: true, Params: []model.ParamInfo{{Name: "order", Type: ""}}},
 		{ID: "getName1", Name: "getName", QualifiedName: "com.example.Order.getName", Kind: "Function", FilePath: "Order.java"},
 	})
-	resolver := newTestResolver(table)
+
+	helper := &testListJDKHelper{testJavaHelper: testJavaHelper{symbolTable: table}}
+	resolver := NewResolver(table, map[string]LanguageHelper{"java": helper})
 
 	calls := []model.RawCall{
 		// Pre-resolved lambda call with owner info
 		{CalledName: "com.example.Svc.processOrders.lambda$1", CallerName: "com.example.Svc.processOrders",
-			FilePath: "Svc.java", Line: 5, IsPreResolved: true,
+			CallerScope: "com.example.Svc.processOrders",
+			FilePath: "Svc.java", Language: "java", Line: 5, IsPreResolved: true,
 			LambdaOwnerMethod: "map", LambdaOwnerReceiver: "orders.stream()"},
 		// Lambda body call: order.getName()
 		{CalledName: "getName", CallerName: "com.example.Svc.processOrders.lambda$1",
-			FilePath: "Svc.java", Line: 5, ReceiverExpr: "order"},
+			CallerScope: "com.example.Svc.processOrders.lambda$1",
+			FilePath: "Svc.java", Language: "java", Line: 5, ReceiverExpr: "order"},
 	}
 	envs := map[string]*model.TypeEnv{
 		"Svc.java": {Bindings: map[string]*model.TypeInfo{

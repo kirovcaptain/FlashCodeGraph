@@ -115,14 +115,17 @@ func (pythonHelper *Helper) InferStringConcat(expr string) bool {
 }
 
 // LookupMethodReturn — no built-in method return table for Python.
-func (pythonHelper *Helper) LookupMethodReturn(_, _ string) (string, bool) {
-	return "", false
+func (pythonHelper *Helper) LookupMethodReturn(_, _ string) (model.ReturnType, bool) {
+	return model.ReturnType{}, false
 }
 
 // BuildExternalQualifiedName constructs a qualified name for an external Python method.
 func (pythonHelper *Helper) BuildExternalQualifiedName(typeName, methodName string) string {
 	return typeName + "." + methodName
 }
+
+// LookupClassTypeParams — no built-in class type params for Python.
+func (pythonHelper *Helper) LookupClassTypeParams(_ string) []string { return nil }
 
 // IsConstructor returns true if the method is a Python __init__.
 func (pythonHelper *Helper) IsConstructor(method model.Symbol, _ string) bool {

@@ -11,7 +11,7 @@ func TestLookupReturnType_ResolvesToFQN(t *testing.T) {
 	findByName := func(name string) []model.Symbol {
 		switch name {
 		case "createService":
-			return []model.Symbol{{Name: "createService", Kind: constants.KindFunction, ReturnTypes: []string{"MyService"}}}
+			return []model.Symbol{{Name: "createService", Kind: constants.KindFunction, ReturnTypes: []model.ReturnType{{Name: "MyService"}}}}
 		case "MyService":
 			return []model.Symbol{{Name: "MyService", Kind: constants.KindInterface, QualifiedName: "pkg.services.MyService"}}
 		}
@@ -27,7 +27,7 @@ func TestLookupReturnType_ResolvesToFQN(t *testing.T) {
 func TestLookupReturnType_NoMatchFallsBackToShortName(t *testing.T) {
 	findByName := func(name string) []model.Symbol {
 		if name == "getData" {
-			return []model.Symbol{{Name: "getData", Kind: constants.KindFunction, ReturnTypes: []string{"string"}}}
+			return []model.Symbol{{Name: "getData", Kind: constants.KindFunction, ReturnTypes: []model.ReturnType{{Name: "string"}}}}
 		}
 		return nil
 	}
@@ -55,7 +55,7 @@ func TestResolveFixpoint_CallResultFQN(t *testing.T) {
 	findByName := func(name string) []model.Symbol {
 		switch name {
 		case "createService":
-			return []model.Symbol{{Name: "createService", Kind: constants.KindFunction, ReturnTypes: []string{"MyService"}}}
+			return []model.Symbol{{Name: "createService", Kind: constants.KindFunction, ReturnTypes: []model.ReturnType{{Name: "MyService"}}}}
 		case "MyService":
 			return []model.Symbol{{Name: "MyService", Kind: constants.KindInterface, QualifiedName: "pkg.services.MyService"}}
 		}

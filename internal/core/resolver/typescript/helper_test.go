@@ -245,8 +245,8 @@ func TestTSHelper_LookupMethodReturn_WithExternalMethods(t *testing.T) {
 			t.Errorf("LookupMethodReturn(%s, %s): found=%v, want %v", tc.typeName, tc.methodName, found, tc.found)
 			continue
 		}
-		if result != tc.expected {
-			t.Errorf("LookupMethodReturn(%s, %s): got %q, want %q", tc.typeName, tc.methodName, result, tc.expected)
+		if result.Name != tc.expected {
+			t.Errorf("LookupMethodReturn(%s, %s): got %q, want %q", tc.typeName, tc.methodName, result.Name, tc.expected)
 		}
 	}
 	t.Log("✅ TSHelper.LookupMethodReturn works with ExternalMethodManager")
@@ -259,8 +259,8 @@ func TestTSHelper_LookupMethodReturn_NilManager(t *testing.T) {
 	if found {
 		t.Error("should not find anything without ExternalMethodManager")
 	}
-	if result != "" {
-		t.Errorf("expected empty, got %q", result)
+	if result.Name != "" {
+		t.Errorf("expected empty, got %q", result.Name)
 	}
 	t.Log("✅ TSHelper.LookupMethodReturn safe with nil manager")
 }

@@ -291,7 +291,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"start_line":     symbol.StartLine,
 					"end_line":       symbol.EndLine,
 					"params":         marshalParams(symbol.Params),
-					"return_types":   symbol.ReturnTypes,
+					"return_types":   model.FormatReturnTypes(symbol.ReturnTypes),
 					"type_params":    symbol.TypeParams,
 					"annotations":    symbol.Annotations,
 					"is_exported":    symbol.IsExported,

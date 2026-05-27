@@ -231,7 +231,7 @@ func (javaHelper *Helper) InferStringConcat(expr string) bool {
 	return strings.Contains(expr, "+") && strings.Contains(expr, "\"")
 }
 
-func (javaHelper *Helper) LookupMethodReturn(typeName, methodName string) (string, bool) {
+func (javaHelper *Helper) LookupMethodReturn(typeName, methodName string) (model.ReturnType, bool) {
 	return javaHelper.externalMethods.Lookup(typeName, methodName)
 }
 
@@ -240,6 +240,10 @@ func (javaHelper *Helper) BuildExternalQualifiedName(typeName, methodName string
 		return packagePath + "." + typeName + "." + methodName
 	}
 	return typeName + "." + methodName
+}
+
+func (javaHelper *Helper) LookupClassTypeParams(typeName string) []string {
+	return jdkClassTypeParams[typeName]
 }
 
 func (javaHelper *Helper) extractPackage(filePath string) string {
