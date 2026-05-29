@@ -160,7 +160,7 @@ func ExtractStrawberryRoutes(node *tree_sitter.Node, content []byte, funcName, c
 					Method:      funcName,
 					PathPattern: opType,
 					Framework:   "graphql",
-					HandlerName: className + "." + funcName,
+					Handlers: []string{className + "." + funcName},
 					FilePath:    filePath,
 					Line:        int(node.StartPosition().Row) + 1,
 				})

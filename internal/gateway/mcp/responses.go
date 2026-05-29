@@ -120,10 +120,11 @@ type dependenciesResponse struct {
 // --- Routes ---
 
 type routeEntry struct {
-	Method    string `json:"method"`
-	Path      string `json:"path"`
-	Handler   string `json:"handler"`
-	Framework string `json:"framework"`
+	Method      string   `json:"method"`
+	Path        string   `json:"path"`
+	Handler     string   `json:"handler"`
+	Middlewares []string `json:"middlewares,omitempty"`
+	Framework   string   `json:"framework"`
 }
 
 type routeChainResponse struct {
@@ -132,6 +133,7 @@ type routeChainResponse struct {
 	Hint           string            `json:"hint,omitempty"`
 	Route          string            `json:"route"`
 	Method         string            `json:"method"`
+	Middlewares    []middlewareEntry  `json:"middlewares,omitempty"`
 	Nodes          []model.Node      `json:"nodes"`
 	Edges          []model.ChainEdge `json:"edges"`
 	Queries        []model.ChainNode `json:"queries,omitempty"`
@@ -144,10 +146,17 @@ type compactRouteChainResponse struct {
 	Hint           string                   `json:"hint,omitempty"`
 	Route          string                   `json:"route"`
 	Method         string                   `json:"method"`
+	Middlewares    []middlewareEntry         `json:"middlewares,omitempty"`
 	Nodes          []model.Node             `json:"nodes"`
 	Edges          []model.CompactChainEdge `json:"edges"`
 	Queries        []model.ChainNode        `json:"queries,omitempty"`
 	TruncatedNodes []string                 `json:"truncated_nodes,omitempty"`
+}
+
+type middlewareEntry struct {
+	Name     string `json:"name"`
+	FilePath string `json:"file_path,omitempty"`
+	Line     int    `json:"line,omitempty"`
 }
 
 // --- Analyze repository ---

@@ -37,7 +37,7 @@ func ExtractDecoratorRoutes(node *tree_sitter.Node, content []byte, funcName, cl
 				result.Routes = append(result.Routes, model.RawRoute{
 					Method:      httpMethod,
 					PathPattern: pathPattern,
-					HandlerName: handlerName,
+					Handlers:    []string{handlerName},
 					Framework:   "nestjs",
 					FilePath:    filePath,
 					Line:        int(prevSibling.StartPosition().Row) + 1,
@@ -56,7 +56,6 @@ var routeMethodNames = map[string]string{
 	"delete": "DELETE",
 	"patch":  "PATCH",
 	"all":    "GET",
-	"use":    "MIDDLEWARE",
 }
 
 func ExtractChainedRoutes(node *tree_sitter.Node, content []byte, callerName, filePath string, result *model.ParseResult) {
@@ -121,7 +120,7 @@ func ExtractChainedRoutes(node *tree_sitter.Node, content []byte, callerName, fi
 			result.Routes = append(result.Routes, model.RawRoute{
 				Method:      method,
 				PathPattern: pathPattern,
-				HandlerName: callerName,
+				Handlers:    []string{callerName},
 				Framework:   "express",
 				FilePath:    filePath,
 				Line:        int(node.StartPosition().Row) + 1,
@@ -130,45 +129,46 @@ func ExtractChainedRoutes(node *tree_sitter.Node, content []byte, callerName, fi
 	}
 }
 
-func ExtractRoutes(node *tree_sitter.Node, content []byte, callerName, filePath string, result *model.ParseResult) {
-	if node.Kind() != "call_expression" {
-		return
-	}
+// TSRouteDetection holds the result of detecting a TS route registration call.
+type TSRouteDetection struct {
+	Method      string
+	PathPattern string
+	ArgsNode    *tree_sitter.Node
+}
 
+// DetectTSRoute checks if a call_expression is an Express route registration.
+// Returns route info without writing to result, or nil if not a route call.
+func DetectTSRoute(node *tree_sitter.Node, content []byte) *TSRouteDetection {
+	if node.Kind() != "call_expression" {
+		return nil
+	}
 	funcNode := node.ChildByFieldName("function")
 	if funcNode == nil || funcNode.Kind() != "member_expression" {
-		return
+		return nil
 	}
-
 	objNode := funcNode.ChildByFieldName("object")
 	propNode := funcNode.ChildByFieldName("property")
 	if objNode == nil || propNode == nil {
-		return
+		return nil
 	}
-
 	receiverName := objNode.Utf8Text(content)
 	methodName := propNode.Utf8Text(content)
 
-	// Match common framework receiver names
 	validReceivers := map[string]bool{
 		"app": true, "router": true, "server": true,
 		"route": true, "api": true, "express": true,
 	}
 	if !validReceivers[receiverName] {
-		return
+		return nil
 	}
-
 	httpMethod, isRoute := routeMethodNames[methodName]
 	if !isRoute {
-		return
+		return nil
 	}
-
-	// Extract first string argument as path
 	argsNode := node.ChildByFieldName("arguments")
 	if argsNode == nil {
-		return
+		return nil
 	}
-
 	pathPattern := ""
 	for i := uint(0); i < argsNode.ChildCount(); i++ {
 		arg := argsNode.Child(i)
@@ -177,17 +177,90 @@ func ExtractRoutes(node *tree_sitter.Node, content []byte, callerName, filePath 
 			break
 		}
 	}
-
-	if pathPattern != "" {
-		result.Routes = append(result.Routes, model.RawRoute{
-			Method:      httpMethod,
-			PathPattern: pathPattern,
-			HandlerName: callerName,
-			Framework:   "express",
-			FilePath:    filePath,
-			Line:        int(node.StartPosition().Row) + 1,
-		})
+	if pathPattern == "" {
+		return nil
 	}
+	return &TSRouteDetection{
+		Method:      httpMethod,
+		PathPattern: pathPattern,
+		ArgsNode:    argsNode,
+	}
+}
+
+// ResolveTSHandlerArgs extracts the ordered handler chain from TS route arguments.
+func ResolveTSHandlerArgs(argsNode *tree_sitter.Node, content []byte, lambdaMap map[uintptr]string) []string {
+	if argsNode == nil {
+		return nil
+	}
+	var handlers []string
+	for i := uint(0); i < argsNode.ChildCount(); i++ {
+		child := argsNode.Child(i)
+		if !child.IsNamed() {
+			continue
+		}
+		if child.Kind() == "string" || child.Kind() == "template_string" {
+			continue
+		}
+		resolved := resolveTSOneArg(child, content, lambdaMap)
+		handlers = append(handlers, resolved...)
+	}
+	return handlers
+}
+
+// resolveTSOneArg recursively resolves a single TS argument node into handler names.
+func resolveTSOneArg(node *tree_sitter.Node, content []byte, lambdaMap map[uintptr]string) []string {
+	switch node.Kind() {
+	case "identifier":
+		return []string{node.Utf8Text(content)}
+	case "member_expression":
+		return []string{node.Utf8Text(content)}
+	case "arrow_function", "function":
+		if lambdaMap != nil {
+			if qualifiedName, ok := lambdaMap[node.Id()]; ok {
+				return []string{qualifiedName}
+			}
+		}
+	case "call_expression":
+		// Middleware wrapper: auth(handler) → ["auth", ...inner...]
+		funcNode := node.ChildByFieldName("function")
+		middlewareName := ""
+		if funcNode != nil {
+			switch funcNode.Kind() {
+			case "identifier":
+				middlewareName = funcNode.Utf8Text(content)
+			case "member_expression":
+				propNode := funcNode.ChildByFieldName("property")
+				if propNode != nil {
+					middlewareName = propNode.Utf8Text(content)
+				}
+			}
+		}
+		argsNode := node.ChildByFieldName("arguments")
+		if argsNode != nil {
+			var lastNamedArg *tree_sitter.Node
+			for i := uint(0); i < argsNode.ChildCount(); i++ {
+				child := argsNode.Child(i)
+				if child.IsNamed() && child.Kind() != "string" && child.Kind() != "template_string" {
+					lastNamedArg = child
+				}
+			}
+			if lastNamedArg != nil {
+				inner := resolveTSOneArg(lastNamedArg, content, lambdaMap)
+				if middlewareName != "" && len(inner) > 0 {
+					return append([]string{middlewareName}, inner...)
+				}
+				return inner
+			}
+		}
+		if middlewareName != "" {
+			return []string{middlewareName}
+		}
+	}
+	return nil
+}
+
+func ExtractRoutes(node *tree_sitter.Node, content []byte, callerName, filePath string, result *model.ParseResult) {
+	// No-op: route extraction is now handled in the main extractCalls loop after lambda creation.
 }
 
 func extractDecoratorArg(decoratorText string) string {

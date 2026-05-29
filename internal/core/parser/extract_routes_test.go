@@ -57,7 +57,7 @@ public class UserController {
 
 	t.Logf("✅ Java Spring routes: %d extracted", len(result.Routes))
 	for _, route := range result.Routes {
-		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.HandlerName)
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[len(route.Handlers)-1])
 	}
 }
 
@@ -98,7 +98,7 @@ def create_user():
 
 	t.Logf("✅ Python Flask routes: %d extracted", len(result.Routes))
 	for _, route := range result.Routes {
-		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.HandlerName)
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[len(route.Handlers)-1])
 	}
 }
 
@@ -132,7 +132,7 @@ func deleteUser(c *gin.Context) {}
 
 	t.Logf("✅ Go Gin routes: %d extracted", len(result.Routes))
 	for _, route := range result.Routes {
-		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.HandlerName)
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[len(route.Handlers)-1])
 	}
 }
 
@@ -167,7 +167,7 @@ function setupRoutes() {
 
 	t.Logf("✅ TS Express routes: %d extracted", len(result.Routes))
 	for _, route := range result.Routes {
-		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.HandlerName)
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[len(route.Handlers)-1])
 	}
 }
 
@@ -218,7 +218,7 @@ public class ApiController {
 	}
 
 	for _, route := range result.Routes {
-		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.HandlerName)
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[len(route.Handlers)-1])
 	}
 
 	// Check POST method was extracted
@@ -324,7 +324,7 @@ def setup_urls():
 		if route.Framework != "django" {
 			t.Fatalf("expected django, got %s", route.Framework)
 		}
-		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.HandlerName)
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[len(route.Handlers)-1])
 	}
 	t.Log("✅ Python Django URL patterns extracted")
 }
@@ -377,7 +377,7 @@ export class UserController {
 
 	t.Logf("Routes found: %d", len(result.Routes))
 	for _, route := range result.Routes {
-		t.Logf("  %s %s → %s (%s)", route.Method, route.PathPattern, route.HandlerName, route.Framework)
+		t.Logf("  %s %s → %s (%s)", route.Method, route.PathPattern, route.Handlers[len(route.Handlers)-1], route.Framework)
 	}
 
 	if len(result.Routes) < 1 {
@@ -441,8 +441,8 @@ func setupRoutes(router *gin.Engine) {
 	routeMap := make(map[string]string)
 	for _, route := range result.Routes {
 		key := route.Method + " " + route.PathPattern
-		routeMap[key] = route.HandlerName
-		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.HandlerName)
+		routeMap[key] = route.Handlers[len(route.Handlers)-1]
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[len(route.Handlers)-1])
 	}
 
 	// v1.GET("/users") → /api/v1/users
@@ -488,7 +488,7 @@ function setup() {
 	// Should extract 5 routes from 2 chains
 	chainRoutes := 0
 	for _, route := range result.Routes {
-		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.HandlerName)
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[len(route.Handlers)-1])
 		if route.PathPattern == "/users" || route.PathPattern == "/users/:id" {
 			chainRoutes++
 		}

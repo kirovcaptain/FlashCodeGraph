@@ -28,7 +28,7 @@ func (p *GraphQLSchemaParser) Parse(content []byte, relPath string) *model.Parse
 			Method:      op.Field,
 			PathPattern: op.Type,
 			Framework:   "graphql",
-			HandlerName: op.Type + "." + op.Field,
+			Handlers: []string{op.Type + "." + op.Field},
 			FilePath:    relPath,
 		})
 	}

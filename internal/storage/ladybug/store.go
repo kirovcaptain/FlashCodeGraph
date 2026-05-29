@@ -91,14 +91,13 @@ func (store *Store) Migrate(_ context.Context) error {
 		`CREATE REL TABLE IF NOT EXISTS DISPATCHES (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, flow_context STRING, flow_line INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS MEMBER_OF_FUNC (FROM Function TO Community, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS MEMBER_OF_CLASS (FROM Class TO Community, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS HANDLES (FROM Function TO Route, MANY_MANY)`,
+		`CREATE REL TABLE IF NOT EXISTS HANDLES (FROM Function TO Route, handler_order INT32 DEFAULT 0, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS INJECTS (FROM Function TO Function, inject_type STRING, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS DEPENDS_ON (FROM Directory TO Directory, call_count INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS REMOTE_CALLS_ROUTE (FROM Function TO Route, protocol STRING, target_url STRING, target_service STRING, confidence DOUBLE, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS REMOTE_CALLS_EXT (FROM Function TO ExternalService, protocol STRING, target_url STRING, target_service STRING, field_name STRING, confidence DOUBLE, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS EXECUTES (FROM Function TO QueryNode, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS FETCHES (FROM Function TO Route, http_method STRING, url_path STRING, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS MIDDLEWARE (FROM Route TO Function, seq INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS STEP (FROM Process TO Function, seq INT32, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_FUNC (FROM Function TO Annotation, MANY_MANY)`,
 		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_CLASS (FROM Class TO Annotation, MANY_MANY)`,
@@ -470,7 +469,6 @@ var allRelTypes = []struct {
 	{"REMOTE_CALLS_ROUTE", constants.KindFunction, constants.KindRoute},
 	{"REMOTE_CALLS_EXT", constants.KindFunction, constants.KindExternalService},
 	{"FETCHES", constants.KindFunction, constants.KindRoute},
-	{"MIDDLEWARE", constants.KindRoute, constants.KindFunction},
 	{"STEP", constants.KindProcess, constants.KindFunction},
 	{"HAS_ANNOTATION_FUNC", constants.KindFunction, constants.KindAnnotation},
 	{"HAS_ANNOTATION_CLASS", constants.KindClass, constants.KindAnnotation},
@@ -674,6 +672,8 @@ func (store *Store) QueryEdges(_ context.Context, nodeID string, nodeKind string
 	returnCols := "a.id, b.id"
 	if kind == model.RelUses {
 		returnCols = "a.id, b.id, r.line, r.ref_kind"
+	} else if kind == model.RelHandles {
+		returnCols = "a.id, b.id, r.handler_order"
 	}
 
 	var query string
@@ -709,6 +709,11 @@ func (store *Store) QueryEdges(_ context.Context, nodeID string, nodeKind string
 			}
 			if refKind, _ := row.GetValue(3); refKind != nil {
 				edge.Properties["ref_kind"] = fmt.Sprint(refKind)
+			}
+		}
+		if kind == model.RelHandles {
+			if order, _ := row.GetValue(2); order != nil {
+				edge.Properties["handler_order"] = order
 			}
 		}
 		edges = append(edges, edge)
@@ -1563,8 +1568,6 @@ func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLa
 		return "DEPENDS_ON", constants.KindDirectory, constants.KindDirectory
 	case model.RelFetches:
 		return "FETCHES", constants.KindFunction, constants.KindRoute
-	case model.RelMiddleware:
-		return "MIDDLEWARE", constants.KindRoute, constants.KindFunction
 	case model.RelStep:
 		return "STEP", constants.KindProcess, constants.KindFunction
 	case model.RelInjects:

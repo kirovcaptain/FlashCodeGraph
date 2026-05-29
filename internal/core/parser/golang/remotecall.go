@@ -235,11 +235,32 @@ func ExtractGoGRPCRegister(body *tree_sitter.Node, content []byte, callerName, f
 			return true
 		}
 
+		// Extract second argument as the handler implementation
+		argsNode := node.ChildByFieldName("arguments")
+		handlerName := callerName
+		if argsNode != nil {
+			argIndex := 0
+			for i := uint(0); i < argsNode.ChildCount(); i++ {
+				child := argsNode.Child(i)
+				if !child.IsNamed() {
+					continue
+				}
+				argIndex++
+				if argIndex == 2 {
+					resolved := resolveOneArg(child, content, nil)
+					if len(resolved) > 0 {
+						handlerName = resolved[len(resolved)-1]
+					}
+					break
+				}
+			}
+		}
+
 		result.Routes = append(result.Routes, model.RawRoute{
 			Method:      "*",
 			PathPattern: svcName,
 			Framework:   "grpc",
-			HandlerName: callerName,
+			Handlers:    []string{handlerName},
 			FilePath:    filePath,
 			Line:        int(node.StartPosition().Row) + 1,
 		})

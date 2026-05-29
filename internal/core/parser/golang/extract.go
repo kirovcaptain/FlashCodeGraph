@@ -659,7 +659,8 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 	ExtractGoRemoteCalls(body, content, fullCaller, filePath, importsMap, result)
 	ExtractGoGRPCRegister(body, content, fullCaller, filePath, result)
 
-	lambdaCounter := 0 // method-body-level counter shared across all call sites
+	lambdaCounter := 0                        // method-body-level counter shared across all call sites
+	lambdaMap := make(map[uintptr]string)     // node.Id() → lambdaQualifiedName for route handler resolution
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
 		// Skip func_literal nodes that are already handled elsewhere
 		if node.Kind() == "func_literal" {
@@ -689,7 +690,9 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 			extractLocalFuncLiteral(node, content, filePath, fullCaller, result)
 		}
 		if node.Kind() == "call_expression" {
-			ExtractRoutes(node, content, callerName, filePath, groupPrefixes, result)
+			// 1. Detect if this is a route registration (before arg parsing, just detection)
+			routeDetection := DetectRoute(node, content, groupPrefixes)
+
 			calledName := ""
 			receiverExpr := ""
 
@@ -710,6 +713,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 				}
 			}
 
+			// 2. Parse arguments (creates lambdas, builds lambdaMap)
 			argCount := 0
 			var argExprs []string
 			argsNode := node.ChildByFieldName("arguments")
@@ -720,6 +724,11 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 						continue
 					}
 					if child.Kind() == "func_literal" {
+						if _, exists := lambdaMap[child.Id()]; exists {
+							argCount++
+							argExprs = append(argExprs, "")
+							continue
+						}
 						argCount++
 						argExprs = append(argExprs, "")
 						lambdaCounter++
@@ -761,6 +770,8 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 							LambdaOwnerMethod:   calledName,
 							LambdaOwnerReceiver: receiverExpr,
 						})
+						// Record in lambdaMap for route handler resolution
+						lambdaMap[child.Id()] = lambdaQualifiedName
 						lambdaBody := child.ChildByFieldName("body")
 						if lambdaBody != nil {
 							extractCalls(lambdaBody, content, filePath, lambdaQualifiedName, "", "", result)
@@ -768,7 +779,73 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 					} else {
 						argCount++
 						argExprs = append(argExprs, child.Utf8Text(content))
+						// Scan nested func_literals inside call_expression args (e.g. auth(func(c){...}))
+						// so they are registered in lambdaMap before route extraction
+						astutil.WalkNamedChildren(child, func(nested *tree_sitter.Node) bool {
+							if nested.Kind() == "func_literal" {
+								lambdaCounter++
+								nestedLambdaName := fmt.Sprintf("lambda$%d", lambdaCounter)
+								nestedLambdaQualifiedName := fullCaller + "." + nestedLambdaName
+								nestedLambdaID := astutil.GenerateSymbolID(filePath, nestedLambdaQualifiedName, int(nested.StartPosition().Row)+1)
+								nestedLambdaParams := extractParams(nested, content)
+								result.Symbols = append(result.Symbols, model.Symbol{
+									ID:            nestedLambdaID,
+									Name:          nestedLambdaName,
+									QualifiedName: nestedLambdaQualifiedName,
+									Kind:          constants.KindFunction,
+									FilePath:      filePath,
+									StartLine:     int(nested.StartPosition().Row) + 1,
+									EndLine:       int(nested.EndPosition().Row) + 1,
+									IsLambda:      true,
+									LambdaContext: fullCaller,
+									Params:        nestedLambdaParams,
+								})
+								for _, param := range nestedLambdaParams {
+									if param.Type != "" && param.Name != "" {
+										result.TypeHints = append(result.TypeHints, model.TypeBinding{
+											VarName:  param.Name,
+											TypeName: param.Type,
+											Tier:     0,
+											Scope:    nestedLambdaQualifiedName,
+											FilePath: filePath,
+										})
+									}
+								}
+								result.Calls = append(result.Calls, model.RawCall{
+									CalledName:          nestedLambdaQualifiedName,
+									CallerName:          fullCaller,
+									CallerKind:          constants.KindFunction,
+									FilePath:            filePath,
+									Line:                int(nested.StartPosition().Row) + 1,
+									IsPreResolved:       true,
+									LambdaOwnerMethod:   calledName,
+									LambdaOwnerReceiver: receiverExpr,
+								})
+								lambdaMap[nested.Id()] = nestedLambdaQualifiedName
+								nestedBody := nested.ChildByFieldName("body")
+								if nestedBody != nil {
+									extractCalls(nestedBody, content, filePath, nestedLambdaQualifiedName, "", "", result)
+								}
+								return false // don't recurse into this func_literal's children
+							}
+							return true
+						})
 					}
+				}
+			}
+
+			// 3. Route extraction (AFTER lambda creation, so lambdaMap is populated)
+			if routeDetection != nil {
+				handlers := ResolveHandlerArgs(routeDetection.ArgsNode, content, lambdaMap)
+				if len(handlers) > 0 {
+					result.Routes = append(result.Routes, model.RawRoute{
+						Method:      routeDetection.Method,
+						PathPattern: routeDetection.PathPattern,
+						Handlers:    handlers,
+						Framework:   "gin",
+						FilePath:    filePath,
+						Line:        int(node.StartPosition().Row) + 1,
+					})
 				}
 			}
 

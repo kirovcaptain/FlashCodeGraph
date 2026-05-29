@@ -55,7 +55,7 @@ func ExtractRoutes(annotations []model.StructuredAnnotation, classAnnotations []
 		result.Routes = append(result.Routes, model.RawRoute{
 			Method:      httpMethod,
 			PathPattern: pathPattern,
-			HandlerName: className + "." + methodName,
+			Handlers: []string{className + "." + methodName},
 			Framework:   "spring",
 			FilePath:    filePath,
 			Line:        startLine,

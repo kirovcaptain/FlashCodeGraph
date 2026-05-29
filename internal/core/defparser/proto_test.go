@@ -156,8 +156,8 @@ service PaymentService {
 	if r.Framework != "grpc" {
 		t.Errorf("expected Framework=grpc, got %s", r.Framework)
 	}
-	if r.HandlerName != "PaymentService.Pay" {
-		t.Errorf("expected HandlerName=PaymentService.Pay, got %s", r.HandlerName)
+	if r.Handlers[len(r.Handlers)-1] != "PaymentService.Pay" {
+		t.Errorf("expected HandlerName=PaymentService.Pay, got %s", r.Handlers[len(r.Handlers)-1])
 	}
 }
 

@@ -217,7 +217,7 @@ public interface OrderClient {
 
 	routeMap := make(map[string]string)
 	for _, r := range result.Routes {
-		routeMap[r.HandlerName] = r.Method + " " + r.PathPattern
+		routeMap[r.Handlers[len(r.Handlers)-1]] = r.Method + " " + r.PathPattern
 	}
 
 	if routeMap["OrderClient.getOrder"] != "GET /api/orders/{id}" {

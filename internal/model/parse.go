@@ -47,12 +47,12 @@ type RawHeritage struct {
 
 // RawRoute represents a route declaration extracted from AST.
 type RawRoute struct {
-	Method      string `json:"method"`       // GET/POST/PUT/DELETE
-	PathPattern string `json:"path_pattern"`
-	HandlerName string `json:"handler_name"`
-	Framework   string `json:"framework"`
-	FilePath    string `json:"file_path"`
-	Line        int    `json:"line"`
+	Method      string   `json:"method"`       // GET/POST/PUT/DELETE
+	PathPattern string   `json:"path_pattern"`
+	Handlers    []string `json:"handlers"`     // ordered handler chain; last element is the business handler
+	Framework   string   `json:"framework"`
+	FilePath    string   `json:"file_path"`
+	Line        int      `json:"line"`
 }
 
 // RawRemoteCall represents an HTTP/RPC client call extracted from AST.
@@ -85,15 +85,6 @@ type RawQuery struct {
 	Line       int                  `json:"line"`
 	BaseSQL    string               `json:"base_sql,omitempty"`
 	Conditions []ConditionalFragment `json:"conditions,omitempty"`
-}
-
-// RawMiddleware represents a middleware declaration extracted from AST.
-type RawMiddleware struct {
-	Name     string `json:"name"`
-	Order    int    `json:"order"`
-	RoutePath string `json:"route_path,omitempty"`
-	FilePath string `json:"file_path"`
-	Line     int    `json:"line"`
 }
 
 // RawConstRef represents a reference to a static constant (enum/interface/class) found in a method body.
@@ -152,7 +143,6 @@ type ParseResult struct {
 	Routes      []RawRoute      `json:"routes"`
 	RemoteCalls []RawRemoteCall `json:"remote_calls"`
 	Queries     []RawQuery      `json:"queries"`
-	Middlewares []RawMiddleware  `json:"middlewares"`
 	PendingRemoteCalls  []PendingRemoteCall  `json:"pending_remote_calls,omitempty"`
 	Fields              []FieldDeclaration   `json:"fields,omitempty"`
 	TypeHints           []TypeBinding       `json:"type_hints"`

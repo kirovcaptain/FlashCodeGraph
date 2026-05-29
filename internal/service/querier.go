@@ -1348,13 +1348,28 @@ func (querier *Querier) QueryRouteChain(ctx context.Context, routePath string, m
 		Method: propString(routeNode.Properties, "method"),
 	}
 
-	// HANDLES edges: Route ← Function
+	// HANDLES edges: Route <- Function (may be multiple with handler_order)
 	handles, err := querier.graphStore.QueryEdges(ctx, routeNode.ID, constants.KindRoute, model.RelHandles, model.Incoming)
 	if err != nil || len(handles) == 0 {
 		return result, nil
 	}
 
-	handlerID := handles[0].SourceID
+	// Sort by handler_order ascending; last one is the business handler
+	sort.Slice(handles, func(i, j int) bool {
+		return propInt(handles[i].Properties, "handler_order") < propInt(handles[j].Properties, "handler_order")
+	})
+
+	// Business handler = last HANDLES edge
+	handlerID := handles[len(handles)-1].SourceID
+
+	// Middleware nodes = all HANDLES edges except the last
+	for _, handle := range handles[:len(handles)-1] {
+		middlewareNode, _ := querier.graphStore.QueryNodeByID(ctx, handle.SourceID)
+		if middlewareNode != nil {
+			result.Middlewares = append(result.Middlewares, *middlewareNode)
+		}
+	}
+
 	subgraph, _ := querier.graphStore.TraverseCallChain(ctx, handlerID, maxDepth, model.Outgoing, 0)
 
 	// Ensure handler node is in subgraph (TraverseCallChain doesn't include the start node)

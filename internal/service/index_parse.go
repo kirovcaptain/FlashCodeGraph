@@ -197,7 +197,6 @@ func clearParseResultsPhase1(parseResults []model.ParseResult) {
 		parseResults[i].Fields = nil
 		parseResults[i].Routes = nil
 		parseResults[i].Queries = nil
-		parseResults[i].Middlewares = nil
 	}
 	runtime.GC()
 }

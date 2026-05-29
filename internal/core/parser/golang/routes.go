@@ -9,18 +9,25 @@ import (
 )
 
 var routeMethodNames = map[string]string{
-	"GET":     "GET",
-	"POST":    "POST",
-	"PUT":     "PUT",
-	"DELETE":  "DELETE",
-	"PATCH":   "PATCH",
-	"Handle":  "GET",
-	"Any":     "GET",
+	"GET":    "GET",
+	"POST":   "POST",
+	"PUT":    "PUT",
+	"DELETE": "DELETE",
+	"PATCH":  "PATCH",
+	"Handle": "GET",
+	"Any":    "GET",
 }
 
 type GroupPrefixes map[string]string
 
-// collectGoGroupPrefixes scans a function body for router.Group() assignments.
+// RouteDetection holds the result of detecting a route registration call.
+type RouteDetection struct {
+	Method      string
+	PathPattern string
+	ArgsNode    *tree_sitter.Node
+}
+
+// CollectGroupPrefixes scans a function body for router.Group() assignments.
 func CollectGroupPrefixes(body *tree_sitter.Node, content []byte) GroupPrefixes {
 	prefixes := make(GroupPrefixes)
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
@@ -92,23 +99,24 @@ func CollectGroupPrefixes(body *tree_sitter.Node, content []byte) GroupPrefixes 
 	return prefixes
 }
 
-
-func ExtractRoutes(node *tree_sitter.Node, content []byte, callerName, filePath string, groupPrefixes GroupPrefixes, result *model.ParseResult) {
+// DetectRoute checks if a call_expression is a route registration (e.g. r.GET("/path", ...)).
+// Returns route info without writing to result, or nil if not a route call.
+func DetectRoute(node *tree_sitter.Node, content []byte, groupPrefixes GroupPrefixes) *RouteDetection {
 	if node.Kind() != "call_expression" {
-		return
+		return nil
 	}
 	funcNode := node.ChildByFieldName("function")
 	if funcNode == nil || funcNode.Kind() != "selector_expression" {
-		return
+		return nil
 	}
 	field := funcNode.ChildByFieldName("field")
 	if field == nil {
-		return
+		return nil
 	}
 	methodName := field.Utf8Text(content)
 	httpMethod, isRoute := routeMethodNames[methodName]
 	if !isRoute {
-		return
+		return nil
 	}
 	receiverNode := funcNode.ChildByFieldName("operand")
 	receiverName := ""
@@ -117,7 +125,7 @@ func ExtractRoutes(node *tree_sitter.Node, content []byte, callerName, filePath 
 	}
 	argsNode := node.ChildByFieldName("arguments")
 	if argsNode == nil {
-		return
+		return nil
 	}
 	pathPattern := ""
 	for i := uint(0); i < argsNode.ChildCount(); i++ {
@@ -127,17 +135,109 @@ func ExtractRoutes(node *tree_sitter.Node, content []byte, callerName, filePath 
 			break
 		}
 	}
-	if pathPattern != "" {
-		if prefix, exists := groupPrefixes[receiverName]; exists {
-			pathPattern = prefix + pathPattern
-		}
-		result.Routes = append(result.Routes, model.RawRoute{
-			Method:      httpMethod,
-			PathPattern: pathPattern,
-			HandlerName: callerName,
-			Framework:   "gin",
-			FilePath:    filePath,
-			Line:        int(node.StartPosition().Row) + 1,
-		})
+	if pathPattern == "" {
+		return nil
 	}
+	if prefix, exists := groupPrefixes[receiverName]; exists {
+		pathPattern = prefix + pathPattern
+	}
+	return &RouteDetection{
+		Method:      httpMethod,
+		PathPattern: pathPattern,
+		ArgsNode:    argsNode,
+	}
+}
+
+// ResolveHandlerArgs extracts the ordered handler chain from route arguments.
+// Skips string literal arguments (path), processes all other named arguments.
+func ResolveHandlerArgs(argsNode *tree_sitter.Node, content []byte, lambdaMap map[uintptr]string) []string {
+	if argsNode == nil {
+		return nil
+	}
+	var handlers []string
+	for i := uint(0); i < argsNode.ChildCount(); i++ {
+		child := argsNode.Child(i)
+		if !child.IsNamed() {
+			continue
+		}
+		if child.Kind() == "interpreted_string_literal" {
+			continue
+		}
+		resolved := resolveOneArg(child, content, lambdaMap)
+		handlers = append(handlers, resolved...)
+	}
+	return handlers
+}
+
+// resolveOneArg recursively resolves a single argument node into handler names.
+// For middleware wrappers like auth(log(handler)), returns ["auth", "log", "handler"].
+func resolveOneArg(node *tree_sitter.Node, content []byte, lambdaMap map[uintptr]string) []string {
+	switch node.Kind() {
+	case "identifier":
+		return []string{node.Utf8Text(content)}
+	case "selector_expression":
+		return []string{node.Utf8Text(content)}
+	case "func_literal":
+		if lambdaMap != nil {
+			if qualifiedName, ok := lambdaMap[node.Id()]; ok {
+				return []string{qualifiedName}
+			}
+		}
+	case "unary_expression":
+		// &userHandler{} → recurse into operand
+		operand := node.ChildByFieldName("operand")
+		if operand != nil {
+			return resolveOneArg(operand, content, lambdaMap)
+		}
+	case "composite_literal":
+		// userHandler{} → extract type name
+		typeNode := node.ChildByFieldName("type")
+		if typeNode != nil {
+			return []string{typeNode.Utf8Text(content)}
+		}
+	case "call_expression":
+		// Middleware wrapper: auth(handler) → ["auth", ...inner...]
+		funcNode := node.ChildByFieldName("function")
+		middlewareName := ""
+		if funcNode != nil {
+			switch funcNode.Kind() {
+			case "identifier":
+				middlewareName = funcNode.Utf8Text(content)
+			case "selector_expression":
+				fieldNode := funcNode.ChildByFieldName("field")
+				if fieldNode != nil {
+					middlewareName = fieldNode.Utf8Text(content)
+				}
+			}
+		}
+		// Recurse into the last non-string argument
+		argsNode := node.ChildByFieldName("arguments")
+		if argsNode != nil {
+			var lastNamedArg *tree_sitter.Node
+			for i := uint(0); i < argsNode.ChildCount(); i++ {
+				child := argsNode.Child(i)
+				if child.IsNamed() && child.Kind() != "interpreted_string_literal" {
+					lastNamedArg = child
+				}
+			}
+			if lastNamedArg != nil {
+				inner := resolveOneArg(lastNamedArg, content, lambdaMap)
+				if middlewareName != "" && len(inner) > 0 {
+					return append([]string{middlewareName}, inner...)
+				}
+				return inner
+			}
+		}
+		if middlewareName != "" {
+			return []string{middlewareName}
+		}
+	}
+	return nil
+}
+
+// ExtractRoutes is kept for backward compatibility but now delegates to DetectRoute.
+// It is called from extractCalls BEFORE lambda creation, so it uses callerName as fallback.
+// The proper handler extraction happens in the main loop AFTER lambda creation.
+func ExtractRoutes(node *tree_sitter.Node, content []byte, callerName, filePath string, groupPrefixes GroupPrefixes, result *model.ParseResult) {
+	// No-op: route extraction is now handled in the main extractCalls loop after lambda creation.
 }

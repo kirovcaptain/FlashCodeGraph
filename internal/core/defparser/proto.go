@@ -46,7 +46,7 @@ func (p *ProtoParser) Parse(content []byte, relPath string) *model.ParseResult {
 				Method:      rpc.Name,
 				PathPattern: svc.Name,
 				Framework:   "grpc",
-				HandlerName: svc.Name + "." + rpc.Name,
+				Handlers: []string{svc.Name + "." + rpc.Name},
 				FilePath:    relPath,
 				Line:        rpc.Line,
 			})

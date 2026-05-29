@@ -109,6 +109,7 @@ var NodeColumns = map[string][]ColumnDef{
 		{"method", "STRING"},
 		{"path_pattern", "STRING"},
 		{"handler_method", "STRING"},
+		{"middlewares", "STRING"},
 		{"response_shape", "STRING"},
 		{"framework", "STRING"},
 		{"file_path", "STRING"},

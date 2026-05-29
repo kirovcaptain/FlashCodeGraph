@@ -650,7 +650,8 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 	ExtractTSRemoteCalls(body, content, qualifiedCallerName, filePath, result)
 	ExtractGQLTemplateCalls(body, content, qualifiedCallerName, filePath, result)
 
-	lambdaCounter := 0 // method-body-level counter shared across all call sites
+	lambdaCounter := 0                    // method-body-level counter shared across all call sites
+	lambdaMap := make(map[uintptr]string) // node.Id() → lambdaQualifiedName for route handler resolution
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
 		// Skip arrow_function already handled elsewhere:
 		// - argument position: handled by lambda detection in call_expression below
@@ -676,7 +677,9 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 			}
 		}
 		if node.Kind() == "call_expression" {
-			ExtractRoutes(node, content, qualifiedCallerName, filePath, result)
+			// 1. Detect if this is a route registration
+			routeDetection := DetectTSRoute(node, content)
+
 			ExtractChainedRoutes(node, content, qualifiedCallerName, filePath, result)
 			calledName := ""
 			receiverExpr := ""
@@ -698,6 +701,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 				}
 			}
 
+			// 2. Parse arguments (creates lambdas, builds lambdaMap)
 			argCount := 0
 			var argExprs []string
 			argsNode := node.ChildByFieldName("arguments")
@@ -708,6 +712,11 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 						continue
 					}
 					if child.Kind() == "arrow_function" {
+						if _, exists := lambdaMap[child.Id()]; exists {
+							argCount++
+							argExprs = append(argExprs, "")
+							continue
+						}
 						argCount++
 						argExprs = append(argExprs, "")
 						lambdaCounter++
@@ -749,20 +758,90 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 							LambdaOwnerMethod:   calledName,
 							LambdaOwnerReceiver: receiverExpr,
 						})
+						// Record in lambdaMap for route handler resolution
+						lambdaMap[child.Id()] = lambdaQualifiedName
 						lambdaBody := child.ChildByFieldName("body")
 						if lambdaBody != nil {
 							if lambdaBody.Kind() == "statement_block" {
 								extractCalls(lambdaBody, content, filePath, lambdaQualifiedName, result)
 							} else {
-								// Expression body (e.g. call_expression) — wrap in extractCalls on parent
-								// since extractCalls walks children, pass the arrow_function body's parent context
 								extractCalls(child, content, filePath, lambdaQualifiedName, result)
 							}
 						}
 					} else {
 						argCount++
 						argExprs = append(argExprs, child.Utf8Text(content))
+						// Scan nested arrow_functions inside call_expression args (e.g. auth((req,res)=>{...}))
+						// so they are registered in lambdaMap before route extraction
+						astutil.WalkNamedChildren(child, func(nested *tree_sitter.Node) bool {
+							if nested.Kind() == "arrow_function" {
+								lambdaCounter++
+								nestedLambdaName := fmt.Sprintf("lambda$%d", lambdaCounter)
+								nestedLambdaQualifiedName := qualifiedCallerName + "." + nestedLambdaName
+								nestedLambdaID := astutil.GenerateSymbolID(filePath, nestedLambdaQualifiedName, int(nested.StartPosition().Row)+1)
+								nestedLambdaParams := extractArrowFunctionParams(nested, content)
+								result.Symbols = append(result.Symbols, model.Symbol{
+									ID:            nestedLambdaID,
+									Name:          nestedLambdaName,
+									QualifiedName: nestedLambdaQualifiedName,
+									Kind:          constants.KindFunction,
+									FilePath:      filePath,
+									StartLine:     int(nested.StartPosition().Row) + 1,
+									EndLine:       int(nested.EndPosition().Row) + 1,
+									IsLambda:      true,
+									LambdaContext: qualifiedCallerName,
+									Params:        nestedLambdaParams,
+								})
+								for _, param := range nestedLambdaParams {
+									if param.Type != "" && param.Name != "" {
+										result.TypeHints = append(result.TypeHints, model.TypeBinding{
+											VarName:  param.Name,
+											TypeName: param.Type,
+											Tier:     0,
+											Scope:    nestedLambdaQualifiedName,
+											FilePath: filePath,
+										})
+									}
+								}
+								result.Calls = append(result.Calls, model.RawCall{
+									CalledName:          nestedLambdaQualifiedName,
+									CallerName:          qualifiedCallerName,
+									CallerKind:          constants.KindFunction,
+									FilePath:            filePath,
+									Line:                int(nested.StartPosition().Row) + 1,
+									IsPreResolved:       true,
+									LambdaOwnerMethod:   calledName,
+									LambdaOwnerReceiver: receiverExpr,
+								})
+								lambdaMap[nested.Id()] = nestedLambdaQualifiedName
+								nestedBody := nested.ChildByFieldName("body")
+								if nestedBody != nil {
+									if nestedBody.Kind() == "statement_block" {
+										extractCalls(nestedBody, content, filePath, nestedLambdaQualifiedName, result)
+									} else {
+										extractCalls(nested, content, filePath, nestedLambdaQualifiedName, result)
+									}
+								}
+								return false
+							}
+							return true
+						})
 					}
+				}
+			}
+
+			// 3. Route extraction (AFTER lambda creation)
+			if routeDetection != nil {
+				handlers := ResolveTSHandlerArgs(routeDetection.ArgsNode, content, lambdaMap)
+				if len(handlers) > 0 {
+					result.Routes = append(result.Routes, model.RawRoute{
+						Method:      routeDetection.Method,
+						PathPattern: routeDetection.PathPattern,
+						Handlers:    handlers,
+						Framework:   "express",
+						FilePath:    filePath,
+						Line:        int(node.StartPosition().Row) + 1,
+					})
 				}
 			}
 

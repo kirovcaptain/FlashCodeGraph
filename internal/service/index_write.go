@@ -640,13 +640,26 @@ func (indexer *Indexer) writeRouteNodes(ctx context.Context, parseResults []mode
 	for _, parseResult := range parseResults {
 		for _, route := range parseResult.Routes {
 			routeID := fmt.Sprintf("route:%s:%s:%s", route.Method, route.PathPattern, route.FilePath)
+
+			handlerMethod := ""
+			var middlewareNames []string
+			if len(route.Handlers) > 0 {
+				handlerMethod = route.Handlers[len(route.Handlers)-1]
+				middlewareNames = route.Handlers[:len(route.Handlers)-1]
+			}
+			middlewaresValue := ""
+			if len(middlewareNames) > 0 {
+				middlewaresValue = strings.Join(middlewareNames, ",")
+			}
+
 			nodes = append(nodes, model.Node{
 				ID:   routeID,
 				Kind: constants.KindRoute,
 				Properties: map[string]any{
 					"method":         route.Method,
 					"path_pattern":   route.PathPattern,
-					"handler_method": route.HandlerName,
+					"handler_method": handlerMethod,
+					"middlewares":    middlewaresValue,
 					"framework":      route.Framework,
 					"file_path":      route.FilePath,
 				},
@@ -654,17 +667,20 @@ func (indexer *Indexer) writeRouteNodes(ctx context.Context, parseResults []mode
 			result.SymbolsByKind["route"]++
 			result.SymbolsCreated++
 
-			// Resolve handler function and create HANDLES edge
-			handlerID := resolveHandlerFunction(symbolTable, route.HandlerName, route.FilePath)
-			if handlerID != "" {
-				edges = append(edges, model.Edge{
-					SourceID:   handlerID,
-					TargetID:   routeID,
-					Kind:       model.RelHandles,
-					SourceKind: constants.KindFunction,
-				})
-				result.RelationsByKind["HANDLES"]++
-				result.RelationsCreated++
+			// Resolve each handler and create HANDLES edges with order
+			for order, handlerName := range route.Handlers {
+				handlerID := resolveHandlerFunction(symbolTable, handlerName, route.FilePath)
+				if handlerID != "" {
+					edges = append(edges, model.Edge{
+						SourceID:   handlerID,
+						TargetID:   routeID,
+						Kind:       model.RelHandles,
+						SourceKind: constants.KindFunction,
+						Properties: map[string]any{"handler_order": order},
+					})
+					result.RelationsByKind["HANDLES"]++
+					result.RelationsCreated++
+				}
 			}
 		}
 	}
@@ -692,34 +708,34 @@ func (indexer *Indexer) writeRouteNodes(ctx context.Context, parseResults []mode
 // propagateFeignRoutes creates HANDLES edges from implementing class methods to FeignClient routes.
 func propagateFeignRoutes(parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, routeNodes []model.Node, edges *[]model.Edge, result *model.IndexResult) {
 	feignRoutes := make(map[string]string) // "OrderClient.getOrder" → routeID
-	for _, rn := range routeNodes {
-		fw, _ := rn.Properties["framework"].(string)
-		handler, _ := rn.Properties["handler_method"].(string)
-		if fw == "feign" && handler != "" {
-			feignRoutes[handler] = rn.ID
+	for _, routeNode := range routeNodes {
+		framework, _ := routeNode.Properties["framework"].(string)
+		handler, _ := routeNode.Properties["handler_method"].(string)
+		if framework == "feign" && handler != "" {
+			feignRoutes[handler] = routeNode.ID
 		}
 	}
 	if len(feignRoutes) == 0 {
 		return
 	}
-	for _, pr := range parseResults {
-		for _, h := range pr.Heritage {
-			if h.Kind != "implements" {
+	for _, parseResult := range parseResults {
+		for _, heritage := range parseResult.Heritage {
+			if heritage.Kind != "implements" {
 				continue
 			}
-			var matched []struct{ method, routeID string }
+			var matcheds []struct{ method, routeID string }
 			for handler, routeID := range feignRoutes {
 				parts := strings.SplitN(handler, ".", 2)
-				if len(parts) == 2 && parts[0] == h.ParentName {
-					matched = append(matched, struct{ method, routeID string }{parts[1], routeID})
+				if len(parts) == 2 && parts[0] == heritage.ParentName {
+					matcheds = append(matcheds, struct{ method, routeID string }{parts[1], routeID})
 				}
 			}
-			if len(matched) == 0 {
+			if len(matcheds) == 0 {
 				continue
 			}
 			hasRestController := false
-			for _, sym := range pr.Symbols {
-				if sym.Name == h.ChildName && strings.Contains(sym.Annotations, "RestController") {
+			for _, symbol := range parseResult.Symbols {
+				if symbol.Name == heritage.ChildName && strings.Contains(symbol.Annotations, "RestController") {
 					hasRestController = true
 					break
 				}
@@ -727,11 +743,11 @@ func propagateFeignRoutes(parseResults []model.ParseResult, symbolTable *resolve
 			if !hasRestController {
 				continue
 			}
-			for _, mr := range matched {
-				handlerID := resolveHandlerFunction(symbolTable, h.ChildName+"."+mr.method, pr.FilePath)
+			for _, matched := range matcheds {
+				handlerID := resolveHandlerFunction(symbolTable, heritage.ChildName+"."+matched.method, parseResult.FilePath)
 				if handlerID != "" {
 					*edges = append(*edges, model.Edge{
-						SourceID: handlerID, TargetID: mr.routeID, Kind: model.RelHandles, SourceKind: constants.KindFunction,
+						SourceID: handlerID, TargetID: matched.routeID, Kind: model.RelHandles, SourceKind: constants.KindFunction,
 					})
 					result.RelationsByKind["HANDLES"]++
 					result.RelationsCreated++
@@ -823,7 +839,6 @@ func (indexer *Indexer) writeQueryNodes(ctx context.Context, parseResults []mode
 }
 
 // Helpers
-
 
 func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults []model.ParseResult, whitelist map[string]annotation.AnnotationDef, result *model.IndexResult) error {
 	if len(whitelist) == 0 {

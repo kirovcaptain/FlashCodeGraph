@@ -211,7 +211,7 @@ func ExtractTSGraphQLRoutes(node *tree_sitter.Node, content []byte, methodName, 
 					Method:      methodName,
 					PathPattern: opType,
 					Framework:   "graphql",
-					HandlerName: className + "." + methodName,
+					Handlers: []string{className + "." + methodName},
 					FilePath:    filePath,
 					Line:        line,
 				})

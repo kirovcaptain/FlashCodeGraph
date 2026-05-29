@@ -25,7 +25,6 @@ const (
 	RelRemoteCallsExt   RelationKind = "REMOTE_CALLS_EXT"
 	RelExecutes    RelationKind = "EXECUTES"
 	RelFetches     RelationKind = "FETCHES"
-	RelMiddleware  RelationKind = "MIDDLEWARE"
 	RelStep        RelationKind = "STEP"
 	RelHasAnnotation RelationKind = "HAS_ANNOTATION"
 	RelUnresolvedCall RelationKind = "UNRESOLVED_CALL"
@@ -197,11 +196,12 @@ type CompactChainEdge struct {
 
 // RouteChain represents the full call chain from a route entry point.
 type RouteChain struct {
-	Route   string      `json:"route"`
-	Method  string      `json:"method"`
-	Nodes   []Node      `json:"nodes"`
-	Edges   []Edge      `json:"edges"`
-	Queries []ChainNode `json:"queries,omitempty"`
+	Route       string      `json:"route"`
+	Method      string      `json:"method"`
+	Middlewares []Node      `json:"middlewares,omitempty"`
+	Nodes       []Node      `json:"nodes"`
+	Edges       []Edge      `json:"edges"`
+	Queries     []ChainNode `json:"queries,omitempty"`
 }
 
 // LocateRequest is a single file+line pair for locate_function.

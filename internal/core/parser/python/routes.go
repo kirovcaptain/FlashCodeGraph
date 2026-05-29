@@ -39,7 +39,7 @@ func ExtractRoutes(node *tree_sitter.Node, content []byte, funcName, filePath st
 				result.Routes = append(result.Routes, model.RawRoute{
 					Method:      httpMethod,
 					PathPattern: pathPattern,
-					HandlerName: funcName,
+					Handlers:    []string{funcName},
 					Framework:   detectPythonFramework(decoratorText),
 					FilePath:    filePath,
 					Line:        int(child.StartPosition().Row) + 1,
@@ -120,7 +120,7 @@ func ExtractDjangoRoutes(node *tree_sitter.Node, content []byte, filePath string
 		result.Routes = append(result.Routes, model.RawRoute{
 			Method:      "GET",
 			PathPattern: pathPattern,
-			HandlerName: handlerName,
+			Handlers:    []string{handlerName},
 			Framework:   "django",
 			FilePath:    filePath,
 			Line:        int(node.StartPosition().Row) + 1,

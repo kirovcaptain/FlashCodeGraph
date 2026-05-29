@@ -669,6 +669,24 @@ func (store *Store) QueryEdges(ctx context.Context, nodeID string, nodeKind stri
 		return parseUsesEdgeResults(rows), nil
 	}
 
+	// HANDLES edges have handler_order property
+	if relKind == model.RelHandles {
+		var cypher string
+		switch direction {
+		case model.Outgoing:
+			cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]->(b) RETURN a.id, b.id, r.handler_order"
+		case model.Incoming:
+			cypher = "MATCH (a)-[r:" + relType + "]->(b {id: $nodeID}) RETURN a.id, b.id, r.handler_order"
+		default:
+			cypher = "MATCH (a:" + label + " {id: $nodeID})-[r:" + relType + "]-(b) RETURN a.id, b.id, r.handler_order"
+		}
+		rows, err := store.queryWithParams(ctx, cypher, []cypherParam{{"nodeID", nodeID}})
+		if err != nil {
+			return nil, err
+		}
+		return parseHandlesEdgeResults(rows, relKind), nil
+	}
+
 	returnCols := "a.id, b.id, r.confidence, r.line, r.flow_context, r.flow_line, r.declared_type, r.polymorphic, type(r)"
 	var cypher string
 	switch direction {
@@ -1788,6 +1806,36 @@ func parseUsesEdgeResults(rows []interface{}) []model.Edge {
 		if len(cols) >= 4 && cols[3] != nil {
 			if rk, ok := cols[3].(string); ok {
 				edge.Properties["ref_kind"] = rk
+			}
+		}
+		edges = append(edges, edge)
+	}
+	return edges
+}
+
+func parseHandlesEdgeResults(rows []interface{}, kind model.RelationKind) []model.Edge {
+	if len(rows) < 2 {
+		return nil
+	}
+	dataRows, ok := rows[1].([]interface{})
+	if !ok {
+		return nil
+	}
+	edges := make([]model.Edge, 0, len(dataRows))
+	for _, row := range dataRows {
+		cols, ok := row.([]interface{})
+		if !ok || len(cols) < 2 {
+			continue
+		}
+		edge := model.Edge{
+			SourceID:   asString(cols[0]),
+			TargetID:   asString(cols[1]),
+			Kind:       kind,
+			Properties: make(map[string]any),
+		}
+		if len(cols) >= 3 && cols[2] != nil {
+			if order, ok := asInt(cols[2]); ok {
+				edge.Properties["handler_order"] = order
 			}
 		}
 		edges = append(edges, edge)

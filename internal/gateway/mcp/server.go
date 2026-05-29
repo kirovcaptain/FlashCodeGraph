@@ -881,11 +881,17 @@ func (srv *Server) handleQueryRoutes(ctx context.Context, request mcp.CallToolRe
 		pathPattern, _ := r.Properties["path_pattern"].(string)
 		handlerMethod, _ := r.Properties["handler_method"].(string)
 		framework, _ := r.Properties["framework"].(string)
+		middlewaresRaw, _ := r.Properties["middlewares"].(string)
+		var middlewares []string
+		if middlewaresRaw != "" {
+			middlewares = strings.Split(middlewaresRaw, ",")
+		}
 		results = append(results, routeEntry{
-			Method:    method,
-			Path:      pathPattern,
-			Handler:   handlerMethod,
-			Framework: framework,
+			Method:      method,
+			Path:        pathPattern,
+			Handler:     handlerMethod,
+			Middlewares: middlewares,
+			Framework:   framework,
 		})
 	}
 
@@ -937,6 +943,22 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 		hint = "[mode=core] Showing core route chain (getters/setters and external dependencies are hidden, DISPATCHES pruned). Use mode='full' to see all nodes."
 	}
 
+	// Convert middleware nodes to response entries
+	var middlewareEntries []middlewareEntry
+	for _, middlewareNode := range chain.Middlewares {
+		name, _ := middlewareNode.Properties["name"].(string)
+		filePath, _ := middlewareNode.Properties["file_path"].(string)
+		line, _ := middlewareNode.Properties["start_line"].(int)
+		if lineFloat, ok := middlewareNode.Properties["start_line"].(float64); ok {
+			line = int(lineFloat)
+		}
+		middlewareEntries = append(middlewareEntries, middlewareEntry{
+			Name:     name,
+			FilePath: filePath,
+			Line:     line,
+		})
+	}
+
 	var resultJSON []byte
 	if mode == "compact" {
 		routeSubgraph = service.CompactSubgraphEdges(routeSubgraph)
@@ -946,6 +968,7 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 			Hint:           hint,
 			Route:          chain.Route,
 			Method:         chain.Method,
+			Middlewares:    middlewareEntries,
 			Nodes:          routeSubgraph.Nodes,
 			Edges:          model.EdgesToCompactChainEdges(routeSubgraph.Edges),
 			Queries:        chain.Queries,
@@ -959,6 +982,7 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 			Hint:           hint,
 			Route:          chain.Route,
 			Method:         chain.Method,
+			Middlewares:    middlewareEntries,
 			Nodes:          routeSubgraph.Nodes,
 			Edges:          model.EdgesToChainEdges(routeSubgraph.Edges),
 			Queries:        chain.Queries,

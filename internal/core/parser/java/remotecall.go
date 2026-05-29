@@ -81,7 +81,7 @@ func ExtractFeignClient(classAnnotations []model.StructuredAnnotation, node *tre
 			result.Routes = append(result.Routes, model.RawRoute{
 				Method:      httpMethod,
 				PathPattern: fullPath,
-				HandlerName: className + "." + methodName,
+				Handlers: []string{className + "." + methodName},
 				Framework:   "feign",
 				FilePath:    filePath,
 				Line:        int(child.StartPosition().Row) + 1,
@@ -506,7 +506,7 @@ func ExtractGraphQLRoutes(annotations []model.StructuredAnnotation, methodName, 
 			Method:      methodName,
 			PathPattern: opType,
 			Framework:   "graphql",
-			HandlerName: className + "." + methodName,
+			Handlers: []string{className + "." + methodName},
 			FilePath:    filePath,
 			Line:        line,
 		})

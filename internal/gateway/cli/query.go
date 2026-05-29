@@ -565,10 +565,15 @@ func runRoutes(cmd *cobra.Command, args []string) error {
 		path, _ := r.Properties["path_pattern"].(string)
 		handler, _ := r.Properties["handler_method"].(string)
 		framework, _ := r.Properties["framework"].(string)
+		middlewares, _ := r.Properties["middlewares"].(string)
+		suffix := ""
 		if framework != "" {
-			handler = handler + " [" + framework + "]"
+			suffix = " [" + framework + "]"
 		}
-		fmt.Printf("  %-8s %-35s %s\n", method, path, handler)
+		if middlewares != "" {
+			suffix = " [" + middlewares + "]" + suffix
+		}
+		fmt.Printf("  %-8s %-35s %s\n", method, path, handler+suffix)
 	}
 	return nil
 }
@@ -599,6 +604,21 @@ func runTrace(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Route: %s %s\n", chain.Method, chain.Route)
+	if len(chain.Middlewares) > 0 {
+		var middlewareNames []string
+		for _, middleware := range chain.Middlewares {
+			name, _ := middleware.Properties["name"].(string)
+			if name == "" {
+				name, _ = middleware.Properties["qualified_name"].(string)
+			}
+			if name != "" {
+				middlewareNames = append(middlewareNames, name)
+			}
+		}
+		if len(middlewareNames) > 0 {
+			fmt.Printf("Middlewares: %s\n", strings.Join(middlewareNames, " → "))
+		}
+	}
 	fmt.Printf("Chain (%d nodes):\n\n", len(subgraph.Nodes))
 
 	// Set display mode for tree rendering
