@@ -696,41 +696,52 @@ func (indexer *Indexer) writeRouteNodes(ctx context.Context, parseResults []mode
 		}
 	}
 
-	// Propagate FeignClient routes to implementing @RestController classes
+	// Propagate FeignClient routes: build CALLS edges from interface methods to implementations
 	var feignEdges []model.Edge
-	propagateFeignRoutes(parseResults, symbolTable, nodes, &feignEdges, result)
+	propagateFeignRoutes(parseResults, symbolTable, nodes, edges, &feignEdges, result)
 	if len(feignEdges) > 0 {
 		return indexer.graphStore.CreateEdges(ctx, feignEdges)
 	}
 	return nil
 }
 
-// propagateFeignRoutes creates HANDLES edges from implementing class methods to FeignClient routes.
-func propagateFeignRoutes(parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, routeNodes []model.Node, edges *[]model.Edge, result *model.IndexResult) {
-	feignRoutes := make(map[string]string) // "OrderClient.getOrder" → routeID
+// propagateFeignRoutes creates CALLS edges from Feign interface methods to their @RestController implementation methods.
+// This allows query_route_chain to traverse from the Feign interface method to the actual implementation.
+func propagateFeignRoutes(parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, routeNodes []model.Node, handlesEdges []model.Edge, resultEdges *[]model.Edge, result *model.IndexResult) {
+	// Build map: routeID → Feign interface method handler name
+	feignRouteHandlers := make(map[string]string) // routeID → "OrderClient.getOrder"
 	for _, routeNode := range routeNodes {
 		framework, _ := routeNode.Properties["framework"].(string)
-		handler, _ := routeNode.Properties["handler_method"].(string)
-		if framework == "feign" && handler != "" {
-			feignRoutes[handler] = routeNode.ID
+		handlerMethod, _ := routeNode.Properties["handler_method"].(string)
+		if framework == "feign" && handlerMethod != "" {
+			feignRouteHandlers[routeNode.ID] = handlerMethod
 		}
 	}
-	if len(feignRoutes) == 0 {
+	if len(feignRouteHandlers) == 0 {
 		return
 	}
+
+	// Build map: routeID → Feign interface method symbol ID (from HANDLES edges)
+	feignMethodIDs := make(map[string]string) // routeID → symbolID of interface method
+	for _, edge := range handlesEdges {
+		if _, isFeignRoute := feignRouteHandlers[edge.TargetID]; isFeignRoute {
+			feignMethodIDs[edge.TargetID] = edge.SourceID
+		}
+	}
+
 	for _, parseResult := range parseResults {
 		for _, heritage := range parseResult.Heritage {
 			if heritage.Kind != "implements" {
 				continue
 			}
-			var matcheds []struct{ method, routeID string }
-			for handler, routeID := range feignRoutes {
-				parts := strings.SplitN(handler, ".", 2)
+			var matchedMethods []struct{ methodName, routeID string }
+			for routeID, handlerName := range feignRouteHandlers {
+				parts := strings.SplitN(handlerName, ".", 2)
 				if len(parts) == 2 && parts[0] == heritage.ParentName {
-					matcheds = append(matcheds, struct{ method, routeID string }{parts[1], routeID})
+					matchedMethods = append(matchedMethods, struct{ methodName, routeID string }{parts[1], routeID})
 				}
 			}
-			if len(matcheds) == 0 {
+			if len(matchedMethods) == 0 {
 				continue
 			}
 			hasRestController := false
@@ -743,13 +754,21 @@ func propagateFeignRoutes(parseResults []model.ParseResult, symbolTable *resolve
 			if !hasRestController {
 				continue
 			}
-			for _, matched := range matcheds {
-				handlerID := resolveHandlerFunction(symbolTable, heritage.ChildName+"."+matched.method, parseResult.FilePath)
-				if handlerID != "" {
-					*edges = append(*edges, model.Edge{
-						SourceID: handlerID, TargetID: matched.routeID, Kind: model.RelHandles, SourceKind: constants.KindFunction,
+			for _, matched := range matchedMethods {
+				implementationID := resolveHandlerFunction(symbolTable, heritage.ChildName+"."+matched.methodName, parseResult.FilePath)
+				feignInterfaceMethodID := feignMethodIDs[matched.routeID]
+				if implementationID != "" && feignInterfaceMethodID != "" {
+					*resultEdges = append(*resultEdges, model.Edge{
+						SourceID:   feignInterfaceMethodID,
+						TargetID:   implementationID,
+						Kind:       model.RelCalls,
+						SourceKind: constants.KindFunction,
+						Properties: map[string]any{
+							"confidence": 1.0,
+							"feign_impl": true,
+						},
 					})
-					result.RelationsByKind["HANDLES"]++
+					result.RelationsByKind["CALLS"]++
 					result.RelationsCreated++
 				}
 			}

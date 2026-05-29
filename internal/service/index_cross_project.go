@@ -160,6 +160,17 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 	var newEdges []model.Edge
 	seenPlaceholders := make(map[string]bool)
 
+	// Build set of Feign interface method IDs to skip local via_route matching
+	feignHandlerIDs := make(map[string]bool)
+	for _, route := range allRoutes {
+		framework, _ := route.Properties["framework"].(string)
+		if framework == "feign" {
+			if handlerID := routeToHandler[route.ID]; handlerID != "" {
+				feignHandlerIDs[handlerID] = true
+			}
+		}
+	}
+
 	for _, remoteCall := range remoteCalls {
 		if remoteCall.TargetURL == "" {
 			continue
@@ -174,7 +185,7 @@ func (indexer *Indexer) matchConsumerToProvider(ctx context.Context, scanCtx *sc
 		matched := resolver.FindMatchingRoutes(remoteCall.TargetURL, remoteCall.Method, candidateRoutes)
 		if len(matched) > 0 {
 			handlerID := routeToHandler[matched[0]]
-			if handlerID != "" && handlerID != callerID {
+			if handlerID != "" && handlerID != callerID && !feignHandlerIDs[callerID] {
 				newEdges = append(newEdges, model.Edge{
 					SourceID:   callerID,
 					TargetID:   handlerID,
