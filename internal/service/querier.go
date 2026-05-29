@@ -971,10 +971,10 @@ func toInt(value any) (int, bool) {
 }
 
 // ImpactAnalysis finds all symbols affected by changes to a given symbol.
-func (querier *Querier) ImpactAnalysis(ctx context.Context, symbolName string, depth int) (*model.Subgraph, error) {
+func (querier *Querier) ImpactAnalysis(ctx context.Context, symbolName string, depth int) (*model.Subgraph, string, error) {
 	node, candidates, inheritedFrom, err := querier.ResolveFunctionWithInheritance(ctx, symbolName)
 	if err != nil {
-		return nil, fmt.Errorf("querier: find symbol %q: %w", symbolName, err)
+		return nil, "", fmt.Errorf("querier: find symbol %q: %w", symbolName, err)
 	}
 	if node == nil && len(candidates) > 0 {
 		var names []string
@@ -982,21 +982,21 @@ func (querier *Querier) ImpactAnalysis(ctx context.Context, symbolName string, d
 			qualifiedName, _ := candidate.Properties["qualified_name"].(string)
 			names = append(names, qualifiedName)
 		}
-		return nil, fmt.Errorf("ambiguous: %d matches for %q. Candidates:\n%s\nPlease ask the user which one to use", len(candidates), symbolName, strings.Join(names, "\n"))
+		return nil, "", fmt.Errorf("ambiguous: %d matches for %q. Candidates:\n%s\nPlease ask the user which one to use", len(candidates), symbolName, strings.Join(names, "\n"))
 	}
 	if node == nil {
-		return &model.Subgraph{}, nil
+		return &model.Subgraph{}, "", nil
 	}
 
 	subgraph, err := querier.graphStore.TraverseImpact(ctx, node.ID, depth)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if inheritedFrom != "" {
 		subgraph = FilterSubgraphByDeclaredType(subgraph, node.ID, inheritedFrom)
 	}
-	return subgraph, nil
+	return subgraph, node.ID, nil
 }
 
 // QueryClassMembers returns all methods belonging to a class.

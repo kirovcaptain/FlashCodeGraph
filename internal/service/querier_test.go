@@ -191,7 +191,7 @@ func save() {}
 	indexer.Index(ctx, projectDir, "main", true, nil)
 
 	querier := NewQuerier(store)
-	subgraph, err := querier.ImpactAnalysis(ctx, "save", 3)
+	subgraph, _, err := querier.ImpactAnalysis(ctx, "save", 3)
 	if err != nil {
 		t.Fatal("impact:", err)
 	}

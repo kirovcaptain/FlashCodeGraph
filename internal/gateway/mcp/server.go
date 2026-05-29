@@ -587,13 +587,16 @@ func (srv *Server) handleImpactAnalysis(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	defer store.Close()
-	subgraph, err := querier.ImpactAnalysis(ctx, symbolName, depth)
+	subgraph, targetID, err := querier.ImpactAnalysis(ctx, symbolName, depth)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	// Collect all node IDs for affected routes lookup
+	// Collect all node IDs for affected routes lookup (include target function itself)
 	nodeIDs := make([]string, 0, len(subgraph.Nodes)+1)
+	if targetID != "" {
+		nodeIDs = append(nodeIDs, targetID)
+	}
 	for _, n := range subgraph.Nodes {
 		nodeIDs = append(nodeIDs, n.ID)
 	}
