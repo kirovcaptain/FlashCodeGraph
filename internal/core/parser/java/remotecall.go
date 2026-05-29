@@ -74,6 +74,16 @@ func ExtractFeignClient(classAnnotations []model.StructuredAnnotation, node *tre
 			if !isRoute {
 				continue
 			}
+			// @RequestMapping(method=RequestMethod.POST) → extract actual method
+			if annotation.Name == "RequestMapping" {
+				if methodParam := annotation.Params["method"]; methodParam != "" {
+					methodParam = strings.TrimPrefix(methodParam, "RequestMethod.")
+					methodParam = strings.ToUpper(methodParam)
+					if methodParam != "" {
+						httpMethod = methodParam
+					}
+				}
+			}
 
 			methodPath := annotation.Params["value"]
 			fullPath := feignPath + methodPath
