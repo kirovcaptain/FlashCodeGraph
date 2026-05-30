@@ -784,3 +784,43 @@ func (srv *Server) handleQuerySymbol() {}
 	}
 	t.Log("✅ MCP tool route extraction: 2 tools extracted correctly")
 }
+
+func TestPackageLevelVarTypeExtraction(t *testing.T) {
+	code := []byte(`package google
+
+import "myapp/service"
+
+var (
+	s      = &service.GoogleService{}
+	logger = log.Logger
+)
+
+func VerifyOrder() {
+	s.VerifyOrder()
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "handler.go", Language: "go"}
+	Extract(root, code, file, result)
+
+	// Should extract TypeBinding for s = &service.GoogleService{}
+	var found bool
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "s" && hint.TypeName == "service.GoogleService" && hint.Scope == "google" && hint.Tier == 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected TypeBinding for s → service.GoogleService (scope=google), got: %+v", result.TypeHints)
+	}
+
+	// Should NOT extract TypeBinding for logger (not &Type{} pattern)
+	for _, hint := range result.TypeHints {
+		if hint.VarName == "logger" {
+			t.Errorf("unexpected TypeBinding for logger: %+v", hint)
+		}
+	}
+	t.Log("✅ Package-level var type extraction: s → service.GoogleService [scope=google]")
+}

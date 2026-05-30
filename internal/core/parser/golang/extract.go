@@ -39,6 +39,10 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 		case "method_declaration":
 			extractMethod(node, content, file.RelPath, packageName, result)
 			return false
+
+		case "var_declaration":
+			extractPackageLevelVarTypes(node, content, packageName, file.RelPath, result)
+			return false
 		}
 		return true
 	})
@@ -675,8 +679,8 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 	cobraCommands := map[string]struct{ Use, Handler string }{}
 	cobraParentMap := map[string]string{}
 
-	lambdaCounter := 0                        // method-body-level counter shared across all call sites
-	lambdaMap := make(map[uintptr]string)     // node.Id() → lambdaQualifiedName for route handler resolution
+	lambdaCounter := 0                    // method-body-level counter shared across all call sites
+	lambdaMap := make(map[uintptr]string) // node.Id() → lambdaQualifiedName for route handler resolution
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
 		// Skip func_literal nodes that are already handled elsewhere
 		if node.Kind() == "func_literal" {
@@ -1094,7 +1098,67 @@ func extractGoPendingAssignmentFromSpec(declarationNode *tree_sitter.Node, conte
 	}
 }
 
+// extractPackageLevelVarTypes extracts type bindings from package-level var declarations.
+func extractPackageLevelVarTypes(node *tree_sitter.Node, content []byte, packageName, filePath string, result *model.ParseResult) {
+	// var_declaration → var_spec_list → var_spec (grouped var block)
+	// or var_declaration → var_spec (single var)
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		if child.Kind() == "var_spec" {
+			extractVarSpecTypeBinding(child, content, packageName, filePath, result)
+		} else if child.Kind() == "var_spec_list" {
+			for j := uint(0); j < child.NamedChildCount(); j++ {
+				spec := child.NamedChild(j)
+				if spec.Kind() == "var_spec" {
+					extractVarSpecTypeBinding(spec, content, packageName, filePath, result)
+				}
+			}
+		}
+	}
+}
 
+func extractVarSpecTypeBinding(varSpec *tree_sitter.Node, content []byte, packageName, filePath string, result *model.ParseResult) {
+	nameNode := varSpec.ChildByFieldName("name")
+	valueNode := varSpec.ChildByFieldName("value")
+	if nameNode == nil || valueNode == nil {
+		return
+	}
+	// Unwrap expression_list
+	if valueNode.Kind() == "expression_list" && valueNode.NamedChildCount() == 1 {
+		valueNode = valueNode.NamedChild(0)
+	}
+	// Match &pkg.Type{} pattern: unary_expression(&) → composite_literal
+	if valueNode.Kind() != "unary_expression" {
+		return
+	}
+	var compositeLiteral *tree_sitter.Node
+	for j := uint(0); j < valueNode.NamedChildCount(); j++ {
+		child := valueNode.NamedChild(j)
+		if child.Kind() == "composite_literal" {
+			compositeLiteral = child
+			break
+		}
+	}
+	if compositeLiteral == nil {
+		return
+	}
+	typeNode := compositeLiteral.ChildByFieldName("type")
+	if typeNode == nil {
+		return
+	}
+	typeName := typeNode.Utf8Text(content)
+	if typeName == "" {
+		return
+	}
+	variableName := nameNode.Utf8Text(content)
+	result.TypeHints = append(result.TypeHints, model.TypeBinding{
+		VarName:  variableName,
+		TypeName: typeName,
+		Tier:     0,
+		Scope:    packageName,
+		FilePath: filePath,
+	})
+}
 
 // extractCobraCommandName extracts only the command name from cobra Use field (strips argument descriptions).
 // "index [path]" → "index", "get <key>" → "get", "serve" → "serve"
@@ -1104,6 +1168,7 @@ func extractCobraCommandName(useField string) string {
 	}
 	return useField
 }
+
 // collectCobraCommand extracts cobra.Command info from a short_var_declaration or var_declaration.
 // Records variable name → {Use, Handler} for delayed Route generation.
 func collectCobraCommand(node *tree_sitter.Node, content []byte, cobraCommands map[string]struct{ Use, Handler string }) {
