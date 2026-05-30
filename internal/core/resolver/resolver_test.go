@@ -3652,3 +3652,60 @@ func TestInferLambdaParamTypes_ThisField(t *testing.T) {
 		t.Fatalf("expected order.getName() to resolve, got relations: %v", relations)
 	}
 }
+
+// testGoExternalHelper is a helper that returns true for specific external packages.
+type testGoExternalHelper struct {
+	testGenericHelper
+	externalPackages map[string]bool
+}
+
+func (h testGoExternalHelper) IsExternalPackage(receiverName string) bool {
+	return h.externalPackages[receiverName]
+}
+
+func TestResolveCalls_SkipNameUniqueByInferredType(t *testing.T) {
+	// Setup: project has a single function named "Index" (Indexer.Index)
+	table := NewSymbolTable()
+	table.Add(model.Symbol{
+		ID: "indexer-index", Name: "Index", QualifiedName: "service.Indexer.Index",
+		Kind: "Function", FilePath: "indexer.go",
+	})
+
+	goExternalHelper := testGoExternalHelper{
+		externalPackages: map[string]bool{"reflect": true},
+	}
+	resolver := NewResolver(table, map[string]LanguageHelper{
+		"go": goExternalHelper,
+	})
+
+	// Call: reflectValue.Index(0) where reflectValue has inferred type "reflect.Value"
+	calls := []model.RawCall{
+		{
+			CalledName:   "Index",
+			CallerName:   "ladybug.sanitizeSliceForLadybug",
+			ReceiverExpr: "reflectValue",
+			FilePath:     "store.go",
+			Line:         50,
+			ArgCount:     1,
+		},
+	}
+
+	// TypeEnv: reflectValue → reflect.Value
+	envs := map[string]*model.TypeEnv{
+		"store.go": {
+			Bindings: map[string]*model.TypeInfo{
+				"ladybug.sanitizeSliceForLadybug:reflectValue": {TypeName: "reflect.Value", Tier: 2},
+			},
+		},
+	}
+
+	relations, _ := resolver.ResolveCalls(calls, envs)
+
+	// Should NOT match Indexer.Index — receiver's inferred type is reflect.Value (external)
+	for _, relation := range relations {
+		if relation.TargetID == "indexer-index" {
+			t.Errorf("UT-14: should not match Indexer.Index, but got relation to it: %+v", relation)
+		}
+	}
+	t.Log("✅ Resolver skips name_unique when receiver inferred type is external package")
+}

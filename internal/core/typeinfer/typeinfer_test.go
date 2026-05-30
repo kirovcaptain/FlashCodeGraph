@@ -793,3 +793,95 @@ func TestSubstituteTypeParam_ClassLevelTakesPriority(t *testing.T) {
 		t.Errorf("U-9: expected User (path 1 priority), got %q", result)
 	}
 }
+
+func TestExternalLookup_CallResult(t *testing.T) {
+	infer := New()
+	infer.ExternalLookup = func(qualifiedCall string) (model.ReturnType, bool) {
+		if qualifiedCall == "reflect.ValueOf" {
+			return model.ReturnType{Name: "reflect.Value"}, true
+		}
+		return model.ReturnType{}, false
+	}
+
+	env := &model.TypeEnv{Bindings: make(map[string]*model.TypeInfo)}
+	pendings := []model.PendingAssignment{
+		{Kind: "call_result", LHS: "reflectValue", Scope: "main.example", Callee: "reflect.ValueOf"},
+	}
+	findByName := func(name string) []model.Symbol { return nil }
+
+	infer.ResolveFixpoint(env, pendings, findByName)
+
+	key := scopedKey("main.example", "reflectValue")
+	if info, ok := env.Bindings[key]; !ok || info.TypeName != "reflect.Value" {
+		t.Errorf("UT-10: expected reflect.Value, got %v", env.Bindings[key])
+	}
+}
+
+func TestExternalLookup_MethodCallResult(t *testing.T) {
+	infer := New()
+	infer.ExternalLookup = func(qualifiedCall string) (model.ReturnType, bool) {
+		if qualifiedCall == "reflect.Value.Index" {
+			return model.ReturnType{Name: "reflect.Value"}, true
+		}
+		return model.ReturnType{}, false
+	}
+
+	env := &model.TypeEnv{Bindings: make(map[string]*model.TypeInfo)}
+	// Pre-set receiver type
+	env.Bindings[scopedKey("main.example", "reflectValue")] = &model.TypeInfo{TypeName: "reflect.Value", Tier: 2}
+
+	pendings := []model.PendingAssignment{
+		{Kind: "method_call_result", LHS: "elem", Scope: "main.example", Receiver: "reflectValue", Method: "Index"},
+	}
+	findByName := func(name string) []model.Symbol { return nil }
+
+	infer.ResolveFixpoint(env, pendings, findByName)
+
+	key := scopedKey("main.example", "elem")
+	if info, ok := env.Bindings[key]; !ok || info.TypeName != "reflect.Value" {
+		t.Errorf("UT-11: expected reflect.Value, got %v", env.Bindings[key])
+	}
+}
+
+func TestExternalLookup_NilSafe(t *testing.T) {
+	infer := New()
+	// ExternalLookup is nil (default)
+
+	env := &model.TypeEnv{Bindings: make(map[string]*model.TypeInfo)}
+	pendings := []model.PendingAssignment{
+		{Kind: "call_result", LHS: "reflectValue", Scope: "main.example", Callee: "reflect.ValueOf"},
+	}
+	findByName := func(name string) []model.Symbol { return nil }
+
+	infer.ResolveFixpoint(env, pendings, findByName)
+
+	key := scopedKey("main.example", "reflectValue")
+	if _, ok := env.Bindings[key]; ok {
+		t.Error("UT-12: expected no binding when ExternalLookup is nil")
+	}
+}
+
+func TestExternalLookup_FindByNamePriority(t *testing.T) {
+	infer := New()
+	infer.ExternalLookup = func(qualifiedCall string) (model.ReturnType, bool) {
+		return model.ReturnType{Name: "WrongType"}, true
+	}
+
+	env := &model.TypeEnv{Bindings: make(map[string]*model.TypeInfo)}
+	pendings := []model.PendingAssignment{
+		{Kind: "call_result", LHS: "service", Scope: "main.example", Callee: "NewService"},
+	}
+	findByName := func(name string) []model.Symbol {
+		if name == "NewService" {
+			return []model.Symbol{{Kind: "Function", ReturnTypes: []model.ReturnType{{Name: "ServiceImpl"}}}}
+		}
+		return nil
+	}
+
+	infer.ResolveFixpoint(env, pendings, findByName)
+
+	key := scopedKey("main.example", "service")
+	if info, ok := env.Bindings[key]; !ok || info.TypeName != "ServiceImpl" {
+		t.Errorf("UT-13: expected ServiceImpl (findByName priority), got %v", env.Bindings[key])
+	}
+}

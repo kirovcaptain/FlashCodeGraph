@@ -688,6 +688,10 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 			blockScope := astutil.DetectBlockScope(node, fullCaller)
 			mergeGoScopeParents(result, blockScope.ScopeParents)
 			extractLocalFuncLiteral(node, content, filePath, fullCaller, result)
+			extractGoPendingAssignment(node, content, fullCaller, importsMap, result)
+		}
+		if node.Kind() == "assignment_statement" {
+			extractGoPendingAssignment(node, content, fullCaller, importsMap, result)
 		}
 		if node.Kind() == "call_expression" {
 			// 1. Detect if this is a route registration (before arg parsing, just detection)
@@ -875,7 +879,160 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 	})
 }
 
-// Helper functions
+// extractGoPendingAssignment extracts single-return-value assignment patterns for fixpoint type propagation.
+// Handles: result := funcName(), result := pkg.Func(), val := receiver.Method(), val := receiver.field, b := a
+func extractGoPendingAssignment(node *tree_sitter.Node, content []byte, scope string, importsMap map[string]string, result *model.ParseResult) {
+	// Determine the actual declaration node
+	var declarationNode *tree_sitter.Node
+	if node.Kind() == "short_var_declaration" || node.Kind() == "assignment_statement" {
+		declarationNode = node
+	} else if node.Kind() == "var_declaration" {
+		// var_declaration contains var_spec children
+		for i := uint(0); i < node.NamedChildCount(); i++ {
+			child := node.NamedChild(i)
+			if child.Kind() == "var_spec" {
+				extractGoPendingAssignmentFromSpec(child, content, scope, importsMap, result)
+			}
+		}
+		return
+	} else {
+		return
+	}
+	extractGoPendingAssignmentFromSpec(declarationNode, content, scope, importsMap, result)
+}
+
+func extractGoPendingAssignmentFromSpec(declarationNode *tree_sitter.Node, content []byte, scope string, importsMap map[string]string, result *model.ParseResult) {
+	leftNode := declarationNode.ChildByFieldName("left")
+	if leftNode == nil {
+		leftNode = declarationNode.ChildByFieldName("name")
+	}
+	rightNode := declarationNode.ChildByFieldName("right")
+	if rightNode == nil {
+		rightNode = declarationNode.ChildByFieldName("value")
+	}
+	if leftNode == nil || rightNode == nil {
+		return
+	}
+
+	// Unwrap expression_list wrappers
+	if rightNode.Kind() == "expression_list" {
+		if rightNode.NamedChildCount() == 1 {
+			rightNode = rightNode.NamedChild(0)
+		} else {
+			return // multi-value assignment, handled by extractMultiReturnHints
+		}
+	}
+	if leftNode.Kind() == "expression_list" {
+		// Count identifiers (skip commas)
+		identifierCount := 0
+		var singleIdentifier *tree_sitter.Node
+		for i := uint(0); i < leftNode.ChildCount(); i++ {
+			child := leftNode.Child(i)
+			if child.Kind() == "identifier" {
+				identifierCount++
+				singleIdentifier = child
+			}
+		}
+		if identifierCount != 1 {
+			return // multi-return, handled by extractMultiReturnHints
+		}
+		leftNode = singleIdentifier
+	}
+
+	if leftNode.Kind() != "identifier" {
+		return
+	}
+	variableName := leftNode.Utf8Text(content)
+	if variableName == "_" {
+		return
+	}
+
+	// Skip func_literal (handled by extractLocalFuncLiteral)
+	if rightNode.Kind() == "func_literal" {
+		return
+	}
+
+	// Skip literals
+	switch rightNode.Kind() {
+	case "interpreted_string_literal", "raw_string_literal", "int_literal",
+		"float_literal", "true", "false", "nil", "composite_literal", "slice_literal":
+		return
+	}
+
+	blockScope := astutil.DetectBlockScope(declarationNode, scope)
+	scopeKey := blockScope.ScopeKey
+	mergeGoScopeParents(result, blockScope.ScopeParents)
+
+	switch rightNode.Kind() {
+	case "identifier":
+		// copy: b := a
+		rhsName := rightNode.Utf8Text(content)
+		result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+			Kind:  "copy",
+			LHS:   variableName,
+			Scope: scopeKey,
+			RHS:   rhsName,
+		})
+
+	case "selector_expression":
+		// field_access: val := receiver.field (not a call)
+		objectNode := rightNode.ChildByFieldName("operand")
+		fieldNode := rightNode.ChildByFieldName("field")
+		if objectNode != nil && fieldNode != nil {
+			result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+				Kind:     "field_access",
+				LHS:      variableName,
+				Scope:    scopeKey,
+				Receiver: objectNode.Utf8Text(content),
+				Field:    fieldNode.Utf8Text(content),
+			})
+		}
+
+	case "call_expression":
+		functionNode := rightNode.ChildByFieldName("function")
+		if functionNode == nil {
+			return
+		}
+		switch functionNode.Kind() {
+		case "identifier":
+			// call_result: result := funcName()
+			calleeName := functionNode.Utf8Text(content)
+			result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+				Kind:   "call_result",
+				LHS:    variableName,
+				Scope:  scopeKey,
+				Callee: calleeName,
+			})
+		case "selector_expression":
+			operandNode := functionNode.ChildByFieldName("operand")
+			fieldNode := functionNode.ChildByFieldName("field")
+			if operandNode == nil || fieldNode == nil {
+				return
+			}
+			operandText := operandNode.Utf8Text(content)
+			methodName := fieldNode.Utf8Text(content)
+
+			if _, isImport := importsMap[operandText]; isImport {
+				// call_result: result := pkg.Func()
+				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+					Kind:   "call_result",
+					LHS:    variableName,
+					Scope:  scopeKey,
+					Callee: operandText + "." + methodName,
+				})
+			} else {
+				// method_call_result: val := receiver.Method()
+				result.PendingAssignments = append(result.PendingAssignments, model.PendingAssignment{
+					Kind:     "method_call_result",
+					LHS:      variableName,
+					Scope:    scopeKey,
+					Receiver: operandText,
+					Method:   methodName,
+				})
+			}
+		}
+	}
+}
 
 // extractTypeParams extracts generic type parameter names from a node's type_parameters child.
 // For Go: [T any, U comparable] → ["T", "U"] (only names, not constraints).

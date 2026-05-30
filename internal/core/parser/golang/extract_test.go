@@ -559,3 +559,131 @@ func setup() {
 		t.Error("expected TypeHint for 'r' with type '*http.Request'")
 	}
 }
+
+func TestGoPendingAssignment(t *testing.T) {
+	code := []byte(`package main
+
+import (
+	"reflect"
+	"strings"
+)
+
+func doSomething() interface{} { return nil }
+
+func example(input string) {
+	// call_result: bare function call
+	result := doSomething()
+
+	// call_result: import package function call
+	index := strings.Index(input, ".")
+	reflectValue := reflect.ValueOf(input)
+
+	// method_call_result: variable method call
+	elem := reflectValue.Index(0)
+	trimmed := result.String()
+
+	// field_access: field access
+	length := result.Len
+
+	// copy: variable assignment
+	alias := trimmed
+
+	// skip: multi-return (handled by extractMultiReturnHints)
+	a, b := doSomething(), doSomething()
+
+	// skip: underscore
+	_ = doSomething()
+
+	// skip: string literal
+	s := "hello"
+
+	// skip: func literal (handled by extractLocalFuncLiteral)
+	handler := func() {}
+
+	_, _, _, _, _, _, _ = index, reflectValue, elem, length, alias, a, b
+	_, _ = s, handler
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "pending.go", Language: "go"}
+	Extract(root, code, file, result)
+
+	// Build map of PendingAssignments by LHS
+	type pendingInfo struct {
+		Kind     string
+		Callee   string
+		Receiver string
+		Method   string
+		Field    string
+		RHS      string
+	}
+	pendingMap := make(map[string]pendingInfo)
+	for _, pending := range result.PendingAssignments {
+		pendingMap[pending.LHS] = pendingInfo{
+			Kind:     pending.Kind,
+			Callee:   pending.Callee,
+			Receiver: pending.Receiver,
+			Method:   pending.Method,
+			Field:    pending.Field,
+			RHS:      pending.RHS,
+		}
+	}
+
+	// UT-01: call_result bare function
+	if p, ok := pendingMap["result"]; !ok || p.Kind != "call_result" || p.Callee != "doSomething" {
+		t.Errorf("UT-01 result: expected call_result/doSomething, got %+v", pendingMap["result"])
+	}
+
+	// UT-02: call_result import package
+	if p, ok := pendingMap["index"]; !ok || p.Kind != "call_result" || p.Callee != "strings.Index" {
+		t.Errorf("UT-02 index: expected call_result/strings.Index, got %+v", pendingMap["index"])
+	}
+	if p, ok := pendingMap["reflectValue"]; !ok || p.Kind != "call_result" || p.Callee != "reflect.ValueOf" {
+		t.Errorf("UT-02 reflectValue: expected call_result/reflect.ValueOf, got %+v", pendingMap["reflectValue"])
+	}
+
+	// UT-03: method_call_result
+	if p, ok := pendingMap["elem"]; !ok || p.Kind != "method_call_result" || p.Receiver != "reflectValue" || p.Method != "Index" {
+		t.Errorf("UT-03 elem: expected method_call_result/reflectValue.Index, got %+v", pendingMap["elem"])
+	}
+	if p, ok := pendingMap["trimmed"]; !ok || p.Kind != "method_call_result" || p.Receiver != "result" || p.Method != "String" {
+		t.Errorf("UT-03 trimmed: expected method_call_result/result.String, got %+v", pendingMap["trimmed"])
+	}
+
+	// UT-04: field_access
+	if p, ok := pendingMap["length"]; !ok || p.Kind != "field_access" || p.Receiver != "result" || p.Field != "Len" {
+		t.Errorf("UT-04 length: expected field_access/result.Len, got %+v", pendingMap["length"])
+	}
+
+	// UT-05: copy
+	if p, ok := pendingMap["alias"]; !ok || p.Kind != "copy" || p.RHS != "trimmed" {
+		t.Errorf("UT-05 alias: expected copy/trimmed, got %+v", pendingMap["alias"])
+	}
+
+	// UT-06: skip multi-return (should NOT appear as PendingAssignment)
+	if _, ok := pendingMap["a"]; ok {
+		t.Error("UT-06: multi-return 'a' should not be in PendingAssignments")
+	}
+	if _, ok := pendingMap["b"]; ok {
+		t.Error("UT-06: multi-return 'b' should not be in PendingAssignments")
+	}
+
+	// UT-08: skip underscore
+	if _, ok := pendingMap["_"]; ok {
+		t.Error("UT-08: underscore should not be in PendingAssignments")
+	}
+
+	// UT-09: skip string literal
+	if _, ok := pendingMap["s"]; ok {
+		t.Error("UT-09: string literal 's' should not be in PendingAssignments")
+	}
+
+	// UT-07: skip func literal
+	if p, ok := pendingMap["handler"]; ok && p.Kind != "" {
+		t.Errorf("UT-07: func literal 'handler' should not be in PendingAssignments, got %+v", p)
+	}
+
+	t.Logf("✅ Go PendingAssignment: %d assignments extracted", len(result.PendingAssignments))
+}

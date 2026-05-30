@@ -36,7 +36,7 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 
 	// Phase B + C: Type inference, call/heritage/override resolution, cross-file propagation
 	callRelations, heritageRelations, overrideRelations, usesRelations, callHints, err := indexer.resolveCallsAndHeritage(
-		ctx, resolverInstance, parseResults, symbolTable, allCalls, allHeritage, importRelations)
+		ctx, resolverInstance, parseResults, symbolTable, allCalls, allHeritage, importRelations, langHelpers, scanCtx.projectInfo.Language)
 	if err != nil {
 		return nil, err
 	}
@@ -83,12 +83,29 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 	allCalls []model.RawCall,
 	allHeritage []model.RawHeritage,
 	importRelations []model.ResolvedRelation,
+	langHelpers map[string]resolver.LanguageHelper,
+	language string,
 ) ([]model.ResolvedRelation, []model.ResolvedRelation, []model.ResolvedRelation, []model.ResolvedRelation, []model.UnresolvedHint, error) {
 
 	// Step 1: Local type inference — build per-file TypeEnv from constructor calls and type annotations.
 	// Example: "UserService svc = new UserService()" → svc maps to type UserService.
 	indexer.progress.EmitSub(PhaseResolving, SubInferLocal, "")
 	typeInfer := typeinfer.New()
+
+	// Set ExternalLookup for Go to resolve external package return types
+	if language == constants.LangGo {
+		if goHelper, exists := langHelpers[constants.LangGo]; exists {
+			typeInfer.ExternalLookup = func(qualifiedCall string) (model.ReturnType, bool) {
+				dotIndex := strings.LastIndex(qualifiedCall, ".")
+				if dotIndex <= 0 {
+					return model.ReturnType{}, false
+				}
+				packageOrType := qualifiedCall[:dotIndex]
+				methodName := qualifiedCall[dotIndex+1:]
+				return goHelper.LookupMethodReturn(packageOrType, methodName, nil)
+			}
+		}
+	}
 	envs := make(map[string]*model.TypeEnv)
 	for _, parseResult := range parseResults {
 		envs[parseResult.FilePath] = typeInfer.InferLocal(&parseResult)

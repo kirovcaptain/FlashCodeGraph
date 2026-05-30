@@ -19,16 +19,5 @@
   "requests.Response.content": "bytes",
   "requests.Response.status_code": "int",
   "requests.Response.headers": "dict",
-  "requests.Response.raise_for_status": "None",
-  "httpx.get": "httpx.Response",
-  "httpx.post": "httpx.Response",
-  "httpx.put": "httpx.Response",
-  "httpx.delete": "httpx.Response",
-  "httpx.Client": "httpx.Client",
-  "httpx.AsyncClient": "httpx.AsyncClient",
-  "httpx.Client.get": "httpx.Response",
-  "httpx.Client.post": "httpx.Response",
-  "httpx.Response.json": "Any",
-  "httpx.Response.text": "str",
-  "httpx.Response.status_code": "int"
+  "requests.Response.raise_for_status": "None"
 }

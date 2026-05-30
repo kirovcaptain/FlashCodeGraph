@@ -10,7 +10,12 @@ import (
 )
 
 // TypeInfer performs type inference on parsed results.
-type TypeInfer struct{}
+type TypeInfer struct {
+	// ExternalLookup queries external method return types (e.g. from ExternalMethodManager).
+	// Input is a qualified call like "reflect.ValueOf" or "reflect.Value.Index".
+	// Returns the return type if known.
+	ExternalLookup func(qualifiedCall string) (model.ReturnType, bool)
+}
 
 // New creates a TypeInfer instance.
 func New() *TypeInfer {
@@ -151,6 +156,11 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 				typeName = lookupInEnv(env, p.Scope, p.RHS)
 			case "call_result":
 				typeName, typeArgs = lookupReturnTypeWithArgs(p.Callee, findByName, p.ArgTypes)
+				if typeName == "" && infer.ExternalLookup != nil {
+					if returnType, found := infer.ExternalLookup(p.Callee); found {
+						typeName = returnType.Name
+					}
+				}
 			case "field_access":
 				receiverType := lookupInEnv(env, p.Scope, p.Receiver)
 				if receiverType != "" {
@@ -169,6 +179,11 @@ func (infer *TypeInfer) ResolveFixpoint(env *model.TypeEnv, pendings []model.Pen
 				receiverType := lookupInEnv(env, p.Scope, p.Receiver)
 				if receiverType != "" {
 					typeName, typeArgs = lookupMethodReturnWithTypeArgs(env, p.Scope, p.Receiver, receiverType, p.Method, findByName, p.ArgTypes)
+					if typeName == "" && infer.ExternalLookup != nil {
+						if returnType, found := infer.ExternalLookup(receiverType + "." + p.Method); found {
+							typeName = returnType.Name
+						}
+					}
 				}
 			case "destructure":
 				returnType := lookupReturnType(p.Callee, findByName, nil)

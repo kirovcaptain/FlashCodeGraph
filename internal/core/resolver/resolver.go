@@ -277,6 +277,25 @@ func (resolver *Resolver) resolveCallWithReceiver(
 	langHelper LanguageHelper,
 ) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
 
+	// Early exit: receiver is a known external package — not a project-internal call.
+	if langHelper != nil && langHelper.IsExternalPackage(call.ReceiverExpr) {
+		return nil, nil, false
+	}
+	// Early exit: receiver's inferred type belongs to an external package.
+	if langHelper != nil {
+		if env := envs[call.FilePath]; env != nil {
+			receiverType := typeinfer.LookupInEnv(env, call.CallerName, call.ReceiverExpr)
+			if receiverType != "" {
+				if dotIndex := strings.Index(receiverType, "."); dotIndex > 0 {
+					typePrefix := receiverType[:dotIndex]
+					if langHelper.IsExternalPackage(typePrefix) {
+						return nil, nil, false
+					}
+				}
+			}
+		}
+	}
+
 	// Strategy 1: super.method() — delegate to language helper for parent class resolution.
 	if relations, handled := langHelper.ResolveSuperCall(call, funcCandidates, resolver.heritage, envs, callerID); handled {
 		return relations, nil, false
@@ -627,11 +646,7 @@ func (resolver *Resolver) resolveCallFallback(
 	}
 
 	// Strategy 4: Global unique name — only one candidate exists in the entire project.
-	// Skip if receiver is a known external package (e.g. "strings", "fmt") to avoid false matches.
 	if len(realCandidates) == 1 {
-		if call.ReceiverExpr != "" && langHelper != nil && langHelper.IsExternalPackage(call.ReceiverExpr) {
-			return nil, nil
-		}
 		return []model.ResolvedRelation{makeRelation(callerID, realCandidates[0].ID, call, ConfidenceNameUnique, "name_unique", 1)}, nil
 	}
 
