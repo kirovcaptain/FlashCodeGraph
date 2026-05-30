@@ -1433,3 +1433,75 @@ export class OrderProcessor {
 		t.Errorf("expected LambdaOwnerReceiver='this.orders', got %q", lambdaCall.LambdaOwnerReceiver)
 	}
 }
+
+func TestTSMCPToolRouteExtraction(t *testing.T) {
+	code := []byte(`import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+const server = new McpServer({ name: "test" });
+
+function registerTools() {
+    server.tool("list_files", "List files in a directory", { path: z.string() }, async ({ path }) => {
+        return { content: [] };
+    });
+
+    server.tool("search_code", "Search code", { query: z.string() }, async ({ query }) => {
+        return { content: [] };
+    });
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "tools.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var mcpRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "TOOL" {
+			mcpRoutes = append(mcpRoutes, route)
+		}
+	}
+	if len(mcpRoutes) != 2 {
+		t.Fatalf("expected 2 MCP tool routes, got %d (all routes: %+v)", len(mcpRoutes), result.Routes)
+	}
+	if mcpRoutes[0].PathPattern != "list_files" {
+		t.Errorf("expected tool name 'list_files', got '%s'", mcpRoutes[0].PathPattern)
+	}
+	if mcpRoutes[1].PathPattern != "search_code" {
+		t.Errorf("expected tool name 'search_code', got '%s'", mcpRoutes[1].PathPattern)
+	}
+	if mcpRoutes[0].Framework != "mcp" || mcpRoutes[1].Framework != "mcp" {
+		t.Error("expected framework 'mcp'")
+	}
+	t.Log("✅ TS MCP tool route extraction: 2 tools extracted correctly")
+}
+
+func TestTSMCPToolRouteExtraction_TopLevel(t *testing.T) {
+	code := []byte(`import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+const server = new McpServer({ name: "test" });
+
+server.tool("list_files", "List files", { path: z.string() }, async ({ path }) => {
+    return { content: [] };
+});
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "tools.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var mcpRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "TOOL" {
+			mcpRoutes = append(mcpRoutes, route)
+		}
+	}
+	if len(mcpRoutes) != 1 {
+		t.Fatalf("expected 1 MCP tool route from top-level, got %d", len(mcpRoutes))
+	}
+	if mcpRoutes[0].PathPattern != "list_files" {
+		t.Errorf("expected tool name 'list_files', got '%s'", mcpRoutes[0].PathPattern)
+	}
+	t.Log("✅ TS MCP top-level tool route extraction works")
+}

@@ -38,6 +38,10 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 		case "lexical_declaration", "variable_declaration":
 			extractArrowFunctions(node, content, file.RelPath, "", result)
 			return false
+		case "expression_statement":
+			// Handle top-level MCP tool registration: server.tool("name", ...)
+			extractTopLevelMCPTool(node, content, file.RelPath, result)
+			return false
 		}
 		return true
 	})
@@ -845,6 +849,11 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 				}
 			}
 
+			// 4. MCP tool registration: server.tool("name", ..., handler)
+			if calledName == "tool" && receiverExpr != "" && hasTSMCPImport(result) {
+				extractTSMCPToolRoute(node, content, filePath, argExprs, lambdaMap, result)
+			}
+
 			if calledName != "" {
 				flowContext := astutil.DetectFlowContext(node, content)
 				blockScope := astutil.DetectBlockScope(node, qualifiedCallerName)
@@ -1480,4 +1489,102 @@ func sameTSASTNode(a, b *tree_sitter.Node) bool {
 		return false
 	}
 	return a.StartByte() == b.StartByte() && a.EndByte() == b.EndByte() && a.Kind() == b.Kind()
+}
+
+// hasTSMCPImport checks if the file imports an MCP-related package.
+func hasTSMCPImport(result *model.ParseResult) bool {
+	for _, imp := range result.Imports {
+		if strings.Contains(imp.ModulePath, "modelcontextprotocol") || strings.Contains(imp.ModulePath, "/mcp") {
+			return true
+		}
+	}
+	return false
+}
+
+// extractTSMCPToolRoute extracts MCP tool route from server.tool("name", ..., handler) calls.
+func extractTSMCPToolRoute(node *tree_sitter.Node, content []byte, filePath string, argExprs []string, lambdaMap map[uintptr]string, result *model.ParseResult) {
+	argsNode := node.ChildByFieldName("arguments")
+	if argsNode == nil {
+		return
+	}
+
+	// Collect named argument nodes
+	var namedArgNodes []*tree_sitter.Node
+	for i := uint(0); i < argsNode.ChildCount(); i++ {
+		child := argsNode.Child(i)
+		if child.IsNamed() {
+			namedArgNodes = append(namedArgNodes, child)
+		}
+	}
+	if len(namedArgNodes) < 2 {
+		return
+	}
+
+	// First arg must be a string literal (tool name)
+	firstArg := namedArgNodes[0]
+	if firstArg.Kind() != "string" && firstArg.Kind() != "template_string" {
+		return
+	}
+	toolName := strings.Trim(firstArg.Utf8Text(content), "\"'`")
+	if toolName == "" {
+		return
+	}
+
+	// Handler is the last argument — could be arrow_function (in lambdaMap) or identifier
+	lastArg := namedArgNodes[len(namedArgNodes)-1]
+	handlerName := ""
+	switch lastArg.Kind() {
+	case "arrow_function":
+		if lambdaMap != nil {
+			if qualifiedName, exists := lambdaMap[lastArg.Id()]; exists {
+				handlerName = qualifiedName
+			}
+		}
+		// For top-level or unresolved arrow functions, use tool name as handler
+		if handlerName == "" {
+			handlerName = toolName
+		}
+	case "identifier":
+		handlerName = lastArg.Utf8Text(content)
+	case "member_expression":
+		propNode := lastArg.ChildByFieldName("property")
+		if propNode != nil {
+			handlerName = propNode.Utf8Text(content)
+		}
+	}
+	if handlerName == "" {
+		return
+	}
+
+	result.Routes = append(result.Routes, model.RawRoute{
+		Method:      "TOOL",
+		PathPattern: toolName,
+		Handlers:    []string{handlerName},
+		Framework:   "mcp",
+		FilePath:    filePath,
+		Line:        int(node.StartPosition().Row) + 1,
+	})
+}
+
+// extractTopLevelMCPTool handles top-level expression_statement containing server.tool(...) calls.
+func extractTopLevelMCPTool(node *tree_sitter.Node, content []byte, filePath string, result *model.ParseResult) {
+	if !hasTSMCPImport(result) {
+		return
+	}
+	// expression_statement → call_expression
+	astutil.WalkNamedChildren(node, func(child *tree_sitter.Node) bool {
+		if child.Kind() != "call_expression" {
+			return true
+		}
+		funcNode := child.ChildByFieldName("function")
+		if funcNode == nil || funcNode.Kind() != "member_expression" {
+			return true
+		}
+		propNode := funcNode.ChildByFieldName("property")
+		if propNode == nil || propNode.Utf8Text(content) != "tool" {
+			return true
+		}
+		extractTSMCPToolRoute(child, content, filePath, nil, nil, result)
+		return false
+	})
 }

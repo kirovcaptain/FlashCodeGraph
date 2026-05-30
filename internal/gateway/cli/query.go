@@ -40,6 +40,7 @@ var (
 	traceMethod      string
 	traceDepth       int
 	traceMode        string
+	routesTypeFilter string
 )
 
 func init() {
@@ -65,9 +66,10 @@ func init() {
 	routesCmd := &cobra.Command{
 		Use:     "routes",
 		GroupID: "query",
-		Short:   "List all HTTP routes",
+		Short:   "List routes (HTTP, CLI, MCP)",
 		RunE:    runRoutes,
 	}
+	routesCmd.Flags().StringVar(&routesTypeFilter, "type", "", "Filter by type: http, cli, mcp, all (default: http)")
 	rootCmd.AddCommand(routesCmd)
 
 	// fcg trace <route>
@@ -552,6 +554,35 @@ func runRoutes(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// Filter by type (default: http for backward compatibility)
+	filterType := strings.ToLower(routesTypeFilter)
+	if filterType == "" {
+		filterType = "http"
+	}
+	if filterType != "all" {
+		var filtered []model.Node
+		for _, r := range routes {
+			method, _ := r.Properties["method"].(string)
+			framework, _ := r.Properties["framework"].(string)
+			switch filterType {
+			case "http":
+				if method != "CLI" && method != "TOOL" {
+					filtered = append(filtered, r)
+				}
+			case "cli":
+				if method == "CLI" || framework == "cobra" {
+					filtered = append(filtered, r)
+				}
+			case "mcp":
+				if method == "TOOL" || framework == "mcp" {
+					filtered = append(filtered, r)
+				}
+			}
+		}
+		routes = filtered
+	}
+
 	if len(routes) == 0 {
 		fmt.Println("No routes found.")
 		return nil

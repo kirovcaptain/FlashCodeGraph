@@ -1278,11 +1278,15 @@ func (querier *Querier) Report(ctx context.Context) (*model.GraphReport, error) 
 // findRouteNode finds a route node by path_pattern. Tries exact match first, then contains fallback.
 // Returns error with candidate list if multiple routes match via contains.
 func (querier *Querier) findRouteNode(ctx context.Context, routePath string, method string) (*model.Node, error) {
+	// Auto-detect route type: "/" prefix → HTTP only; otherwise → CLI/MCP only
+	isHTTPRoute := strings.HasPrefix(routePath, "/")
+
 	// 1. Exact match
 	exactMatches, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindRoute, "path_pattern", routePath, storage.MatchExact, 0)
 	if err != nil {
 		return nil, err
 	}
+	exactMatches = filterByRouteType(exactMatches, isHTTPRoute)
 	if node := filterByMethod(exactMatches, method); node != nil {
 		return node, nil
 	}
@@ -1292,6 +1296,7 @@ func (querier *Querier) findRouteNode(ctx context.Context, routePath string, met
 	if err != nil {
 		return nil, err
 	}
+	containsMatches = filterByRouteType(containsMatches, isHTTPRoute)
 	filtered := filterAllByMethod(containsMatches, method)
 	if len(filtered) == 1 {
 		return &filtered[0], nil
@@ -1305,6 +1310,24 @@ func (querier *Querier) findRouteNode(ctx context.Context, routePath string, met
 	}
 
 	return nil, fmt.Errorf("route not found: %s %s", method, routePath)
+}
+
+// filterByRouteType filters routes by HTTP vs CLI/MCP based on method field.
+func filterByRouteType(nodes []model.Node, httpOnly bool) []model.Node {
+	var result []model.Node
+	for _, node := range nodes {
+		nodeMethod := propString(node.Properties, "method")
+		if httpOnly {
+			if nodeMethod != "CLI" && nodeMethod != "TOOL" {
+				result = append(result, node)
+			}
+		} else {
+			if nodeMethod == "CLI" || nodeMethod == "TOOL" {
+				result = append(result, node)
+			}
+		}
+	}
+	return result
 }
 
 // filterByMethod returns the first node matching the method filter, or nil if none match.

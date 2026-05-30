@@ -235,9 +235,10 @@ func (srv *Server) registerTools() {
 	), srv.handleQueryByLayer)
 
 	srv.mcpServer.AddTool(mcp.NewTool("query_routes",
-		mcp.WithDescription("List all HTTP routes in a project. Returns method, path, handler function, and framework for each route."),
+		mcp.WithDescription("List all routes in a project. Returns method, path, handler function, and framework for each route. Defaults to HTTP routes only; use type parameter to include CLI or MCP tool routes."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project root directory")),
 		mcp.WithString("method", mcp.Description("Filter by HTTP method (GET/POST/PUT/DELETE)")),
+		mcp.WithString("type", mcp.Description("Filter by route type: http (default), cli, mcp, all")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional)")),
 	), srv.handleQueryRoutes)
 
@@ -260,7 +261,7 @@ func (srv *Server) registerTools() {
 	srv.mcpServer.AddTool(mcp.NewTool("query_entry_points",
 		mcp.WithDescription("List all detected entry points — HTTP endpoints, CLI commands, remote clients, dead code. Run analyze_repository first. Use type filter to narrow results."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the repository")),
-		mcp.WithString("type", mcp.Description("Filter by type: http_endpoint, cli_command, suspected_dead, unknown_entry")),
+		mcp.WithString("type", mcp.Description("Filter by type: http_endpoint, cli_command, mcp_tool, suspected_dead, unknown_entry")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 50)")),
 		mcp.WithNumber("offset", mcp.Description("Skip first N results for pagination (default 0)")),
 		mcp.WithString("branch", mcp.Description("Git branch name (optional, auto-detected if omitted)")),
@@ -862,6 +863,7 @@ func (srv *Server) handleQueryByLayer(ctx context.Context, request mcp.CallToolR
 func (srv *Server) handleQueryRoutes(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	path, _ := request.GetArguments()["path"].(string)
 	methodFilter, _ := request.GetArguments()["method"].(string)
+	typeFilter, _ := request.GetArguments()["type"].(string)
 	branchName, _ := request.GetArguments()["branch"].(string)
 
 	_, store, resolvedBranch, err := srv.createQuerier(path, branchName)
@@ -875,15 +877,40 @@ func (srv *Server) handleQueryRoutes(ctx context.Context, request mcp.CallToolRe
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	// Default to http for backward compatibility
+	if typeFilter == "" {
+		typeFilter = "http"
+	}
+	typeFilter = strings.ToLower(typeFilter)
+
 	var results []routeEntry
 	for _, r := range routes {
 		method, _ := r.Properties["method"].(string)
+		framework, _ := r.Properties["framework"].(string)
+
+		// Type filter
+		if typeFilter != "all" {
+			switch typeFilter {
+			case "http":
+				if method == "CLI" || method == "TOOL" {
+					continue
+				}
+			case "cli":
+				if method != "CLI" && framework != "cobra" {
+					continue
+				}
+			case "mcp":
+				if method != "TOOL" && framework != "mcp" {
+					continue
+				}
+			}
+		}
+
 		if methodFilter != "" && !strings.EqualFold(method, methodFilter) {
 			continue
 		}
 		pathPattern, _ := r.Properties["path_pattern"].(string)
 		handlerMethod, _ := r.Properties["handler_method"].(string)
-		framework, _ := r.Properties["framework"].(string)
 		middlewaresRaw, _ := r.Properties["middlewares"].(string)
 		var middlewares []string
 		if middlewaresRaw != "" {

@@ -659,6 +659,22 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 	ExtractGoRemoteCalls(body, content, fullCaller, filePath, importsMap, result)
 	ExtractGoGRPCRegister(body, content, fullCaller, filePath, result)
 
+	// Check if cobra/mcp imports exist for framework route extraction
+	hasCobraImport := false
+	hasMCPImport := false
+	for alias := range importsMap {
+		if alias == "cobra" {
+			hasCobraImport = true
+		}
+		if alias == "mcp" {
+			hasMCPImport = true
+		}
+	}
+
+	// Cobra command collection for delayed Route generation
+	cobraCommands := map[string]struct{ Use, Handler string }{}
+	cobraParentMap := map[string]string{}
+
 	lambdaCounter := 0                        // method-body-level counter shared across all call sites
 	lambdaMap := make(map[uintptr]string)     // node.Id() → lambdaQualifiedName for route handler resolution
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
@@ -689,6 +705,9 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 			mergeGoScopeParents(result, blockScope.ScopeParents)
 			extractLocalFuncLiteral(node, content, filePath, fullCaller, result)
 			extractGoPendingAssignment(node, content, fullCaller, importsMap, result)
+			if hasCobraImport {
+				collectCobraCommand(node, content, cobraCommands)
+			}
 		}
 		if node.Kind() == "assignment_statement" {
 			extractGoPendingAssignment(node, content, fullCaller, importsMap, result)
@@ -874,9 +893,50 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 					ChainDepth:   chainDepth,
 				})
 			}
+
+			// Cobra: collect AddCommand parent-child relationships
+			if hasCobraImport && calledName == "AddCommand" && receiverExpr != "" {
+				collectCobraParent(node, content, receiverExpr, cobraCommands, cobraParentMap, filePath, result)
+			}
+
+			// MCP: extract AddTool route
+			if hasMCPImport && calledName == "AddTool" && receiverExpr != "" {
+				extractMCPToolRoute(node, content, filePath, lambdaMap, result)
+			}
 		}
 		return true
 	})
+
+	// Delayed cobra Route generation: resolve parent chain and emit RawRoutes
+	if hasCobraImport {
+		for variableName, command := range cobraCommands {
+			if command.Handler == "" {
+				continue
+			}
+			fullPath := command.Use
+			current := variableName
+			for {
+				parentName, hasParent := cobraParentMap[current]
+				if !hasParent {
+					break
+				}
+				parentCommand, parentExists := cobraCommands[parentName]
+				if !parentExists {
+					break
+				}
+				fullPath = parentCommand.Use + " " + fullPath
+				current = parentName
+			}
+			result.Routes = append(result.Routes, model.RawRoute{
+				Method:      "CLI",
+				PathPattern: fullPath,
+				Handlers:    []string{command.Handler},
+				Framework:   "cobra",
+				FilePath:    filePath,
+				Line:        0,
+			})
+		}
+	}
 }
 
 // extractGoPendingAssignment extracts single-return-value assignment patterns for fixpoint type propagation.
@@ -1032,6 +1092,351 @@ func extractGoPendingAssignmentFromSpec(declarationNode *tree_sitter.Node, conte
 			}
 		}
 	}
+}
+
+
+
+// extractCobraCommandName extracts only the command name from cobra Use field (strips argument descriptions).
+// "index [path]" → "index", "get <key>" → "get", "serve" → "serve"
+func extractCobraCommandName(useField string) string {
+	if spaceIndex := strings.IndexByte(useField, ' '); spaceIndex > 0 {
+		return useField[:spaceIndex]
+	}
+	return useField
+}
+// collectCobraCommand extracts cobra.Command info from a short_var_declaration or var_declaration.
+// Records variable name → {Use, Handler} for delayed Route generation.
+func collectCobraCommand(node *tree_sitter.Node, content []byte, cobraCommands map[string]struct{ Use, Handler string }) {
+	var declarationNode *tree_sitter.Node
+	if node.Kind() == "short_var_declaration" {
+		declarationNode = node
+	} else if node.Kind() == "var_declaration" {
+		for i := uint(0); i < node.NamedChildCount(); i++ {
+			child := node.NamedChild(i)
+			if child.Kind() == "var_spec" {
+				collectCobraCommandFromSpec(child, content, cobraCommands)
+			}
+		}
+		return
+	} else {
+		return
+	}
+	collectCobraCommandFromSpec(declarationNode, content, cobraCommands)
+}
+
+func collectCobraCommandFromSpec(declarationNode *tree_sitter.Node, content []byte, cobraCommands map[string]struct{ Use, Handler string }) {
+	leftNode := declarationNode.ChildByFieldName("left")
+	if leftNode == nil {
+		leftNode = declarationNode.ChildByFieldName("name")
+	}
+	rightNode := declarationNode.ChildByFieldName("right")
+	if rightNode == nil {
+		rightNode = declarationNode.ChildByFieldName("value")
+	}
+	if leftNode == nil || rightNode == nil {
+		return
+	}
+	// Unwrap expression_list
+	if leftNode.Kind() == "expression_list" && leftNode.NamedChildCount() == 1 {
+		leftNode = leftNode.NamedChild(0)
+	}
+	if rightNode.Kind() == "expression_list" && rightNode.NamedChildCount() == 1 {
+		rightNode = rightNode.NamedChild(0)
+	}
+	if leftNode.Kind() != "identifier" {
+		return
+	}
+	variableName := leftNode.Utf8Text(content)
+
+	// Unwrap unary_expression (&)
+	if rightNode.Kind() == "unary_expression" {
+		for i := uint(0); i < rightNode.NamedChildCount(); i++ {
+			child := rightNode.NamedChild(i)
+			if child.Kind() == "composite_literal" {
+				rightNode = child
+				break
+			}
+		}
+	}
+	if rightNode.Kind() != "composite_literal" {
+		return
+	}
+	// Check type contains "Command"
+	typeNode := rightNode.ChildByFieldName("type")
+	if typeNode == nil || !strings.Contains(typeNode.Utf8Text(content), "Command") {
+		return
+	}
+
+	// Find literal_value child
+	var literalValue *tree_sitter.Node
+	for i := uint(0); i < rightNode.NamedChildCount(); i++ {
+		child := rightNode.NamedChild(i)
+		if child.Kind() == "literal_value" {
+			literalValue = child
+			break
+		}
+	}
+	if literalValue == nil {
+		return
+	}
+
+	// Extract Use and RunE/Run from keyed_elements
+	// keyed_element structure: literal_element(key) : literal_element(value)
+	var useValue, handlerName string
+	for i := uint(0); i < literalValue.NamedChildCount(); i++ {
+		element := literalValue.NamedChild(i)
+		if element.Kind() != "keyed_element" || element.NamedChildCount() < 2 {
+			continue
+		}
+		keyLiteral := element.NamedChild(0)   // literal_element wrapping field name
+		valueLiteral := element.NamedChild(1) // literal_element wrapping value
+		if keyLiteral == nil || valueLiteral == nil {
+			continue
+		}
+		// Unwrap literal_element to get actual nodes
+		var keyIdentifier, valueChild *tree_sitter.Node
+		if keyLiteral.NamedChildCount() > 0 {
+			keyIdentifier = keyLiteral.NamedChild(0)
+		}
+		if valueLiteral.NamedChildCount() > 0 {
+			valueChild = valueLiteral.NamedChild(0)
+		}
+		if keyIdentifier == nil || valueChild == nil {
+			continue
+		}
+		fieldName := keyIdentifier.Utf8Text(content)
+		switch fieldName {
+		case "Use":
+			useValue = extractCobraCommandName(strings.Trim(valueChild.Utf8Text(content), "\"'`"))
+		case "RunE", "Run":
+			if valueChild.Kind() == "identifier" {
+				handlerName = valueChild.Utf8Text(content)
+			}
+		}
+	}
+
+	if useValue != "" {
+		cobraCommands[variableName] = struct{ Use, Handler string }{
+			Use:     useValue,
+			Handler: handlerName,
+		}
+	}
+}
+
+// collectCobraParent records AddCommand parent-child relationships.
+// Also handles inline cobra.Command composite_literals as AddCommand arguments.
+func collectCobraParent(node *tree_sitter.Node, content []byte, receiverName string, cobraCommands map[string]struct{ Use, Handler string }, cobraParentMap map[string]string, filePath string, result *model.ParseResult) {
+	argsNode := node.ChildByFieldName("arguments")
+	if argsNode == nil {
+		return
+	}
+	for i := uint(0); i < argsNode.ChildCount(); i++ {
+		argNode := argsNode.Child(i)
+		if !argNode.IsNamed() {
+			continue
+		}
+		switch argNode.Kind() {
+		case "identifier":
+			// Variable reference: mcpCmd.AddCommand(serveCmd)
+			cobraParentMap[argNode.Utf8Text(content)] = receiverName
+		case "unary_expression":
+			// Inline: rootCmd.AddCommand(&cobra.Command{Use: "init", RunE: runInit})
+			for j := uint(0); j < argNode.NamedChildCount(); j++ {
+				child := argNode.NamedChild(j)
+				if child.Kind() == "composite_literal" {
+					extractInlineCobraRoute(child, content, receiverName, cobraCommands, filePath, result)
+				}
+			}
+		}
+	}
+}
+
+// extractInlineCobraRoute handles cobra.Command composite_literals directly in AddCommand arguments.
+func extractInlineCobraRoute(compositeLiteral *tree_sitter.Node, content []byte, parentReceiver string, cobraCommands map[string]struct{ Use, Handler string }, filePath string, result *model.ParseResult) {
+	typeNode := compositeLiteral.ChildByFieldName("type")
+	if typeNode == nil || !strings.Contains(typeNode.Utf8Text(content), "Command") {
+		return
+	}
+
+	var literalValue *tree_sitter.Node
+	for i := uint(0); i < compositeLiteral.NamedChildCount(); i++ {
+		child := compositeLiteral.NamedChild(i)
+		if child.Kind() == "literal_value" {
+			literalValue = child
+			break
+		}
+	}
+	if literalValue == nil {
+		return
+	}
+
+	var useValue, handlerName string
+	for i := uint(0); i < literalValue.NamedChildCount(); i++ {
+		element := literalValue.NamedChild(i)
+		if element.Kind() != "keyed_element" || element.NamedChildCount() < 2 {
+			continue
+		}
+		keyLiteral := element.NamedChild(0)
+		valueLiteral := element.NamedChild(1)
+		if keyLiteral == nil || valueLiteral == nil {
+			continue
+		}
+		var keyIdentifier, valueChild *tree_sitter.Node
+		if keyLiteral.NamedChildCount() > 0 {
+			keyIdentifier = keyLiteral.NamedChild(0)
+		}
+		if valueLiteral.NamedChildCount() > 0 {
+			valueChild = valueLiteral.NamedChild(0)
+		}
+		if keyIdentifier == nil || valueChild == nil {
+			continue
+		}
+		fieldName := keyIdentifier.Utf8Text(content)
+		switch fieldName {
+		case "Use":
+			useValue = extractCobraCommandName(strings.Trim(valueChild.Utf8Text(content), "\"'`"))
+		case "RunE", "Run":
+			if valueChild.Kind() == "identifier" {
+				handlerName = valueChild.Utf8Text(content)
+			}
+		}
+	}
+
+	if useValue == "" || handlerName == "" {
+		return
+	}
+
+	// Resolve parent prefix
+	fullPath := useValue
+	if parentCommand, exists := cobraCommands[parentReceiver]; exists {
+		fullPath = parentCommand.Use + " " + useValue
+	}
+
+	result.Routes = append(result.Routes, model.RawRoute{
+		Method:      "CLI",
+		PathPattern: fullPath,
+		Handlers:    []string{handlerName},
+		Framework:   "cobra",
+		FilePath:    filePath,
+		Line:        int(compositeLiteral.StartPosition().Row) + 1,
+	})
+}
+
+// extractMCPToolRoute extracts MCP tool Route from AddTool call expressions.
+// Handles: server.AddTool(mcp.Tool{Name:"xxx"}, handler) and server.AddTool(mcp.NewTool("xxx",...), handler)
+func extractMCPToolRoute(node *tree_sitter.Node, content []byte, filePath string, lambdaMap map[uintptr]string, result *model.ParseResult) {
+	argsNode := node.ChildByFieldName("arguments")
+	if argsNode == nil {
+		return
+	}
+
+	// Collect named arguments
+	var namedArgs []*tree_sitter.Node
+	for i := uint(0); i < argsNode.ChildCount(); i++ {
+		child := argsNode.Child(i)
+		if child.IsNamed() {
+			namedArgs = append(namedArgs, child)
+		}
+	}
+	if len(namedArgs) < 2 {
+		return
+	}
+
+	// Extract tool name from first argument
+	toolName := ""
+	firstArg := namedArgs[0]
+	switch firstArg.Kind() {
+	case "composite_literal":
+		// mcp.Tool{Name: "xxx"}
+		toolName = extractFieldStringFromLiteral(firstArg, content, "Name")
+	case "call_expression":
+		// mcp.NewTool("xxx", ...)
+		funcNode := firstArg.ChildByFieldName("function")
+		if funcNode != nil && strings.Contains(funcNode.Utf8Text(content), "NewTool") {
+			innerArgs := firstArg.ChildByFieldName("arguments")
+			if innerArgs != nil {
+				for j := uint(0); j < innerArgs.ChildCount(); j++ {
+					child := innerArgs.Child(j)
+					if child.IsNamed() && (child.Kind() == "interpreted_string_literal" || child.Kind() == "raw_string_literal") {
+						toolName = strings.Trim(child.Utf8Text(content), "\"'`")
+						break
+					}
+				}
+			}
+		}
+	}
+	if toolName == "" {
+		return
+	}
+
+	// Extract handler from second argument
+	handlerName := ""
+	secondArg := namedArgs[1]
+	switch secondArg.Kind() {
+	case "identifier":
+		handlerName = secondArg.Utf8Text(content)
+	case "selector_expression":
+		fieldNode := secondArg.ChildByFieldName("field")
+		if fieldNode != nil {
+			handlerName = fieldNode.Utf8Text(content)
+		}
+	case "func_literal":
+		if lambdaQualifiedName, exists := lambdaMap[secondArg.Id()]; exists {
+			handlerName = lambdaQualifiedName
+		}
+	}
+	if handlerName == "" {
+		return
+	}
+
+	result.Routes = append(result.Routes, model.RawRoute{
+		Method:      "TOOL",
+		PathPattern: toolName,
+		Handlers:    []string{handlerName},
+		Framework:   "mcp",
+		FilePath:    filePath,
+		Line:        int(node.StartPosition().Row) + 1,
+	})
+}
+
+// extractFieldStringFromLiteral extracts a string value from a named field in a composite_literal.
+func extractFieldStringFromLiteral(node *tree_sitter.Node, content []byte, targetFieldName string) string {
+	var literalValue *tree_sitter.Node
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		if child.Kind() == "literal_value" {
+			literalValue = child
+			break
+		}
+	}
+	if literalValue == nil {
+		return ""
+	}
+	for i := uint(0); i < literalValue.NamedChildCount(); i++ {
+		element := literalValue.NamedChild(i)
+		if element.Kind() != "keyed_element" || element.NamedChildCount() < 2 {
+			continue
+		}
+		keyLiteral := element.NamedChild(0)
+		valueLiteral := element.NamedChild(1)
+		if keyLiteral == nil || valueLiteral == nil {
+			continue
+		}
+		var keyIdentifier *tree_sitter.Node
+		if keyLiteral.NamedChildCount() > 0 {
+			keyIdentifier = keyLiteral.NamedChild(0)
+		}
+		if keyIdentifier == nil {
+			continue
+		}
+		if keyIdentifier.Utf8Text(content) == targetFieldName {
+			if valueLiteral.NamedChildCount() > 0 {
+				return strings.Trim(valueLiteral.NamedChild(0).Utf8Text(content), "\"'`")
+			}
+			return strings.Trim(valueLiteral.Utf8Text(content), "\"'`")
+		}
+	}
+	return ""
 }
 
 // extractTypeParams extracts generic type parameter names from a node's type_parameters child.

@@ -289,3 +289,47 @@ func TestExtract_PythonBlockScopeInAssignment(t *testing.T) {
 	}
 	t.Logf("✅ Python block scope: get_data=%q, get_error=%q", scopeMap["get_data"], scopeMap["get_error"])
 }
+
+func TestPythonMCPToolRouteExtraction(t *testing.T) {
+	code := []byte(`from mcp.server import Server
+
+server = Server("my-server")
+
+@server.tool()
+def list_files(path: str) -> list:
+    """List files in directory"""
+    pass
+
+@server.tool("search_code")
+def search(query: str) -> list:
+    """Search code"""
+    pass
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "tools.py", Language: "python"}
+	Extract(root, code, file, result)
+
+	var mcpRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "TOOL" {
+			mcpRoutes = append(mcpRoutes, route)
+		}
+	}
+	if len(mcpRoutes) != 2 {
+		t.Fatalf("expected 2 MCP tool routes, got %d (routes: %+v)", len(mcpRoutes), result.Routes)
+	}
+	// First tool: no explicit name → uses function name
+	if mcpRoutes[0].PathPattern != "list_files" {
+		t.Errorf("expected tool name 'list_files', got '%s'", mcpRoutes[0].PathPattern)
+	}
+	// Second tool: explicit name
+	if mcpRoutes[1].PathPattern != "search_code" {
+		t.Errorf("expected tool name 'search_code', got '%s'", mcpRoutes[1].PathPattern)
+	}
+	if mcpRoutes[0].Framework != "mcp" || mcpRoutes[1].Framework != "mcp" {
+		t.Error("expected framework 'mcp'")
+	}
+	t.Log("✅ Python MCP tool route extraction: 2 tools extracted correctly")
+}

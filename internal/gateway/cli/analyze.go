@@ -114,7 +114,7 @@ func registerListEntries() {
 		Use:     "list-entries [type]",
 		GroupID: "query",
 		Short:   "List entry points (run 'fcg analyze entries' first)",
-		Long:    "Types: http_endpoint, cli_command, suspected_dead, unknown_entry",
+		Long:    "Types: http_endpoint, cli_command, mcp_tool, suspected_dead, unknown_entry",
 		Args:    cobra.MaximumNArgs(1),
 		RunE:    runListEntries,
 	}

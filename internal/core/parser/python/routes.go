@@ -31,7 +31,22 @@ func ExtractRoutes(node *tree_sitter.Node, content []byte, funcName, filePath st
 		}
 
 		decoratorText := child.Utf8Text(content)
-		// Match patterns: @app.route("/path"), @router.get("/path"), @bp.post("/path")
+
+		// MCP tool decorator: @server.tool() or @mcp.tool()
+		if strings.Contains(decoratorText, ".tool(") && hasMCPImport(result) {
+			toolName := extractMCPToolName(decoratorText, funcName)
+			result.Routes = append(result.Routes, model.RawRoute{
+				Method:      "TOOL",
+				PathPattern: toolName,
+				Handlers:    []string{funcName},
+				Framework:   "mcp",
+				FilePath:    filePath,
+				Line:        int(child.StartPosition().Row) + 1,
+			})
+			return
+		}
+
+		// HTTP route decorators: @app.route("/path"), @router.get("/path"), etc.
 		for methodName, httpMethod := range routeDecorators {
 			pattern := "." + methodName + "("
 			if strings.Contains(decoratorText, pattern) {
@@ -48,6 +63,26 @@ func ExtractRoutes(node *tree_sitter.Node, content []byte, funcName, filePath st
 			}
 		}
 	}
+}
+
+// hasMCPImport checks if the file imports the mcp package.
+func hasMCPImport(result *model.ParseResult) bool {
+	for _, imp := range result.Imports {
+		if imp.ModulePath == "mcp" || strings.HasPrefix(imp.ModulePath, "mcp.") {
+			return true
+		}
+	}
+	return false
+}
+
+// extractMCPToolName extracts the tool name from @server.tool() decorator.
+// If decorator has a name argument like @server.tool("my_tool"), use it; otherwise use function name.
+func extractMCPToolName(decoratorText, funcName string) string {
+	arg := extractDecoratorArg(decoratorText)
+	if arg != "" {
+		return arg
+	}
+	return funcName
 }
 
 func extractDecoratorArg(decoratorText string) string {

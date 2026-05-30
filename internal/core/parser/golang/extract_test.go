@@ -687,3 +687,100 @@ func example(input string) {
 
 	t.Logf("✅ Go PendingAssignment: %d assignments extracted", len(result.PendingAssignments))
 }
+
+func TestCobraRouteExtraction(t *testing.T) {
+	code := []byte(`package cli
+
+import "github.com/spf13/cobra"
+
+func RegisterCommands() {
+	mcpCmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "MCP commands",
+	}
+	serveCmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start MCP server",
+		RunE:  runMCPServe,
+	}
+	mcpCmd.AddCommand(serveCmd)
+	rootCmd.AddCommand(mcpCmd)
+}
+
+func runMCPServe(cmd *cobra.Command, args []string) error { return nil }
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "cli/mcp.go", Language: "go"}
+	Extract(root, code, file, result)
+
+	// Should extract "mcp serve" CLI route
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	if len(cliRoutes) != 1 {
+		t.Fatalf("expected 1 CLI route, got %d", len(cliRoutes))
+	}
+	if cliRoutes[0].PathPattern != "mcp serve" {
+		t.Errorf("expected path 'mcp serve', got '%s'", cliRoutes[0].PathPattern)
+	}
+	if cliRoutes[0].Handlers[0] != "runMCPServe" {
+		t.Errorf("expected handler 'runMCPServe', got '%s'", cliRoutes[0].Handlers[0])
+	}
+	if cliRoutes[0].Framework != "cobra" {
+		t.Errorf("expected framework 'cobra', got '%s'", cliRoutes[0].Framework)
+	}
+	t.Log("✅ Cobra route extraction: mcp serve → runMCPServe [cobra]")
+}
+
+func TestMCPToolRouteExtraction(t *testing.T) {
+	code := []byte(`package mcp
+
+import (
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+)
+
+type Server struct {
+	mcpServer *server.MCPServer
+}
+
+func (srv *Server) RegisterTools() {
+	srv.mcpServer.AddTool(mcp.NewTool("index_repository", mcp.WithDescription("Index a repo")), srv.handleIndexRepository)
+	srv.mcpServer.AddTool(mcp.NewTool("query_symbol", mcp.WithDescription("Find symbol")), srv.handleQuerySymbol)
+}
+
+func (srv *Server) handleIndexRepository() {}
+func (srv *Server) handleQuerySymbol() {}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "mcp/server.go", Language: "go"}
+	Extract(root, code, file, result)
+
+	var mcpRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "TOOL" {
+			mcpRoutes = append(mcpRoutes, route)
+		}
+	}
+	if len(mcpRoutes) != 2 {
+		t.Fatalf("expected 2 MCP tool routes, got %d", len(mcpRoutes))
+	}
+	// Verify first tool
+	found := false
+	for _, route := range mcpRoutes {
+		if route.PathPattern == "index_repository" && route.Handlers[0] == "handleIndexRepository" && route.Framework == "mcp" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected MCP route: TOOL index_repository → handleIndexRepository [mcp]")
+	}
+	t.Log("✅ MCP tool route extraction: 2 tools extracted correctly")
+}

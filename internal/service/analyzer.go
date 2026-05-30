@@ -235,10 +235,9 @@ func (analyzer *Analyzer) ClassifyRoots(ctx context.Context, forest *CallForest)
 			rootIDs[nodeID] = true
 		}
 	}
+	// All route handlers are entry points regardless of in-degree
 	for nodeID := range handlerSet {
-		if _, inForest := forest.InDegree[nodeID]; !inForest {
-			rootIDs[nodeID] = true
-		}
+		rootIDs[nodeID] = true
 	}
 
 	var entries []EntryPoint
@@ -270,11 +269,19 @@ func (analyzer *Analyzer) ClassifyRoots(ctx context.Context, forest *CallForest)
 				entry.RoutePath = ri.Path
 			}
 		case handlerSet[nodeID]:
-			entry.EntryType = "http_endpoint"
+			routeInformation, hasRoute := handlerRoute[nodeID]
+			switch {
+			case hasRoute && routeInformation.Framework == "cobra":
+				entry.EntryType = "cli_command"
+			case hasRoute && routeInformation.Framework == "mcp":
+				entry.EntryType = "mcp_tool"
+			default:
+				entry.EntryType = "http_endpoint"
+			}
 			entry.Score = 0.95
-			if ri, ok := handlerRoute[nodeID]; ok {
-				entry.RouteMethod = ri.Method
-				entry.RoutePath = ri.Path
+			if hasRoute {
+				entry.RouteMethod = routeInformation.Method
+				entry.RoutePath = routeInformation.Path
 			}
 		case hasAnnotationEntryType(nodeAnnotations[nodeID]) != "":
 			entry.EntryType = hasAnnotationEntryType(nodeAnnotations[nodeID])

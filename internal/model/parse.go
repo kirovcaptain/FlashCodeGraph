@@ -47,10 +47,10 @@ type RawHeritage struct {
 
 // RawRoute represents a route declaration extracted from AST.
 type RawRoute struct {
-	Method      string   `json:"method"`       // GET/POST/PUT/DELETE
+	Method      string   `json:"method"`       // GET/POST/PUT/DELETE/CLI/TOOL
 	PathPattern string   `json:"path_pattern"`
 	Handlers    []string `json:"handlers"`     // ordered handler chain; last element is the business handler
-	Framework   string   `json:"framework"`
+	Framework   string   `json:"framework"`    // express/flask/fastapi/django/gin/echo/fiber/cobra/mcp
 	FilePath    string   `json:"file_path"`
 	Line        int      `json:"line"`
 }
