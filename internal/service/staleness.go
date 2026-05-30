@@ -92,14 +92,25 @@ func detectSameBranchStaleness(ctx context.Context, fingerprintStore storage.Fin
 		addedCount := 0
 		modifiedCount := 0
 		for _, changedFile := range dirtyFiles {
-			if _, existsInFingerprints := fingerprints[changedFile]; existsInFingerprints {
-				modifiedCount++
-			} else {
+			storedFingerprint, existsInFingerprints := fingerprints[changedFile]
+			if !existsInFingerprints {
 				addedCount++
+				continue
+			}
+			// Compare current file stat with stored fingerprint
+			fullPath := filepath.Join(repoPath, changedFile)
+			fileInfo, statErr := os.Stat(fullPath)
+			if statErr != nil {
+				modifiedCount++ // file deleted or inaccessible
+				continue
+			}
+			if fileInfo.ModTime().Unix() != storedFingerprint.ModTime || fileInfo.Size() != storedFingerprint.Size {
+				modifiedCount++
 			}
 		}
+		totalChanged := addedCount + modifiedCount
 		return &IndexStatus{
-			IsStale:       true,
+			IsStale:       totalChanged > 0,
 			AddedFiles:    addedCount,
 			ModifiedFiles: modifiedCount,
 			LastIndexedAt: lastIndexedAt,
@@ -133,14 +144,24 @@ func detectSameBranchStaleness(ctx context.Context, fingerprintStore storage.Fin
 		addedCount := 0
 		modifiedCount := 0
 		for f := range allChanged {
-			if _, existsInFingerprints := fingerprints[f]; existsInFingerprints {
-				modifiedCount++
-			} else {
+			storedFingerprint, existsInFingerprints := fingerprints[f]
+			if !existsInFingerprints {
 				addedCount++
+				continue
+			}
+			fullPath := filepath.Join(repoPath, f)
+			fileInfo, statErr := os.Stat(fullPath)
+			if statErr != nil {
+				modifiedCount++
+				continue
+			}
+			if fileInfo.ModTime().Unix() != storedFingerprint.ModTime || fileInfo.Size() != storedFingerprint.Size {
+				modifiedCount++
 			}
 		}
+		totalChanged := addedCount + modifiedCount
 		return &IndexStatus{
-			IsStale:       true,
+			IsStale:       totalChanged > 0,
 			AddedFiles:    addedCount,
 			ModifiedFiles: modifiedCount,
 			LastIndexedAt: lastIndexedAt,
@@ -199,22 +220,22 @@ func detectCrossBranchStaleness(repoPath string, queryBranch string, meta *stora
 // listGitDirtyFiles returns relative paths of uncommitted changes in the working tree
 // (tracked modifications + untracked new files).
 func listGitDirtyFiles(repoPath string) []string {
-	// Tracked changes: modified, deleted, renamed (unstaged)
-	trackedOutput := runGitCommand(repoPath, "diff", "--name-only")
-	// Staged changes
-	stagedOutput := runGitCommand(repoPath, "diff", "--name-only", "--cached")
-	// Untracked files
-	untrackedOutput := runGitCommand(repoPath, "ls-files", "--others", "--exclude-standard")
-
+	output := runGitCommand(repoPath, "status", "--porcelain")
 	seen := make(map[string]bool)
 	var result []string
-	for _, output := range []string{trackedOutput, stagedOutput, untrackedOutput} {
-		for _, line := range strings.Split(output, "\n") {
-			trimmedLine := strings.TrimSpace(line)
-			if trimmedLine != "" && !seen[trimmedLine] {
-				seen[trimmedLine] = true
-				result = append(result, trimmedLine)
-			}
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		// porcelain format: XY filename (first 3 chars are status + space)
+		filePath := strings.TrimSpace(line[3:])
+		// Handle renamed files: "R  old -> new"
+		if arrowIndex := strings.Index(filePath, " -> "); arrowIndex >= 0 {
+			filePath = filePath[arrowIndex+4:]
+		}
+		if filePath != "" && !seen[filePath] {
+			seen[filePath] = true
+			result = append(result, filePath)
 		}
 	}
 	return result
