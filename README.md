@@ -83,7 +83,7 @@ Rust, C, C++, C#, Ruby, PHP
 | Querying | `fcg trace <route>` | Trace route from entry point to database |
 | Querying | `fcg impact <function>` | Analyze impact of changes to a function |
 | Querying | `fcg search <query>` | Full-text search across symbols |
-| Querying | `fcg routes` | List all HTTP routes |
+| Querying | `fcg routes` | List routes (HTTP, CLI, MCP) |
 | Querying | `fcg analyze [scope]` | Detect entry points and trace processes |
 | Querying | `fcg list-entries [type]` | List detected entry points |
 | Management | `fcg init` | Initialize global configuration (~/.fcg/config.toml) |
@@ -196,7 +196,10 @@ Select: 1
 | `--mode` | `dry` | Display mode: `full`, `core`, `dry`, `compact` |
 
 ```bash
-fcg routes                              # list all HTTP routes first
+fcg routes                              # list HTTP routes (default)
+fcg routes --type cli                   # list CLI commands
+fcg routes --type mcp                   # list MCP tool registrations
+fcg routes --type all                   # list all route types
 fcg trace /api/users                    # trace route to database
 fcg trace /api/users --method GET       # filter by HTTP method
 fcg trace /api/orders --depth 15        # deeper traversal
@@ -252,7 +255,8 @@ fcg search "order process"
 |-------------|-------------|
 | `http_endpoint` | HTTP route handlers |
 | `remote_client` | Feign/gRPC client methods |
-| `cli_command` | main functions |
+| `cli_command` | CLI command handlers |
+| `mcp_tool` | MCP tool handlers |
 | `scheduled_task` | @Scheduled / @XxlJob annotated |
 | `interface_impl` | Interface implementation methods |
 | `unknown_entry` | In-degree=0 with callees |
@@ -312,7 +316,7 @@ The MCP Server exposes the following tools for AI agent integration:
 | `query_dependencies` | Query IMPORTS/EXTENDS/IMPLEMENTS/CALLS edges for a symbol, returns edges with node info |
 | `query_by_annotation` | Find symbols by annotation name and optional params filter ⁽¹⁾ |
 | `query_by_layer` | Find symbols by architectural layer (controller/service/repository/model) ⁽¹⁾ |
-| `query_routes` | List all HTTP routes in a project |
+| `query_routes` | List routes in a project (HTTP/CLI/MCP, filterable by type) |
 | `query_route_chain` | Trace HTTP route from controller through service to repository |
 | `query_entry_points` | List detected entry points (HTTP endpoints, CLI commands, dead code) ⁽¹⁾ |
 | `query_call_forest` | Query call forest from entry points with tree structure |
