@@ -1,0 +1,18 @@
+{
+  "json.Marshal": "[]byte",
+  "json.MarshalIndent": "[]byte",
+  "json.Unmarshal": "error",
+  "json.NewDecoder": "*json.Decoder",
+  "json.NewEncoder": "*json.Encoder",
+  "json.Valid": "bool",
+  "json.Compact": "error",
+  "json.HTMLEscape": "void",
+  "json.Indent": "error",
+  "json.Decoder.Decode": "error",
+  "json.Decoder.More": "bool",
+  "json.Decoder.Token": "json.Token",
+  "json.Decoder.Buffered": "io.Reader",
+  "json.Encoder.Encode": "error",
+  "json.Encoder.SetIndent": "void",
+  "json.Encoder.SetEscapeHTML": "void"
+}

@@ -8,9 +8,17 @@ import (
 )
 
 // Helper implements resolver.LanguageHelper for Python.
-type Helper struct{}
+type Helper struct {
+	externalMethods *ExternalMethodManager
+}
 
-func NewHelper() *Helper { return &Helper{} }
+func NewHelper(externalMethods ...*ExternalMethodManager) *Helper {
+	helper := &Helper{}
+	if len(externalMethods) > 0 {
+		helper.externalMethods = externalMethods[0]
+	}
+	return helper
+}
 
 // ResolveSuperCall handles Python's super().method() pattern.
 // Python super() resolves to the parent class in MRO order.
@@ -114,8 +122,11 @@ func (pythonHelper *Helper) InferStringConcat(expr string) bool {
 	return strings.HasPrefix(expr, "f\"") || strings.HasPrefix(expr, "f'")
 }
 
-// LookupMethodReturn — no built-in method return table for Python.
-func (pythonHelper *Helper) LookupMethodReturn(_, _ string, _ []string) (model.ReturnType, bool) {
+// LookupMethodReturn looks up external Python module function/method return types.
+func (pythonHelper *Helper) LookupMethodReturn(typeName, methodName string, _ []string) (model.ReturnType, bool) {
+	if pythonHelper.externalMethods != nil {
+		return pythonHelper.externalMethods.Lookup(typeName, methodName)
+	}
 	return model.ReturnType{}, false
 }
 
@@ -126,6 +137,14 @@ func (pythonHelper *Helper) BuildExternalQualifiedName(typeName, methodName stri
 
 // LookupClassTypeParams — no built-in class type params for Python.
 func (pythonHelper *Helper) LookupClassTypeParams(_ string) []string { return nil }
+
+// IsExternalPackage returns true if the receiver name is a known external Python module.
+func (pythonHelper *Helper) IsExternalPackage(receiverName string) bool {
+	if pythonHelper.externalMethods != nil {
+		return pythonHelper.externalMethods.HasPackage(receiverName)
+	}
+	return false
+}
 
 // IsConstructor returns true if the method is a Python __init__.
 func (pythonHelper *Helper) IsConstructor(method model.Symbol, _ string) bool {

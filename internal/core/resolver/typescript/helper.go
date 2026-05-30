@@ -178,6 +178,9 @@ func (tsHelper *Helper) LookupClassTypeParams(typeName string) []string {
 	return nil
 }
 
+// IsExternalPackage — TS/JS uses variable-based imports, not package-level calls. Always false.
+func (tsHelper *Helper) IsExternalPackage(_ string) bool { return false }
+
 // IsConstructor returns true if the method is a TS/JS constructor.
 func (tsHelper *Helper) IsConstructor(method model.Symbol, _ string) bool {
 	return method.Name == "constructor"

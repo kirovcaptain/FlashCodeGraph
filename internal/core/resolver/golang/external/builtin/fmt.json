@@ -1,0 +1,15 @@
+{
+  "fmt.Sprintf": "string",
+  "fmt.Sprint": "string",
+  "fmt.Sprintln": "string",
+  "fmt.Fprintf": "int",
+  "fmt.Fprint": "int",
+  "fmt.Fprintln": "int",
+  "fmt.Printf": "int",
+  "fmt.Print": "int",
+  "fmt.Println": "int",
+  "fmt.Sscanf": "int",
+  "fmt.Sscan": "int",
+  "fmt.Sscanln": "int",
+  "fmt.Errorf": "error"
+}

@@ -1,0 +1,20 @@
+{
+  "flask.Flask": "flask.Flask",
+  "flask.Flask.route": "Callable",
+  "flask.Flask.run": "None",
+  "flask.Flask.register_blueprint": "None",
+  "flask.Blueprint": "flask.Blueprint",
+  "flask.Blueprint.route": "Callable",
+  "flask.request.get_json": "Any",
+  "flask.request.args.get": "str",
+  "flask.request.form.get": "str",
+  "flask.jsonify": "flask.Response",
+  "flask.redirect": "flask.Response",
+  "flask.url_for": "str",
+  "flask.render_template": "str",
+  "flask.abort": "None",
+  "flask.make_response": "flask.Response",
+  "flask.send_file": "flask.Response",
+  "flask.g": "Any",
+  "flask.session": "dict"
+}

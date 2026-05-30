@@ -1,0 +1,10 @@
+{
+  "mcp.Server": "mcp.Server",
+  "mcp.Server.add_tool": "None",
+  "mcp.Server.add_resource": "None",
+  "mcp.Server.run": "None",
+  "mcp.Tool": "mcp.Tool",
+  "mcp.Resource": "mcp.Resource",
+  "mcp.types.TextContent": "mcp.types.TextContent",
+  "mcp.types.CallToolResult": "mcp.types.CallToolResult"
+}

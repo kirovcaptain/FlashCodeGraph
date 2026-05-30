@@ -1,0 +1,10 @@
+{
+  "mcp.NewToolResultText": "*mcp.CallToolResult",
+  "mcp.NewToolResultError": "*mcp.CallToolResult",
+  "mcp.CallToolRequest.GetArguments": "map[string]interface{}",
+  "server.NewMCPServer": "*server.MCPServer",
+  "server.MCPServer.AddTool": "void",
+  "server.MCPServer.AddResource": "void",
+  "server.MCPServer.ServeStdio": "error",
+  "server.NewStdioTransport": "*server.StdioTransport"
+}

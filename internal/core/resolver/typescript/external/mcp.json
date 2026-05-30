@@ -1,0 +1,9 @@
+{
+  "Server.Server": "Server",
+  "Server.addTool": "void",
+  "Server.addResource": "void",
+  "Server.connect": "void",
+  "StdioServerTransport.StdioServerTransport": "StdioServerTransport",
+  "CallToolRequest.params": "object",
+  "CallToolResult.content": "Array"
+}

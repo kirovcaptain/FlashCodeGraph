@@ -12,11 +12,16 @@ import (
 
 // Helper implements resolver.LanguageHelper for Go.
 type Helper struct {
-	symbolTable *resolver.SymbolTable
+	symbolTable     *resolver.SymbolTable
+	externalMethods *ExternalMethodManager
 }
 
-func NewHelper(symbolTable *resolver.SymbolTable) *Helper {
-	return &Helper{symbolTable: symbolTable}
+func NewHelper(symbolTable *resolver.SymbolTable, externalMethods ...*ExternalMethodManager) *Helper {
+	helper := &Helper{symbolTable: symbolTable}
+	if len(externalMethods) > 0 {
+		helper.externalMethods = externalMethods[0]
+	}
+	return helper
 }
 
 // ResolveSuperCall — Go has no class inheritance, always returns false.
@@ -96,9 +101,20 @@ func (goHelper *Helper) InferStringConcat(expr string) bool {
 	return strings.Contains(expr, "+") && strings.Contains(expr, "\"")
 }
 
-// LookupMethodReturn — no built-in method return table for Go.
-func (goHelper *Helper) LookupMethodReturn(_, _ string, _ []string) (model.ReturnType, bool) {
+// LookupMethodReturn looks up external Go package function/method return types.
+func (goHelper *Helper) LookupMethodReturn(typeName, methodName string, _ []string) (model.ReturnType, bool) {
+	if goHelper.externalMethods != nil {
+		return goHelper.externalMethods.Lookup(typeName, methodName)
+	}
 	return model.ReturnType{}, false
+}
+
+// IsExternalPackage returns true if the receiver name is a known external Go package.
+func (goHelper *Helper) IsExternalPackage(receiverName string) bool {
+	if goHelper.externalMethods != nil {
+		return goHelper.externalMethods.HasPackage(receiverName)
+	}
+	return false
 }
 
 // BuildExternalQualifiedName constructs a qualified name for an external Go method.

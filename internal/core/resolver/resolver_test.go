@@ -68,6 +68,7 @@ func (testGenericHelper) BuildExternalQualifiedName(typeName, methodName string)
 	return typeName + "." + methodName
 }
 func (testGenericHelper) LookupClassTypeParams(_ string) []string                    { return nil }
+func (testGenericHelper) IsExternalPackage(_ string) bool                            { return false }
 func (testGenericHelper) IsTypeAssignable(a, b string) bool                          { return a == b }
 func (testGenericHelper) ResolveOverload(_ []model.Symbol, _ []string) *model.Symbol { return nil }
 func (testGenericHelper) FilterGenerated(c []model.Symbol) []model.Symbol            { return c }
@@ -108,6 +109,7 @@ func (h *testJavaHelper) LookupClassTypeParams(typeName string) []string {
 	params := map[string][]string{"List": {"T"}, "Map": {"K", "V"}, "Optional": {"T"}, "CompletableFuture": {"T"}, "Stream": {"T"}}
 	return params[typeName]
 }
+func (h *testJavaHelper) IsExternalPackage(_ string) bool { return false }
 
 func (h *testJavaHelper) ResolveSuperCall(call model.RawCall, funcCandidates []model.Symbol, heritage []model.RawHeritage, envs map[string]*model.TypeEnv, callerID string) ([]model.ResolvedRelation, bool) {
 	if call.ReceiverExpr != "super" || len(heritage) == 0 {

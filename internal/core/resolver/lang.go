@@ -55,6 +55,10 @@ type LanguageHelper interface {
 	// e.g. "List" → ["T"], "Map" → ["K", "V"]. Returns nil if unknown.
 	LookupClassTypeParams(typeName string) []string
 
+	// IsExternalPackage returns true if the receiver name is a known external package/module.
+	// Used to skip name_unique fallback for Go/Python package-level function calls.
+	IsExternalPackage(receiverName string) bool
+
 	// IsConstructor returns true if the method is a constructor for the given class.
 	IsConstructor(method model.Symbol, className string) bool
 

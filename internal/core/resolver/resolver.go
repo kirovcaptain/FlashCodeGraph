@@ -627,7 +627,11 @@ func (resolver *Resolver) resolveCallFallback(
 	}
 
 	// Strategy 4: Global unique name — only one candidate exists in the entire project.
+	// Skip if receiver is a known external package (e.g. "strings", "fmt") to avoid false matches.
 	if len(realCandidates) == 1 {
+		if call.ReceiverExpr != "" && langHelper != nil && langHelper.IsExternalPackage(call.ReceiverExpr) {
+			return nil, nil
+		}
 		return []model.ResolvedRelation{makeRelation(callerID, realCandidates[0].ID, call, ConfidenceNameUnique, "name_unique", 1)}, nil
 	}
 

@@ -246,6 +246,9 @@ func (javaHelper *Helper) LookupClassTypeParams(typeName string) []string {
 	return javaHelper.externalMethods.LookupClassTypeParams(typeName)
 }
 
+// IsExternalPackage — Java uses class-based imports, not package-level calls. Always false.
+func (javaHelper *Helper) IsExternalPackage(_ string) bool { return false }
+
 func (javaHelper *Helper) extractPackage(filePath string) string {
 	for _, sym := range javaHelper.symbolTable.FindByFile(filePath) {
 		if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {

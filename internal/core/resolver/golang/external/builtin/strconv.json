@@ -1,0 +1,18 @@
+{
+  "strconv.Atoi": "int",
+  "strconv.Itoa": "string",
+  "strconv.FormatBool": "string",
+  "strconv.FormatFloat": "string",
+  "strconv.FormatInt": "string",
+  "strconv.FormatUint": "string",
+  "strconv.ParseBool": "bool",
+  "strconv.ParseFloat": "float64",
+  "strconv.ParseInt": "int64",
+  "strconv.ParseUint": "uint64",
+  "strconv.Quote": "string",
+  "strconv.Unquote": "string",
+  "strconv.AppendBool": "[]byte",
+  "strconv.AppendFloat": "[]byte",
+  "strconv.AppendInt": "[]byte",
+  "strconv.AppendQuote": "[]byte"
+}
