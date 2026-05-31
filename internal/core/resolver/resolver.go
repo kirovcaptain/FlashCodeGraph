@@ -371,7 +371,7 @@ func (resolver *Resolver) resolveByReceiverType(
 		if relations, hint, done := resolver.resolveByHierarchyWalk(call, callerID, receiverType); done {
 			return relations, hint, true
 		}
-		return resolver.resolveAsExternalDependency(call, envs, funcCandidates, callerID, receiverType)
+		return resolver.resolveAsExternalDependency(call, envs, funcCandidates, callerID, langHelper, receiverType)
 	}
 
 	if len(matched) == 1 {
@@ -475,6 +475,7 @@ func (resolver *Resolver) resolveAsExternalDependency(
 	envs map[string]*model.TypeEnv,
 	funcCandidates []model.Symbol,
 	callerID string,
+	langHelper LanguageHelper,
 	receiverType string,
 ) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
 	// FQN receiver type (e.g. "com.example.UserService") — create external node directly.
@@ -501,6 +502,20 @@ func (resolver *Resolver) resolveAsExternalDependency(
 				return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
 			}
 		}
+	}
+
+	// Fallback: check ExternalMethodManager for global/builtin types (e.g. Set.has, Map.get, Array.push).
+	// These types have no import statement but are defined in globals.json.
+	if returnType, known := langHelper.LookupMethodReturn(receiverType, call.CalledName, call.ArgTypes); known {
+		qualifiedName := langHelper.BuildExternalQualifiedName(receiverType, call.CalledName)
+		externalID := "external:" + qualifiedName
+		resolver.symbolTable.AddBatch([]model.Symbol{{
+			ID: externalID, Name: call.CalledName,
+			QualifiedName: qualifiedName, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
+			ReturnTypes: []model.ReturnType{returnType},
+		}})
+		resolver.ensureExternalClassSymbol(receiverType, langHelper)
+		return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
 	}
 
 	// Try wildcard import or same-package resolution.

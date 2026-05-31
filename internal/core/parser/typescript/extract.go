@@ -38,6 +38,7 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 			extractAmbientDeclaration(node, content, file, result)
 			return false
 		case "lexical_declaration", "variable_declaration":
+			extractTSPendingAssignment(node, content, "", result)
 			extractArrowFunctions(node, content, file.RelPath, "", result)
 			// Commander: collect top-level parent assignments
 			if detectCliFramework(result) == "commander" {
@@ -774,6 +775,15 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 								})
 							}
 						}
+						// Record lambda → enclosing block scope parent relationship
+						blockScope := astutil.DetectBlockScope(child, qualifiedCallerName)
+						if blockScope.ScopeKey != qualifiedCallerName {
+							if result.ScopeParents == nil {
+								result.ScopeParents = make(map[string]string)
+							}
+							result.ScopeParents[lambdaQualifiedName] = blockScope.ScopeKey
+							mergeScopeParents(result, blockScope.ScopeParents)
+						}
 						result.Calls = append(result.Calls, model.RawCall{
 							CalledName:          lambdaQualifiedName,
 							CallerName:          qualifiedCallerName,
@@ -828,6 +838,15 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 											FilePath: filePath,
 										})
 									}
+								}
+								// Record nested lambda → enclosing block scope parent relationship
+								nestedBlockScope := astutil.DetectBlockScope(nested, qualifiedCallerName)
+								if nestedBlockScope.ScopeKey != qualifiedCallerName {
+									if result.ScopeParents == nil {
+										result.ScopeParents = make(map[string]string)
+									}
+									result.ScopeParents[nestedLambdaQualifiedName] = nestedBlockScope.ScopeKey
+									mergeScopeParents(result, nestedBlockScope.ScopeParents)
 								}
 								result.Calls = append(result.Calls, model.RawCall{
 									CalledName:          nestedLambdaQualifiedName,
@@ -943,6 +962,16 @@ func extractParams(node *tree_sitter.Node, content []byte) []model.ParamInfo {
 		}
 
 		if paramName != "" && paramName != "this" {
+			// Infer type from default value new_expression when no type annotation exists
+			if paramType == "" {
+				valueNode := param.ChildByFieldName("value")
+				if valueNode != nil && valueNode.Kind() == "new_expression" {
+					constructorNode := valueNode.ChildByFieldName("constructor")
+					if constructorNode != nil && constructorNode.Kind() == "identifier" {
+						paramType = constructorNode.Utf8Text(content)
+					}
+				}
+			}
 			entry := model.ParamInfo{Name: paramName, Type: paramType}
 			if param.Kind() == "optional_parameter" || param.ChildByFieldName("value") != nil {
 				entry.HasDefault = true

@@ -132,6 +132,23 @@
   "WeakSet.has(T)": "boolean",
   "WeakSet.delete(T)": "boolean",
 
+  "ReadonlyMap": "K,V",
+  "ReadonlyMap.get(K)": "V",
+  "ReadonlyMap.has(K)": "boolean",
+  "ReadonlyMap.forEach(Function<V,void>)": "",
+  "ReadonlyMap.keys()": "Iterator<K>",
+  "ReadonlyMap.values()": "Iterator<V>",
+  "ReadonlyMap.entries()": "Iterator<Array<K>>",
+  "ReadonlyMap.size": "number",
+
+  "ReadonlySet": "T",
+  "ReadonlySet.has(T)": "boolean",
+  "ReadonlySet.forEach(Function<T,void>)": "",
+  "ReadonlySet.keys()": "Iterator<T>",
+  "ReadonlySet.values()": "Iterator<T>",
+  "ReadonlySet.entries()": "Iterator<Array<T>>",
+  "ReadonlySet.size": "number",
+
   "Error.message": "string",
   "Error.stack": "string",
   "Error.name": "string"
