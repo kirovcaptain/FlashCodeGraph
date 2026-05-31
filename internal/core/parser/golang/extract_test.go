@@ -824,3 +824,81 @@ func VerifyOrder() {
 	}
 	t.Log("✅ Package-level var type extraction: s → service.GoogleService [scope=google]")
 }
+
+func TestUrfaveCliRouteExtraction(t *testing.T) {
+	code := []byte(`package main
+
+import "github.com/urfave/cli/v2"
+
+func main() {
+	app := &cli.App{
+		Commands: []*cli.Command{
+			{
+				Name:   "index",
+				Action: runIndex,
+			},
+			{
+				Name: "config",
+				Subcommands: []*cli.Command{
+					{
+						Name:   "get",
+						Action: runConfigGet,
+					},
+					{
+						Name:   "set",
+						Action: runConfigSet,
+					},
+				},
+			},
+			{
+				Name: "version",
+			},
+		},
+	}
+	_ = app
+}
+
+func runIndex(c *cli.Context) error    { return nil }
+func runConfigGet(c *cli.Context) error { return nil }
+func runConfigSet(c *cli.Context) error { return nil }
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "main.go", Language: "go"}
+	Extract(root, code, file, result)
+
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	// Should extract: index, config get, config set (version has no Action → skip)
+	if len(cliRoutes) != 3 {
+		t.Fatalf("expected 3 urfave CLI routes, got %d: %+v", len(cliRoutes), cliRoutes)
+	}
+	paths := map[string]string{}
+	for _, route := range cliRoutes {
+		paths[route.PathPattern] = route.Handlers[0]
+	}
+	if paths["index"] != "runIndex" {
+		t.Errorf("expected index→runIndex, got %s", paths["index"])
+	}
+	if paths["config get"] != "runConfigGet" {
+		t.Errorf("expected 'config get'→runConfigGet, got %s", paths["config get"])
+	}
+	if paths["config set"] != "runConfigSet" {
+		t.Errorf("expected 'config set'→runConfigSet, got %s", paths["config set"])
+	}
+	// version has no Action, should not generate Route
+	if _, exists := paths["version"]; exists {
+		t.Error("version should not generate Route (no Action)")
+	}
+	for _, route := range cliRoutes {
+		if route.Framework != "urfave" {
+			t.Errorf("expected framework 'urfave', got '%s'", route.Framework)
+		}
+	}
+	t.Log("✅ Urfave CLI route extraction: index, config get, config set [urfave]")
+}

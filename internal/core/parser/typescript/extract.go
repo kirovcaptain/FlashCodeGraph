@@ -14,6 +14,8 @@ import (
 
 // extractTypeScript extracts symbols from TypeScript/JavaScript AST.
 func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFile, result *model.ParseResult) {
+	commanderParentMap := map[string]string{} // top-level commander parent tracking
+
 	astutil.WalkNamedChildren(rootNode, func(node *tree_sitter.Node) bool {
 		switch node.Kind() {
 		case "import_statement":
@@ -37,10 +39,22 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 			return false
 		case "lexical_declaration", "variable_declaration":
 			extractArrowFunctions(node, content, file.RelPath, "", result)
+			// Commander: collect top-level parent assignments
+			if detectCliFramework(result) == "commander" {
+				collectCommanderParent(node, content, commanderParentMap)
+			}
 			return false
 		case "expression_statement":
 			// Handle top-level MCP tool registration: server.tool("name", ...)
 			extractTopLevelMCPTool(node, content, file.RelPath, result)
+			// Handle top-level commander: program.command("x").action(handler)
+			if detectCliFramework(result) == "commander" {
+				extractTopLevelCommanderRoute(node, content, file.RelPath, commanderParentMap, result)
+			}
+			// Handle top-level yargs: yargs.command("name", ...)
+			if detectCliFramework(result) == "yargs" {
+				extractTopLevelYargsRoute(node, content, file.RelPath, result)
+			}
 			return false
 		}
 		return true
@@ -326,7 +340,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 						ChildName: className, ChildQualified: qualifiedName,
 						ParentName: parentName,
 						Kind:       "extends", FilePath: file.RelPath,
-						TypeArgs:   heritageTypeArgs,
+						TypeArgs: heritageTypeArgs,
 					})
 				}
 			case "implements_clause":
@@ -350,7 +364,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 						ChildName: className, ChildQualified: qualifiedName,
 						ParentName: ifaceName,
 						Kind:       "implements", FilePath: file.RelPath,
-						TypeArgs:   interfaceTypeArgs,
+						TypeArgs: interfaceTypeArgs,
 					})
 				}
 			case "extends":
@@ -654,6 +668,10 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 	ExtractTSRemoteCalls(body, content, qualifiedCallerName, filePath, result)
 	ExtractGQLTemplateCalls(body, content, qualifiedCallerName, filePath, result)
 
+	// Detect CLI framework for route extraction
+	cliFramework := detectCliFramework(result)
+	commanderParentMap := map[string]string{} // variableName → commandName
+
 	lambdaCounter := 0                    // method-body-level counter shared across all call sites
 	lambdaMap := make(map[uintptr]string) // node.Id() → lambdaQualifiedName for route handler resolution
 	astutil.WalkNamedChildren(body, func(node *tree_sitter.Node) bool {
@@ -678,6 +696,10 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 					result.ScopeParents = make(map[string]string)
 				}
 				result.ScopeParents[nestedQN] = qualifiedCallerName
+			}
+			// Commander: collect parent command assignments (const group = program.command("group"))
+			if cliFramework == "commander" {
+				collectCommanderParent(node, content, commanderParentMap)
 			}
 		}
 		if node.Kind() == "call_expression" {
@@ -850,8 +872,16 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, qualifiedCal
 			}
 
 			// 4. MCP tool registration: server.tool("name", ..., handler)
-			if calledName == "tool" && receiverExpr != "" && hasTSMCPImport(result) {
+			if calledName == "tool" && receiverExpr != "" && detectMcpFramework(result) != "" {
 				extractTSMCPToolRoute(node, content, filePath, argExprs, lambdaMap, result)
+			}
+
+			// 5. CLI framework route extraction
+			if cliFramework == "commander" && calledName == "action" {
+				extractCommanderRoute(node, content, filePath, commanderParentMap, lambdaMap, result)
+			}
+			if cliFramework == "yargs" && calledName == "command" && receiverExpr != "" {
+				extractYargsRoute(node, content, filePath, lambdaMap, result)
 			}
 
 			if calledName != "" {
@@ -1491,14 +1521,27 @@ func sameTSASTNode(a, b *tree_sitter.Node) bool {
 	return a.StartByte() == b.StartByte() && a.EndByte() == b.EndByte() && a.Kind() == b.Kind()
 }
 
-// hasTSMCPImport checks if the file imports an MCP-related package.
-func hasTSMCPImport(result *model.ParseResult) bool {
+// detectCliFramework returns the CLI framework name based on imports.
+func detectCliFramework(result *model.ParseResult) string {
 	for _, imp := range result.Imports {
-		if strings.Contains(imp.ModulePath, "modelcontextprotocol") || strings.Contains(imp.ModulePath, "/mcp") {
-			return true
+		if imp.ModulePath == "commander" {
+			return "commander"
+		}
+		if strings.Contains(imp.ModulePath, "yargs") {
+			return "yargs"
 		}
 	}
-	return false
+	return ""
+}
+
+// detectMcpFramework returns the MCP framework name based on imports.
+func detectMcpFramework(result *model.ParseResult) string {
+	for _, imp := range result.Imports {
+		if strings.Contains(imp.ModulePath, "modelcontextprotocol") || strings.Contains(imp.ModulePath, "/mcp") {
+			return "mcp-sdk"
+		}
+	}
+	return ""
 }
 
 // extractTSMCPToolRoute extracts MCP tool route from server.tool("name", ..., handler) calls.
@@ -1568,7 +1611,7 @@ func extractTSMCPToolRoute(node *tree_sitter.Node, content []byte, filePath stri
 
 // extractTopLevelMCPTool handles top-level expression_statement containing server.tool(...) calls.
 func extractTopLevelMCPTool(node *tree_sitter.Node, content []byte, filePath string, result *model.ParseResult) {
-	if !hasTSMCPImport(result) {
+	if detectMcpFramework(result) == "" {
 		return
 	}
 	// expression_statement → call_expression
@@ -1585,6 +1628,320 @@ func extractTopLevelMCPTool(node *tree_sitter.Node, content []byte, filePath str
 			return true
 		}
 		extractTSMCPToolRoute(child, content, filePath, nil, nil, result)
+		return false
+	})
+}
+
+// extractCommanderRoute extracts commander CLI route from .command("name").action(handler) chain.
+// Only processes the outermost call in a chain (same guard as ExtractChainedRoutes).
+func extractCommanderRoute(node *tree_sitter.Node, content []byte, filePath string, commanderParentMap map[string]string, lambdaMap map[uintptr]string, result *model.ParseResult) {
+	// Only process outermost call
+	parent := node.Parent()
+	if parent != nil && parent.Kind() == "member_expression" {
+		grandparent := parent.Parent()
+		if grandparent != nil && grandparent.Kind() == "call_expression" {
+			return
+		}
+	}
+
+	// Find .action() in the chain — it must be the outermost method
+	funcNode := node.ChildByFieldName("function")
+	if funcNode == nil || funcNode.Kind() != "member_expression" {
+		return
+	}
+	propNode := funcNode.ChildByFieldName("property")
+	if propNode == nil || propNode.Utf8Text(content) != "action" {
+		return
+	}
+
+	// Extract handler from .action() arguments
+	handlerName := ""
+	argsNode := node.ChildByFieldName("arguments")
+	if argsNode != nil {
+		for i := uint(0); i < argsNode.ChildCount(); i++ {
+			argChild := argsNode.Child(i)
+			if !argChild.IsNamed() {
+				continue
+			}
+			switch argChild.Kind() {
+			case "identifier":
+				handlerName = argChild.Utf8Text(content)
+			case "arrow_function":
+				if qualifiedName, exists := lambdaMap[argChild.Id()]; exists {
+					handlerName = qualifiedName
+				} else {
+					handlerName = "" // will use command name as fallback
+				}
+			case "call_expression":
+				innerArgs := argChild.ChildByFieldName("arguments")
+				if innerArgs != nil {
+					for j := uint(0); j < innerArgs.ChildCount(); j++ {
+						innerArg := innerArgs.Child(j)
+						if innerArg.IsNamed() && innerArg.Kind() == "string" {
+							handlerName = strings.Trim(innerArg.Utf8Text(content), "\"'`")
+							break
+						}
+					}
+				}
+			}
+			break // only first argument
+		}
+	}
+
+	// Walk chain inward to find .command("name")
+	commandName := ""
+	receiverName := ""
+	current := funcNode.ChildByFieldName("object") // object of .action()
+	for current != nil && current.Kind() == "call_expression" {
+		innerFunc := current.ChildByFieldName("function")
+		if innerFunc == nil {
+			break
+		}
+		if innerFunc.Kind() == "member_expression" {
+			innerProp := innerFunc.ChildByFieldName("property")
+			if innerProp != nil && innerProp.Utf8Text(content) == "command" {
+				// Found .command("name") — extract name
+				innerArgs := current.ChildByFieldName("arguments")
+				if innerArgs != nil {
+					for j := uint(0); j < innerArgs.ChildCount(); j++ {
+						argChild := innerArgs.Child(j)
+						if argChild.IsNamed() && argChild.Kind() == "string" {
+							rawName := strings.Trim(argChild.Utf8Text(content), "\"'`")
+							if spaceIndex := strings.IndexByte(rawName, ' '); spaceIndex > 0 {
+								commandName = rawName[:spaceIndex]
+							} else {
+								commandName = rawName
+							}
+							break
+						}
+					}
+				}
+				// Get the receiver of .command() for parent lookup
+				innerObj := innerFunc.ChildByFieldName("object")
+				if innerObj != nil && innerObj.Kind() == "identifier" {
+					receiverName = innerObj.Utf8Text(content)
+				}
+				break
+			}
+			// Continue walking inward (skip .description(), .option(), etc.)
+			current = innerFunc.ChildByFieldName("object")
+		} else {
+			break
+		}
+	}
+
+	if commandName == "" {
+		return
+	}
+	if handlerName == "" {
+		handlerName = commandName // fallback
+	}
+
+	// Resolve parent prefix
+	fullPath := commandName
+	if parentCommandName, exists := commanderParentMap[receiverName]; exists {
+		fullPath = parentCommandName + " " + commandName
+	}
+
+	result.Routes = append(result.Routes, model.RawRoute{
+		Method:      "CLI",
+		PathPattern: fullPath,
+		Handlers:    []string{handlerName},
+		Framework:   "commander",
+		FilePath:    filePath,
+		Line:        int(node.StartPosition().Row) + 1,
+	})
+}
+
+// collectCommanderParent detects `const group = xxx.command("group")` pattern for parent tracking.
+func collectCommanderParent(node *tree_sitter.Node, content []byte, commanderParentMap map[string]string) {
+	// lexical_declaration → variable_declarator → name + value
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		declarator := node.NamedChild(i)
+		if declarator.Kind() != "variable_declarator" {
+			continue
+		}
+		nameNode := declarator.ChildByFieldName("name")
+		valueNode := declarator.ChildByFieldName("value")
+		if nameNode == nil || valueNode == nil || nameNode.Kind() != "identifier" {
+			continue
+		}
+		variableName := nameNode.Utf8Text(content)
+
+		// Walk the chain to find .command("name") without .action()
+		hasAction := false
+		commandName := ""
+		current := valueNode
+		for current != nil && current.Kind() == "call_expression" {
+			funcNode := current.ChildByFieldName("function")
+			if funcNode == nil || funcNode.Kind() != "member_expression" {
+				break
+			}
+			propNode := funcNode.ChildByFieldName("property")
+			if propNode == nil {
+				break
+			}
+			methodName := propNode.Utf8Text(content)
+			if methodName == "action" {
+				hasAction = true
+				break
+			}
+			if methodName == "command" && commandName == "" {
+				argsNode := current.ChildByFieldName("arguments")
+				if argsNode != nil {
+					for j := uint(0); j < argsNode.ChildCount(); j++ {
+						argChild := argsNode.Child(j)
+						if argChild.IsNamed() && argChild.Kind() == "string" {
+							rawName := strings.Trim(argChild.Utf8Text(content), "\"'`")
+							if spaceIndex := strings.IndexByte(rawName, ' '); spaceIndex > 0 {
+								commandName = rawName[:spaceIndex]
+							} else {
+								commandName = rawName
+							}
+							break
+						}
+					}
+				}
+			}
+			current = funcNode.ChildByFieldName("object")
+		}
+
+		// Only record if has .command() but no .action() (parent command, not leaf)
+		if commandName != "" && !hasAction {
+			commanderParentMap[variableName] = commandName
+		}
+	}
+}
+
+// extractYargsRoute extracts yargs CLI route from .command("name", ..., handler) or .command({command, handler}).
+func extractYargsRoute(node *tree_sitter.Node, content []byte, filePath string, lambdaMap map[uintptr]string, result *model.ParseResult) {
+	argsNode := node.ChildByFieldName("arguments")
+	if argsNode == nil {
+		return
+	}
+
+	var namedArgNodes []*tree_sitter.Node
+	for i := uint(0); i < argsNode.ChildCount(); i++ {
+		child := argsNode.Child(i)
+		if child.IsNamed() {
+			namedArgNodes = append(namedArgNodes, child)
+		}
+	}
+	if len(namedArgNodes) == 0 {
+		return
+	}
+
+	commandName := ""
+	handlerName := ""
+
+	// Object mode: yargs.command({command: "name", handler: fn})
+	if len(namedArgNodes) == 1 && namedArgNodes[0].Kind() == "object" {
+		objectNode := namedArgNodes[0]
+		for i := uint(0); i < objectNode.NamedChildCount(); i++ {
+			prop := objectNode.NamedChild(i)
+			if prop.Kind() != "pair" {
+				continue
+			}
+			keyNode := prop.ChildByFieldName("key")
+			valueNode := prop.ChildByFieldName("value")
+			if keyNode == nil || valueNode == nil {
+				continue
+			}
+			keyText := keyNode.Utf8Text(content)
+			switch keyText {
+			case "command":
+				commandName = strings.Trim(valueNode.Utf8Text(content), "\"'`")
+			case "handler":
+				if valueNode.Kind() == "identifier" {
+					handlerName = valueNode.Utf8Text(content)
+				} else if valueNode.Kind() == "arrow_function" {
+					if qualifiedName, exists := lambdaMap[valueNode.Id()]; exists {
+						handlerName = qualifiedName
+					}
+				}
+			}
+		}
+	} else if len(namedArgNodes) >= 2 {
+		// Positional mode: first string = name, last function/identifier = handler
+		firstArg := namedArgNodes[0]
+		if firstArg.Kind() == "string" {
+			rawName := strings.Trim(firstArg.Utf8Text(content), "\"'`")
+			if spaceIndex := strings.IndexByte(rawName, ' '); spaceIndex > 0 {
+				commandName = rawName[:spaceIndex]
+			} else {
+				commandName = rawName
+			}
+		}
+		// Last function-like argument is handler
+		for j := len(namedArgNodes) - 1; j >= 1; j-- {
+			lastArg := namedArgNodes[j]
+			switch lastArg.Kind() {
+			case "arrow_function":
+				if qualifiedName, exists := lambdaMap[lastArg.Id()]; exists {
+					handlerName = qualifiedName
+				} else {
+					handlerName = commandName // fallback
+				}
+			case "identifier":
+				handlerName = lastArg.Utf8Text(content)
+			}
+			if handlerName != "" {
+				break
+			}
+		}
+	}
+
+	if commandName == "" {
+		return
+	}
+	if handlerName == "" {
+		handlerName = commandName
+	}
+
+	result.Routes = append(result.Routes, model.RawRoute{
+		Method:      "CLI",
+		PathPattern: commandName,
+		Handlers:    []string{handlerName},
+		Framework:   "yargs",
+		FilePath:    filePath,
+		Line:        int(node.StartPosition().Row) + 1,
+	})
+}
+
+// extractTopLevelCommanderRoute handles top-level expression_statement containing .command().action() chains.
+func extractTopLevelCommanderRoute(node *tree_sitter.Node, content []byte, filePath string, commanderParentMap map[string]string, result *model.ParseResult) {
+	astutil.WalkNamedChildren(node, func(child *tree_sitter.Node) bool {
+		if child.Kind() != "call_expression" {
+			return true
+		}
+		funcNode := child.ChildByFieldName("function")
+		if funcNode == nil || funcNode.Kind() != "member_expression" {
+			return true
+		}
+		propNode := funcNode.ChildByFieldName("property")
+		if propNode == nil || propNode.Utf8Text(content) != "action" {
+			return true
+		}
+		extractCommanderRoute(child, content, filePath, commanderParentMap, nil, result)
+		return false
+	})
+}
+
+// extractTopLevelYargsRoute handles top-level yargs.command(...) calls.
+func extractTopLevelYargsRoute(node *tree_sitter.Node, content []byte, filePath string, result *model.ParseResult) {
+	astutil.WalkNamedChildren(node, func(child *tree_sitter.Node) bool {
+		if child.Kind() != "call_expression" {
+			return true
+		}
+		funcNode := child.ChildByFieldName("function")
+		if funcNode == nil || funcNode.Kind() != "member_expression" {
+			return true
+		}
+		propNode := funcNode.ChildByFieldName("property")
+		if propNode == nil || propNode.Utf8Text(content) != "command" {
+			return true
+		}
+		extractYargsRoute(child, content, filePath, nil, result)
 		return false
 	})
 }

@@ -1505,3 +1505,211 @@ server.tool("list_files", "List files", { path: z.string() }, async ({ path }) =
 	}
 	t.Log("✅ TS MCP top-level tool route extraction works")
 }
+
+func TestCommanderRouteExtraction(t *testing.T) {
+	code := []byte(`import { Command } from 'commander';
+
+const program = new Command();
+
+program
+  .command('analyze [path]')
+  .description('Index a repository')
+  .action(analyzeCommand);
+
+const group = program.command('group').description('Manage groups');
+
+group.command('create <name>').action(createGroup);
+group.command('list').action(listGroups);
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "cli/index.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	if len(cliRoutes) != 3 {
+		t.Fatalf("expected 3 commander CLI routes, got %d: %+v", len(cliRoutes), cliRoutes)
+	}
+	paths := map[string]string{}
+	for _, route := range cliRoutes {
+		paths[route.PathPattern] = route.Handlers[0]
+	}
+	if paths["analyze"] != "analyzeCommand" {
+		t.Errorf("expected analyze→analyzeCommand, got %s", paths["analyze"])
+	}
+	if paths["group create"] != "createGroup" {
+		t.Errorf("expected 'group create'→createGroup, got %s", paths["group create"])
+	}
+	if paths["group list"] != "listGroups" {
+		t.Errorf("expected 'group list'→listGroups, got %s", paths["group list"])
+	}
+	for _, route := range cliRoutes {
+		if route.Framework != "commander" {
+			t.Errorf("expected framework 'commander', got '%s'", route.Framework)
+		}
+	}
+	t.Log("✅ Commander route extraction: analyze, group create, group list [commander]")
+}
+
+func TestYargsRouteExtraction(t *testing.T) {
+	code := []byte(`import yargs from 'yargs';
+
+function registerCommands() {
+    yargs.command('serve', 'Start server', {}, (argv) => {
+        startServer(argv.port);
+    });
+
+    yargs.command('init', 'Initialize project', initHandler);
+
+    yargs.command({
+        command: 'deploy',
+        describe: 'Deploy app',
+        handler: deployHandler
+    });
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "cli.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	if len(cliRoutes) != 3 {
+		t.Fatalf("expected 3 yargs CLI routes, got %d: %+v", len(cliRoutes), cliRoutes)
+	}
+	paths := map[string]string{}
+	for _, route := range cliRoutes {
+		paths[route.PathPattern] = route.Handlers[0]
+	}
+	if paths["serve"] == "" {
+		t.Error("expected 'serve' route")
+	}
+	if paths["init"] != "initHandler" {
+		t.Errorf("expected init→initHandler, got %s", paths["init"])
+	}
+	if paths["deploy"] != "deployHandler" {
+		t.Errorf("expected deploy→deployHandler, got %s", paths["deploy"])
+	}
+	for _, route := range cliRoutes {
+		if route.Framework != "yargs" {
+			t.Errorf("expected framework 'yargs', got '%s'", route.Framework)
+		}
+	}
+	t.Log("✅ Yargs route extraction: serve, init, deploy [yargs]")
+}
+
+func TestCommanderLazyActionHandler(t *testing.T) {
+	code := []byte(`import { Command } from 'commander';
+const program = new Command();
+program.command('analyze [path]').action(createLazyAction(() => import('./analyze.js'), 'analyzeCommand'));
+program.command('serve').action(createLazyAction(() => import('./serve.js'), 'serveCommand'));
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "index.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	if len(cliRoutes) != 2 {
+		t.Fatalf("expected 2 routes, got %d: %+v", len(cliRoutes), cliRoutes)
+	}
+	paths := map[string]string{}
+	for _, route := range cliRoutes {
+		paths[route.PathPattern] = route.Handlers[0]
+	}
+	if paths["analyze"] != "analyzeCommand" {
+		t.Errorf("expected analyze→analyzeCommand, got %s", paths["analyze"])
+	}
+	if paths["serve"] != "serveCommand" {
+		t.Errorf("expected serve→serveCommand, got %s", paths["serve"])
+	}
+	t.Log("✅ Commander createLazyAction: handler extracted from first string arg")
+}
+
+func TestCommanderNoActionNoRoute(t *testing.T) {
+	code := []byte(`import { Command } from 'commander';
+const program = new Command();
+const group = program.command('group').description('Manage groups');
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "index.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			t.Errorf("expected no CLI route for parent without .action(), got: %+v", route)
+		}
+	}
+	t.Log("✅ Commander: no .action() → no Route generated")
+}
+
+func TestYargsDoubleFunction(t *testing.T) {
+	code := []byte(`import yargs from 'yargs';
+
+function registerCommands() {
+    yargs.command('config', 'Configuration', (yargs) => {
+        return yargs.option('key', { type: 'string' });
+    }, (argv) => {
+        handleConfig(argv);
+    });
+}
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "cli.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	if len(cliRoutes) != 1 {
+		t.Fatalf("expected 1 yargs route, got %d: %+v", len(cliRoutes), cliRoutes)
+	}
+	if cliRoutes[0].PathPattern != "config" {
+		t.Errorf("expected path 'config', got '%s'", cliRoutes[0].PathPattern)
+	}
+	t.Log("✅ Yargs double function: last arrow_function is handler")
+}
+
+func TestDetectCliFrameworkNoImport(t *testing.T) {
+	code := []byte(`import express from 'express';
+const app = express();
+app.get('/api/users', (req, res) => { res.json([]); });
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "server.ts", Language: "typescript"}
+	Extract(root, code, file, result)
+
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			t.Errorf("expected no CLI route without CLI import, got: %+v", route)
+		}
+	}
+	t.Log("✅ detectCliFramework: no CLI import → no CLI routes")
+}

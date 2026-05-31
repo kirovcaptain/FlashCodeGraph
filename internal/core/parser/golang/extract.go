@@ -663,17 +663,9 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 	ExtractGoRemoteCalls(body, content, fullCaller, filePath, importsMap, result)
 	ExtractGoGRPCRegister(body, content, fullCaller, filePath, result)
 
-	// Check if cobra/mcp imports exist for framework route extraction
-	hasCobraImport := false
-	hasMCPImport := false
-	for alias := range importsMap {
-		if alias == "cobra" {
-			hasCobraImport = true
-		}
-		if alias == "mcp" {
-			hasMCPImport = true
-		}
-	}
+	// Detect CLI/MCP frameworks from imports
+	cliFramework := detectCliFramework(importsMap)
+	mcpFramework := detectMcpFramework(importsMap)
 
 	// Cobra command collection for delayed Route generation
 	cobraCommands := map[string]struct{ Use, Handler string }{}
@@ -709,7 +701,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 			mergeGoScopeParents(result, blockScope.ScopeParents)
 			extractLocalFuncLiteral(node, content, filePath, fullCaller, result)
 			extractGoPendingAssignment(node, content, fullCaller, importsMap, result)
-			if hasCobraImport {
+			if cliFramework == "cobra" {
 				collectCobraCommand(node, content, cobraCommands)
 			}
 		}
@@ -899,12 +891,12 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 			}
 
 			// Cobra: collect AddCommand parent-child relationships
-			if hasCobraImport && calledName == "AddCommand" && receiverExpr != "" {
+			if cliFramework == "cobra" && calledName == "AddCommand" && receiverExpr != "" {
 				collectCobraParent(node, content, receiverExpr, cobraCommands, cobraParentMap, filePath, result)
 			}
 
 			// MCP: extract AddTool route
-			if hasMCPImport && calledName == "AddTool" && receiverExpr != "" {
+			if mcpFramework != "" && calledName == "AddTool" && receiverExpr != "" {
 				extractMCPToolRoute(node, content, filePath, lambdaMap, result)
 			}
 		}
@@ -912,7 +904,7 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 	})
 
 	// Delayed cobra Route generation: resolve parent chain and emit RawRoutes
-	if hasCobraImport {
+	if cliFramework == "cobra" {
 		for variableName, command := range cobraCommands {
 			if command.Handler == "" {
 				continue
@@ -940,6 +932,11 @@ func extractCalls(body *tree_sitter.Node, content []byte, filePath, callerName, 
 				Line:        0,
 			})
 		}
+	}
+
+	// Urfave/cli Route extraction: scan composite_literals for cli.Command
+	if cliFramework == "urfave" {
+		extractUrfaveCommands(body, content, "", filePath, result)
 	}
 }
 
@@ -1159,6 +1156,130 @@ func extractVarSpecTypeBinding(varSpec *tree_sitter.Node, content []byte, packag
 		FilePath: filePath,
 	})
 }
+
+
+// detectCliFramework returns the CLI framework name based on imports.
+func detectCliFramework(importsMap map[string]string) string {
+	for alias, path := range importsMap {
+		if alias == "cobra" || strings.Contains(path, "spf13/cobra") {
+			return "cobra"
+		}
+		if strings.Contains(path, "urfave/cli") {
+			return "urfave"
+		}
+	}
+	return ""
+}
+
+// detectMcpFramework returns the MCP framework name based on imports.
+func detectMcpFramework(importsMap map[string]string) string {
+	for _, path := range importsMap {
+		if strings.Contains(path, "mcp-go/mcp") {
+			return "mcp-go"
+		}
+	}
+	return ""
+}
+
+// extractUrfaveCommands recursively scans for urfave/cli Command structs.
+// In Go AST, slice elements like []*cli.Command{{Name:"x"}} are literal_element → literal_value (not composite_literal).
+func extractUrfaveCommands(node *tree_sitter.Node, content []byte, parentPath, filePath string, result *model.ParseResult) {
+	astutil.WalkNamedChildren(node, func(child *tree_sitter.Node) bool {
+		// Match literal_value that contains keyed_elements with a Name field (Command struct)
+		var literalValue *tree_sitter.Node
+		if child.Kind() == "literal_element" && child.NamedChildCount() > 0 {
+			inner := child.NamedChild(0)
+			if inner.Kind() == "literal_value" {
+				literalValue = inner
+			}
+		} else if child.Kind() == "composite_literal" {
+			// Explicit type: cli.Command{Name: "x", Action: fn}
+			typeNode := child.ChildByFieldName("type")
+			if typeNode != nil && !strings.Contains(typeNode.Utf8Text(content), "Command") {
+				return true
+			}
+			for i := uint(0); i < child.NamedChildCount(); i++ {
+				candidate := child.NamedChild(i)
+				if candidate.Kind() == "literal_value" {
+					literalValue = candidate
+					break
+				}
+			}
+		}
+		if literalValue == nil {
+			return true
+		}
+
+		var commandName, actionHandler string
+		var subcommandsNode *tree_sitter.Node
+		hasNameField := false
+		for i := uint(0); i < literalValue.NamedChildCount(); i++ {
+			element := literalValue.NamedChild(i)
+			if element.Kind() != "keyed_element" || element.NamedChildCount() < 2 {
+				continue
+			}
+			keyLiteral := element.NamedChild(0)
+			valueLiteral := element.NamedChild(1)
+			if keyLiteral == nil || valueLiteral == nil {
+				continue
+			}
+			var keyIdentifier *tree_sitter.Node
+			if keyLiteral.NamedChildCount() > 0 {
+				keyIdentifier = keyLiteral.NamedChild(0)
+			}
+			if keyIdentifier == nil {
+				continue
+			}
+			fieldName := keyIdentifier.Utf8Text(content)
+			switch fieldName {
+			case "Name":
+				hasNameField = true
+				if valueLiteral.NamedChildCount() > 0 {
+					commandName = strings.Trim(valueLiteral.NamedChild(0).Utf8Text(content), "\"'`")
+				}
+			case "Action":
+				if valueLiteral.NamedChildCount() > 0 {
+					valueChild := valueLiteral.NamedChild(0)
+					if valueChild.Kind() == "identifier" {
+						actionHandler = valueChild.Utf8Text(content)
+					}
+				}
+			case "Subcommands":
+				// Subcommands value is a composite_literal ([]*cli.Command{...})
+				// We need to recurse into its literal_value
+				subcommandsNode = valueLiteral
+			}
+		}
+
+		if !hasNameField {
+			return true
+		}
+
+		fullPath := commandName
+		if parentPath != "" && commandName != "" {
+			fullPath = parentPath + " " + commandName
+		}
+
+		if commandName != "" && actionHandler != "" {
+			result.Routes = append(result.Routes, model.RawRoute{
+				Method:      "CLI",
+				PathPattern: fullPath,
+				Handlers:    []string{actionHandler},
+				Framework:   "urfave",
+				FilePath:    filePath,
+				Line:        int(child.StartPosition().Row) + 1,
+			})
+		}
+
+		// Recurse into Subcommands
+		if subcommandsNode != nil && commandName != "" {
+			extractUrfaveCommands(subcommandsNode, content, fullPath, filePath, result)
+		}
+
+		return false // Don't let walker recurse into this node's children (already handled)
+	})
+}
+
 
 // extractCobraCommandName extracts only the command name from cobra Use field (strips argument descriptions).
 // "index [path]" → "index", "get <key>" → "get", "serve" → "serve"

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/astutil"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
@@ -33,7 +34,7 @@ func ExtractRoutes(node *tree_sitter.Node, content []byte, funcName, filePath st
 		decoratorText := child.Utf8Text(content)
 
 		// MCP tool decorator: @server.tool() or @mcp.tool()
-		if strings.Contains(decoratorText, ".tool(") && hasMCPImport(result) {
+		if strings.Contains(decoratorText, ".tool(") && detectMcpFramework(result) != "" {
 			toolName := extractMCPToolName(decoratorText, funcName)
 			result.Routes = append(result.Routes, model.RawRoute{
 				Method:      "TOOL",
@@ -65,14 +66,30 @@ func ExtractRoutes(node *tree_sitter.Node, content []byte, funcName, filePath st
 	}
 }
 
-// hasMCPImport checks if the file imports the mcp package.
-func hasMCPImport(result *model.ParseResult) bool {
+// detectCliFramework returns the CLI framework name based on imports.
+func detectCliFramework(result *model.ParseResult) string {
 	for _, imp := range result.Imports {
-		if imp.ModulePath == "mcp" || strings.HasPrefix(imp.ModulePath, "mcp.") {
-			return true
+		if imp.ModulePath == "click" || strings.HasPrefix(imp.ModulePath, "click.") {
+			return "click"
+		}
+		if imp.ModulePath == "typer" || strings.HasPrefix(imp.ModulePath, "typer.") {
+			return "typer"
 		}
 	}
-	return false
+	return ""
+}
+
+// detectMcpFramework returns the MCP framework name based on imports.
+func detectMcpFramework(result *model.ParseResult) string {
+	for _, imp := range result.Imports {
+		if imp.ModulePath == "mcp" || strings.HasPrefix(imp.ModulePath, "mcp.") {
+			return "mcp"
+		}
+		if imp.ModulePath == "fastmcp" || strings.HasPrefix(imp.ModulePath, "fastmcp.") {
+			return "fastmcp"
+		}
+	}
+	return ""
 }
 
 // extractMCPToolName extracts the tool name from @server.tool() decorator.
@@ -161,4 +178,138 @@ func ExtractDjangoRoutes(node *tree_sitter.Node, content []byte, filePath string
 			Line:        int(node.StartPosition().Row) + 1,
 		})
 	}
+}
+
+// ExtractClickRoutes extracts CLI routes from click/typer decorators.
+// Uses delayed generation: first collects all groups, then resolves command paths.
+func ExtractClickRoutes(rootNode *tree_sitter.Node, content []byte, filePath string, result *model.ParseResult) {
+	cliFramework := detectCliFramework(result)
+	if cliFramework == "" {
+		return
+	}
+
+	type clickCommandInfo struct {
+		Name     string
+		Receiver string
+		Handler  string
+		Line     int
+	}
+
+	clickGroups := map[string]string{}     // funcName → parentReceiver ("" = root)
+	clickGroupNames := map[string]string{} // funcName → explicit group name (or func name)
+	var clickCommands []clickCommandInfo
+
+	// Walk all decorated_definitions to collect groups and commands
+	astutil.WalkNamedChildren(rootNode, func(node *tree_sitter.Node) bool {
+		if node.Kind() != "decorated_definition" {
+			return true
+		}
+		// Find the function definition inside
+		var funcDef *tree_sitter.Node
+		for i := uint(0); i < node.NamedChildCount(); i++ {
+			child := node.NamedChild(i)
+			if child.Kind() == "function_definition" {
+				funcDef = child
+				break
+			}
+		}
+		if funcDef == nil {
+			return true
+		}
+		funcNameNode := funcDef.ChildByFieldName("name")
+		if funcNameNode == nil {
+			return true
+		}
+		funcName := funcNameNode.Utf8Text(content)
+
+		// Check decorators
+		for i := uint(0); i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child.Kind() != "decorator" {
+				continue
+			}
+			decoratorText := child.Utf8Text(content)
+
+			// Extract receiver (part before .group( or .command()
+			dotGroupIdx := strings.Index(decoratorText, ".group(")
+			dotCommandIdx := strings.Index(decoratorText, ".command(")
+
+			if dotGroupIdx > 0 {
+				// @xxx.group() or @click.group()
+				receiver := decoratorText[1:dotGroupIdx] // skip @
+				groupName := extractDecoratorArg(decoratorText)
+				if groupName == "" {
+					groupName = funcName
+				}
+				if receiver == "click" || receiver == "typer" {
+					clickGroups[funcName] = "" // root group
+				} else {
+					clickGroups[funcName] = receiver
+				}
+				clickGroupNames[funcName] = groupName
+				return true
+			}
+
+			if dotCommandIdx > 0 {
+				// @xxx.command() or @click.command()
+				receiver := decoratorText[1:dotCommandIdx] // skip @
+				commandName := extractDecoratorArg(decoratorText)
+				if commandName == "" {
+					commandName = funcName
+				}
+				clickCommands = append(clickCommands, clickCommandInfo{
+					Name:     commandName,
+					Receiver: receiver,
+					Handler:  funcName,
+					Line:     int(child.StartPosition().Row) + 1,
+				})
+				return true
+			}
+		}
+		return true
+	})
+
+	// Generate routes with resolved parent paths
+	for _, command := range clickCommands {
+		prefix := resolveClickCommandPath(command.Receiver, clickGroups, clickGroupNames)
+		fullPath := command.Name
+		if prefix != "" {
+			fullPath = prefix + " " + command.Name
+		}
+		result.Routes = append(result.Routes, model.RawRoute{
+			Method:      "CLI",
+			PathPattern: fullPath,
+			Handlers:    []string{command.Handler},
+			Framework:   cliFramework,
+			FilePath:    filePath,
+			Line:        command.Line,
+		})
+	}
+}
+
+// resolveClickCommandPath resolves the parent path prefix for a click command receiver.
+func resolveClickCommandPath(receiver string, clickGroups, clickGroupNames map[string]string) string {
+	var parts []string
+	current := receiver
+	for {
+		parent, isGroup := clickGroups[current]
+		if !isGroup {
+			break
+		}
+		parts = append([]string{clickGroupNames[current]}, parts...)
+		if parent == "" {
+			break // root group
+		}
+		current = parent
+	}
+	// Remove root group from path (root doesn't contribute to command path)
+	if len(parts) > 0 && clickGroups[receiver] == "" {
+		// receiver itself is root — no prefix
+		return ""
+	}
+	if len(parts) > 0 {
+		// First element is root group — skip it
+		parts = parts[1:]
+	}
+	return strings.Join(parts, " ")
 }

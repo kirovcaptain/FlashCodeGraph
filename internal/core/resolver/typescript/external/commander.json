@@ -1,0 +1,13 @@
+{
+  "Command.command()": "Command",
+  "Command.description()": "Command",
+  "Command.option()": "Command",
+  "Command.action()": "Command",
+  "Command.alias()": "Command",
+  "Command.argument()": "Command",
+  "Command.name()": "string",
+  "Command.version()": "Command",
+  "Command.parse()": "Command",
+  "Command.parseAsync()": "Promise",
+  "Command.opts()": "object"
+}

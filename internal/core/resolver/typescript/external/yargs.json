@@ -1,0 +1,12 @@
+{
+  "Argv.command()": "Argv",
+  "Argv.option()": "Argv",
+  "Argv.positional()": "Argv",
+  "Argv.help()": "Argv",
+  "Argv.version()": "Argv",
+  "Argv.parse()": "Argv",
+  "Argv.parseSync()": "Argv",
+  "Argv.demandCommand()": "Argv",
+  "Argv.strict()": "Argv",
+  "Argv.alias()": "Argv"
+}

@@ -333,3 +333,201 @@ def search(query: str) -> list:
 	}
 	t.Log("✅ Python MCP tool route extraction: 2 tools extracted correctly")
 }
+
+func TestClickRouteExtraction(t *testing.T) {
+	code := []byte(`import click
+
+@click.group()
+def cli():
+    pass
+
+@cli.command()
+def init():
+    """Initialize project"""
+    pass
+
+@cli.command("deploy")
+def deploy_cmd():
+    pass
+
+@cli.group()
+def config():
+    pass
+
+@config.command()
+def get():
+    pass
+
+@config.command("set")
+def set_value():
+    pass
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "cli.py", Language: "python"}
+	Extract(root, code, file, result)
+
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	if len(cliRoutes) != 4 {
+		t.Fatalf("expected 4 click CLI routes, got %d: %+v", len(cliRoutes), cliRoutes)
+	}
+	paths := map[string]string{}
+	for _, route := range cliRoutes {
+		paths[route.PathPattern] = route.Handlers[0]
+	}
+	if paths["init"] != "init" {
+		t.Errorf("expected init→init, got %s", paths["init"])
+	}
+	if paths["deploy"] != "deploy_cmd" {
+		t.Errorf("expected deploy→deploy_cmd, got %s", paths["deploy"])
+	}
+	if paths["config get"] != "get" {
+		t.Errorf("expected 'config get'→get, got %s", paths["config get"])
+	}
+	if paths["config set"] != "set_value" {
+		t.Errorf("expected 'config set'→set_value, got %s", paths["config set"])
+	}
+	for _, route := range cliRoutes {
+		if route.Framework != "click" {
+			t.Errorf("expected framework 'click', got '%s'", route.Framework)
+		}
+	}
+	t.Log("✅ Click route extraction: init, deploy, config get, config set [click]")
+}
+
+func TestTyperRouteExtraction(t *testing.T) {
+	code := []byte(`import typer
+
+app = typer.Typer()
+
+@app.command()
+def hello(name: str):
+    pass
+
+@app.command("greet")
+def greet_cmd(name: str):
+    pass
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "main.py", Language: "python"}
+	Extract(root, code, file, result)
+
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	if len(cliRoutes) != 2 {
+		t.Fatalf("expected 2 typer CLI routes, got %d: %+v", len(cliRoutes), cliRoutes)
+	}
+	paths := map[string]string{}
+	for _, route := range cliRoutes {
+		paths[route.PathPattern] = route.Handlers[0]
+	}
+	if paths["hello"] != "hello" {
+		t.Errorf("expected hello→hello, got %s", paths["hello"])
+	}
+	if paths["greet"] != "greet_cmd" {
+		t.Errorf("expected greet→greet_cmd, got %s", paths["greet"])
+	}
+	for _, route := range cliRoutes {
+		if route.Framework != "typer" {
+			t.Errorf("expected framework 'typer', got '%s'", route.Framework)
+		}
+	}
+	t.Log("✅ Typer route extraction: hello, greet [typer]")
+}
+
+func TestClickMultiLayerNesting(t *testing.T) {
+	code := []byte(`import click
+
+@click.group()
+def cli():
+    pass
+
+@cli.group()
+def db():
+    pass
+
+@db.group()
+def migrate():
+    pass
+
+@migrate.command()
+def up():
+    pass
+
+@migrate.command()
+def down():
+    pass
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "cli.py", Language: "python"}
+	Extract(root, code, file, result)
+
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	if len(cliRoutes) != 2 {
+		t.Fatalf("expected 2 click routes, got %d: %+v", len(cliRoutes), cliRoutes)
+	}
+	paths := map[string]string{}
+	for _, route := range cliRoutes {
+		paths[route.PathPattern] = route.Handlers[0]
+	}
+	if paths["db migrate up"] != "up" {
+		t.Errorf("expected 'db migrate up'→up, got %s", paths["db migrate up"])
+	}
+	if paths["db migrate down"] != "down" {
+		t.Errorf("expected 'db migrate down'→down, got %s", paths["db migrate down"])
+	}
+	t.Log("✅ Click multi-layer nesting: db migrate up, db migrate down")
+}
+
+func TestClickExplicitGroupName(t *testing.T) {
+	code := []byte(`import click
+
+@click.group("admin")
+def admin_cli():
+    pass
+
+@admin_cli.command()
+def users():
+    pass
+`)
+	root, cleanup := parse(code)
+	defer cleanup()
+	result := &model.ParseResult{}
+	file := scanner.ScannedFile{RelPath: "admin.py", Language: "python"}
+	Extract(root, code, file, result)
+
+	var cliRoutes []model.RawRoute
+	for _, route := range result.Routes {
+		if route.Method == "CLI" {
+			cliRoutes = append(cliRoutes, route)
+		}
+	}
+	if len(cliRoutes) != 1 {
+		t.Fatalf("expected 1 click route, got %d: %+v", len(cliRoutes), cliRoutes)
+	}
+	// Root group with explicit name "admin" — root doesn't contribute to path
+	// So command under root is just "users" (not "admin users")
+	if cliRoutes[0].PathPattern != "users" {
+		t.Errorf("expected path 'users' (root group excluded), got '%s'", cliRoutes[0].PathPattern)
+	}
+	t.Log("✅ Click explicit group name: root excluded from path")
+}

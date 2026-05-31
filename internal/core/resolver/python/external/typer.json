@@ -1,0 +1,12 @@
+{
+  "typer.Typer": "typer.Typer",
+  "typer.Typer.command": "Callable",
+  "typer.Typer.callback": "Callable",
+  "typer.Typer.add_typer": "None",
+  "typer.run": "None",
+  "typer.echo": "None",
+  "typer.Exit": "typer.Exit",
+  "typer.Argument": "Any",
+  "typer.Option": "Any",
+  "typer.Context": "typer.Context"
+}

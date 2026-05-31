@@ -271,9 +271,9 @@ func (analyzer *Analyzer) ClassifyRoots(ctx context.Context, forest *CallForest)
 		case handlerSet[nodeID]:
 			routeInformation, hasRoute := handlerRoute[nodeID]
 			switch {
-			case hasRoute && routeInformation.Framework == "cobra":
+			case hasRoute && routeInformation.Method == "CLI":
 				entry.EntryType = "cli_command"
-			case hasRoute && routeInformation.Framework == "mcp":
+			case hasRoute && routeInformation.Method == "TOOL":
 				entry.EntryType = "mcp_tool"
 			default:
 				entry.EntryType = "http_endpoint"

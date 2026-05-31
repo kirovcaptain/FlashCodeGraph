@@ -32,6 +32,9 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 		}
 		return true
 	})
+
+	// Click/typer CLI route extraction (delayed generation after all decorators collected)
+	ExtractClickRoutes(rootNode, content, file.RelPath, result)
 }
 
 // rawImportEntry holds a parsed import symbol with its local name.

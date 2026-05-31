@@ -1,0 +1,15 @@
+{
+  "cli.App.Run": "error",
+  "cli.App.RunContext": "error",
+  "cli.Command.Run": "error",
+  "cli.Context.String": "string",
+  "cli.Context.Int": "int",
+  "cli.Context.Bool": "bool",
+  "cli.Context.StringSlice": "[]string",
+  "cli.Context.Args": "cli.Args",
+  "cli.Context.NArg": "int",
+  "cli.Context.IsSet": "bool",
+  "cli.Args.First": "string",
+  "cli.Args.Get": "string",
+  "cli.Args.Len": "int"
+}
