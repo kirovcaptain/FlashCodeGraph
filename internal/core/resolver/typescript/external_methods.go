@@ -129,6 +129,15 @@ func (manager *ExternalMethodManager) Lookup(className, methodName string, argTy
 	if manager == nil {
 		return model.ReturnType{}, false
 	}
+	// Normalize TS primitive types to their wrapper class names
+	switch className {
+	case "string":
+		className = "String"
+	case "number":
+		className = "Number"
+	case "boolean":
+		className = "Boolean"
+	}
 	// Try full qualified name match first
 	candidates := manager.findMethods(className, methodName)
 	if len(candidates) == 0 {

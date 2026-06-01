@@ -433,11 +433,12 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 				}
 				if typeNode != nil {
 					fieldName := nameNode.Utf8Text(content)
-					typeName := extractTypeName(typeNode, content)
-					if typeName != "" {
+					structuredType := extractReturnTypeStructured(typeNode, content)
+					if structuredType.Name != "" {
 						result.TypeHints = append(result.TypeHints, model.TypeBinding{
 							VarName:  fieldName,
-							TypeName: typeName,
+							TypeName: structuredType.Name,
+							TypeArgs: structuredType.Args,
 							Tier:     0,
 							Scope:    qualifiedName,
 							FilePath: file.RelPath,
@@ -446,7 +447,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 						result.Fields = append(result.Fields, model.FieldDeclaration{
 							FieldInfo: model.FieldInfo{
 								Name: fieldName,
-								Type: typeName,
+								Type: structuredType.Name,
 							},
 							OwnerQualifiedName: qualifiedName,
 							FilePath:           file.RelPath,
@@ -957,8 +958,11 @@ func extractParams(node *tree_sitter.Node, content []byte) []model.ParamInfo {
 		}
 
 		typeNode := param.ChildByFieldName("type")
+		var paramTypeArgs []model.TypeArg
 		if typeNode != nil {
-			paramType = extractTypeName(typeNode, content)
+			structuredType := extractReturnTypeStructured(typeNode, content)
+			paramType = structuredType.Name
+			paramTypeArgs = structuredType.Args
 		}
 
 		if paramName != "" && paramName != "this" {
@@ -976,8 +980,11 @@ func extractParams(node *tree_sitter.Node, content []byte) []model.ParamInfo {
 			if param.Kind() == "optional_parameter" || param.ChildByFieldName("value") != nil {
 				entry.HasDefault = true
 			}
-			// Extract TypeArgs for generic_type params (e.g. Constructor<T>)
-			if typeNode != nil {
+			// Use TypeArgs from structuredType extraction (covers both generic_type and array_type)
+			if len(paramTypeArgs) > 0 {
+				entry.TypeArgs = paramTypeArgs
+			} else if typeNode != nil {
+				// Fallback: extract TypeArgs for nested generic_type (e.g. Constructor<T> inside type_annotation)
 				for j := uint(0); j < typeNode.ChildCount(); j++ {
 					typeChild := typeNode.Child(j)
 					if typeChild.Kind() == "generic_type" {
@@ -1175,11 +1182,12 @@ func extractTSPendingAssignment(node *tree_sitter.Node, content []byte, scope st
 		// Extract local variable type annotation as TypeHint (e.g. const x: SomeType = ...)
 		typeNode := child.ChildByFieldName("type")
 		if typeNode != nil {
-			typeName := extractTypeName(typeNode, content)
-			if typeName != "" {
+			structuredType := extractReturnTypeStructured(typeNode, content)
+			if structuredType.Name != "" {
 				result.TypeHints = append(result.TypeHints, model.TypeBinding{
 					VarName:  lhs,
-					TypeName: typeName,
+					TypeName: structuredType.Name,
+					TypeArgs: structuredType.Args,
 					Tier:     0,
 					Scope:    blockScopeKey,
 					FilePath: result.FilePath,

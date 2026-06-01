@@ -635,6 +635,17 @@ func (resolver *Resolver) resolveCallFallback(
 		return []model.ResolvedRelation{makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "same_file", 1)}, nil
 	}
 
+	// Strategy 1.5: Import-based narrowing for no-receiver calls.
+	if call.ReceiverExpr == "" && len(realCandidates) > 1 {
+		narrowed := langHelper.NarrowByScope(realCandidates, call, envs[call.FilePath], resolver.symbolTable)
+		if len(narrowed) == 1 {
+			return []model.ResolvedRelation{makeRelation(callerID, narrowed[0].ID, call, ConfidenceSameFile, "import_exact", 1)}, nil
+		}
+		if len(narrowed) > 0 && len(narrowed) < len(realCandidates) {
+			realCandidates = narrowed
+		}
+	}
+
 	// Strategy 2: Arg count disambiguation — narrow by matching argument count.
 	if call.ArgCount > 0 {
 		argMatched := filterByArgCount(realCandidates, call.ArgCount)

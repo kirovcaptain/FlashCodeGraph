@@ -96,12 +96,19 @@ func (tsHelper *Helper) NarrowByScope(matched []model.Symbol, call model.RawCall
 	var imported []model.Symbol
 	for _, candidate := range matched {
 		for _, imp := range env.Imports {
-			if strings.Contains(candidate.FilePath, imp.ModulePath) {
-				imported = append(imported, candidate)
-				break
+			// Strip relative path prefixes and extension for substring matching
+			modulePath := imp.ModulePath
+			for strings.HasPrefix(modulePath, "../") {
+				modulePath = modulePath[3:]
 			}
-			if imp.SymbolName != "" && imp.SymbolName == candidate.Name &&
-				strings.Contains(candidate.FilePath, imp.ModulePath) {
+			if strings.HasPrefix(modulePath, "./") {
+				modulePath = modulePath[2:]
+			}
+			// Strip .js/.ts extension
+			modulePath = strings.TrimSuffix(modulePath, ".js")
+			modulePath = strings.TrimSuffix(modulePath, ".ts")
+
+			if modulePath != "" && strings.Contains(candidate.FilePath, modulePath) {
 				imported = append(imported, candidate)
 				break
 			}

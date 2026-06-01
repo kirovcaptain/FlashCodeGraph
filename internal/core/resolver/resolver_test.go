@@ -3709,3 +3709,220 @@ func TestResolveCalls_SkipNameUniqueByInferredType(t *testing.T) {
 	}
 	t.Log("✅ Resolver skips name_unique when receiver inferred type is external package")
 }
+
+
+// testTSBuiltinHelper is a TS helper that knows about Set/Map/Array builtin methods.
+type testTSBuiltinHelper struct {
+	testGenericHelper
+}
+
+func (h testTSBuiltinHelper) LookupMethodReturn(typeName, methodName string, _ []string) (model.ReturnType, bool) {
+	builtinMethods := map[string]string{
+		"Set.has": "boolean", "Set.add": "SELF", "Set.delete": "boolean", "Set.clear": "",
+		"Map.get": "V", "Map.set": "SELF", "Map.has": "boolean", "Map.delete": "boolean", "Map.clear": "",
+		"Array.push": "number", "Array.pop": "T", "Array.map": "Array", "Array.filter": "Array",
+		"Array.join": "string", "Array.indexOf": "number",
+		"String.trim": "string", "String.split": "Array", "String.replace": "string",
+	}
+	key := typeName + "." + methodName
+	if returnTypeName, found := builtinMethods[key]; found {
+		return model.ReturnType{Name: returnTypeName}, true
+	}
+	return model.ReturnType{}, false
+}
+
+func (h testTSBuiltinHelper) LookupClassTypeParams(typeName string) []string {
+	switch typeName {
+	case "Set":
+		return []string{"T"}
+	case "Map":
+		return []string{"K", "V"}
+	case "Array":
+		return []string{"T"}
+	}
+	return nil
+}
+
+func (h testTSBuiltinHelper) NarrowByScope(matched []model.Symbol, _ model.RawCall, env *model.TypeEnv, _ *SymbolTable) []model.Symbol {
+	if len(matched) <= 1 || env == nil {
+		return matched
+	}
+	// Mock: simulate import narrowing by returning only the first candidate
+	// Real logic is tested in typescript/helper_test.go (TestTSHelper_NarrowByScope_ImportMatch)
+	if len(env.Imports) > 0 {
+		return matched[:1]
+	}
+	return matched
+}
+
+func TestResolveCalls_ChainOrderResolve(t *testing.T) {
+	// Chain: args.map(fn).join(',')
+	// depth=0: map on Array receiver → external:Array.map (returns Array)
+	// depth=1: join should use Array from depth=0 → external:Array.join
+	// Without chain-order resolve, depth=1 fails because receiver_expr is complex string.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "process", QualifiedName: "src.app.process", Kind: "Function", FilePath: "src/app.ts"},
+	})
+
+	tsHelper := testTSBuiltinHelper{}
+	resolver := NewResolver(table, map[string]LanguageHelper{
+		"typescript": tsHelper,
+	})
+
+	envs := map[string]*model.TypeEnv{
+		"src/app.ts": {
+			Bindings: map[string]*model.TypeInfo{
+				"src.app.process:args": {TypeName: "Array", Tier: 0},
+			},
+			Imports: []model.RawImport{},
+		},
+	}
+
+	calls := []model.RawCall{
+		{
+			CalledName:   "map",
+			CallerName:   "src.app.process",
+			CallerScope:  "src.app.process",
+			FilePath:     "src/app.ts",
+			ReceiverExpr: "args",
+			ArgCount:     1,
+			Language:     "typescript",
+			ChainID:      5,
+			ChainDepth:   0,
+		},
+		{
+			CalledName:   "join",
+			CallerName:   "src.app.process",
+			CallerScope:  "src.app.process",
+			FilePath:     "src/app.ts",
+			ReceiverExpr: "args.map((a) => String(a))",
+			ArgCount:     1,
+			Language:     "typescript",
+			ChainID:      5,
+			ChainDepth:   1,
+		},
+	}
+
+	relations, hints := resolver.ResolveCalls(calls, envs)
+
+	// Both should resolve
+	if len(hints) > 0 {
+		t.Fatalf("expected 0 hints, got %d (type=%s method=%s)", len(hints), hints[0].HintType, hints[0].Method)
+	}
+
+	// Find the join relation
+	var joinResolved bool
+	for _, rel := range relations {
+		if rel.TargetID == "external:Array.join" {
+			joinResolved = true
+			break
+		}
+	}
+	if !joinResolved {
+		targets := []string{}
+		for _, rel := range relations {
+			targets = append(targets, rel.TargetID)
+		}
+		t.Fatalf("expected external:Array.join in relations, got targets: %v", targets)
+	}
+	t.Log("✅ Chain-order resolve: args.map().join() → depth=1 uses Array from depth=0")
+}
+
+func TestResolveCalls_ChainOrderResolve_Fallback(t *testing.T) {
+	// When depth=0 fails to resolve, depth=1 should fallback to resolveChainedReceiver (not crash)
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "caller1", Name: "process", QualifiedName: "src.app.process", Kind: "Function", FilePath: "src/app.ts"},
+	})
+
+	tsHelper := testTSBuiltinHelper{}
+	resolver := NewResolver(table, map[string]LanguageHelper{
+		"typescript": tsHelper,
+	})
+
+	envs := map[string]*model.TypeEnv{
+		"src/app.ts": {
+			Bindings: map[string]*model.TypeInfo{},
+			Imports:  []model.RawImport{},
+		},
+	}
+
+	calls := []model.RawCall{
+		{
+			CalledName:   "unknownMethod",
+			CallerName:   "src.app.process",
+			CallerScope:  "src.app.process",
+			FilePath:     "src/app.ts",
+			ReceiverExpr: "someVar",
+			ArgCount:     0,
+			Language:     "typescript",
+			ChainID:      7,
+			ChainDepth:   0,
+		},
+		{
+			CalledName:   "join",
+			CallerName:   "src.app.process",
+			CallerScope:  "src.app.process",
+			FilePath:     "src/app.ts",
+			ReceiverExpr: "someVar.unknownMethod()",
+			ArgCount:     1,
+			Language:     "typescript",
+			ChainID:      7,
+			ChainDepth:   1,
+		},
+	}
+
+	// Should not panic, just produce hints or nil
+	relations, _ := resolver.ResolveCalls(calls, envs)
+	_ = relations
+	t.Log("✅ Chain-order resolve: graceful fallback when depth=0 fails")
+}
+
+func TestResolveCalls_FallbackNarrowByScope_ImportMatch(t *testing.T) {
+	// TS: import { closeLbug } from './lbug-adapter'
+	// Project has 2 closeLbug functions in different files.
+	// Without import narrowing: ambiguous → unresolved hint.
+	// With import narrowing: matches the imported one.
+	table := NewSymbolTable()
+	table.AddBatch([]model.Symbol{
+		{ID: "close-adapter", Name: "closeLbug", QualifiedName: "src.core.lbug.lbug-adapter.closeLbug", Kind: "Function", FilePath: "src/core/lbug/lbug-adapter.ts"},
+		{ID: "close-pool", Name: "closeLbug", QualifiedName: "src.core.lbug.pool-adapter.closeLbug", Kind: "Function", FilePath: "src/core/lbug/pool-adapter.ts"},
+		{ID: "caller1", Name: "runAnalysis", QualifiedName: "src.cli.analyze.runAnalysis", Kind: "Function", FilePath: "src/cli/analyze.ts"},
+	})
+
+	tsHelper := testTSBuiltinHelper{}
+	resolver := NewResolver(table, map[string]LanguageHelper{
+		"typescript": tsHelper,
+	})
+
+	envs := map[string]*model.TypeEnv{
+		"src/cli/analyze.ts": {
+			Bindings: map[string]*model.TypeInfo{},
+			Imports: []model.RawImport{
+				{ModulePath: "../core/lbug/lbug-adapter.js", SymbolName: "closeLbug"},
+			},
+		},
+	}
+
+	calls := []model.RawCall{{
+		CalledName:  "closeLbug",
+		CallerName:  "src.cli.analyze.runAnalysis",
+		CallerScope: "src.cli.analyze.runAnalysis",
+		FilePath:    "src/cli/analyze.ts",
+		ArgCount:    0,
+		Language:    "typescript",
+	}}
+
+	relations, hints := resolver.ResolveCalls(calls, envs)
+	if len(hints) > 0 {
+		t.Fatalf("expected 0 hints (should resolve via import), got %d hints type=%s", len(hints), hints[0].HintType)
+	}
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	if relations[0].TargetID != "close-adapter" {
+		t.Fatalf("expected target=close-adapter (imported one), got %s", relations[0].TargetID)
+	}
+	t.Log("✅ Fallback NarrowByScope: import disambiguates between 2 same-name functions")
+}

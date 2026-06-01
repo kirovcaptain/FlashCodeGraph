@@ -107,6 +107,26 @@ func TestTSHelper_NarrowByScope_ImportMatch(t *testing.T) {
 	t.Log("✅ NarrowByScope picks import-matched candidate")
 }
 
+func TestTSHelper_NarrowByScope_RelativePathImport(t *testing.T) {
+	helper := tshelper.NewHelper()
+	matched := []model.Symbol{
+		{ID: "adapter", Name: "closeLbug", FilePath: "src/core/lbug/lbug-adapter.ts"},
+		{ID: "pool", Name: "closeLbug", FilePath: "src/core/lbug/pool-adapter.ts"},
+	}
+	call := model.RawCall{FilePath: "src/cli/analyze.ts"}
+	env := &model.TypeEnv{
+		Imports: []model.RawImport{
+			{ModulePath: "../core/lbug/lbug-adapter.js", SymbolName: "closeLbug"},
+		},
+	}
+
+	result := helper.NarrowByScope(matched, call, env, nil)
+	if len(result) != 1 || result[0].ID != "adapter" {
+		t.Fatalf("expected 'adapter' via relative import, got %v", result)
+	}
+	t.Log("✅ NarrowByScope handles relative path import (../core/lbug/lbug-adapter.js)")
+}
+
 func TestTSHelper_NarrowByScope_NoEnv(t *testing.T) {
 	helper := tshelper.NewHelper()
 	matched := []model.Symbol{

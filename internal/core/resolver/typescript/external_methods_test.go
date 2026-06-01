@@ -143,3 +143,35 @@ func TestExternalMethodManager_PromiseThenReturnTypeArgs(t *testing.T) {
 		t.Errorf("Promise.then: expected Args=[{R}], got %v", result.Args)
 	}
 }
+
+func TestExternalMethodManager_PrimitiveTypeLookup(t *testing.T) {
+	manager := NewExternalMethodManager(nil, "/nonexistent")
+
+	tests := []struct {
+		className  string
+		methodName string
+		expectName string
+	}{
+		// Lowercase primitive → should match String/Number/Boolean methods
+		{"string", "trim", "string"},
+		{"string", "split", "Array"},
+		{"string", "replace", "string"},
+		{"string", "startsWith", "boolean"},
+		{"number", "toFixed", "string"},
+		// Uppercase should still work
+		{"String", "trim", "string"},
+		{"String", "split", "Array"},
+	}
+
+	for _, tc := range tests {
+		result, found := manager.Lookup(tc.className, tc.methodName, nil)
+		if !found {
+			t.Errorf("Lookup(%s, %s): not found", tc.className, tc.methodName)
+			continue
+		}
+		if result.Name != tc.expectName {
+			t.Errorf("Lookup(%s, %s): expected %q, got %q", tc.className, tc.methodName, tc.expectName, result.Name)
+		}
+	}
+	t.Log("✅ Primitive type lookup: string/number/boolean map to String/Number/Boolean")
+}
