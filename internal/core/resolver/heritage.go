@@ -24,7 +24,7 @@ func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage) []model.
 		if child == nil {
 			childCandidates := resolver.symbolTable.FindByName(entry.ChildName)
 			for _, candidate := range childCandidates {
-				if candidate.FilePath == entry.FilePath {
+				if candidate.FilePath == entry.FilePath && (candidate.Kind == constants.KindClass || candidate.Kind == constants.KindInterface) {
 					candidateCopy := candidate
 					child = &candidateCopy
 					break
@@ -47,10 +47,21 @@ func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage) []model.
 			continue
 		}
 
+		// Filter to Class/Interface only (skip constructors with same name)
+		var classParents []model.Symbol
+		for _, candidate := range parentCandidates {
+			if candidate.Kind == constants.KindClass || candidate.Kind == constants.KindInterface {
+				classParents = append(classParents, candidate)
+			}
+		}
+		if len(classParents) == 0 {
+			continue
+		}
+
 		// Pick best parent match
-		parent := &parentCandidates[0]
+		parent := &classParents[0]
 		confidence := ConfidenceNameUnique // multiple candidates
-		if len(parentCandidates) == 1 {
+		if len(classParents) == 1 {
 			confidence = ConfidenceArgCount // unique candidate (reuses 0.85 tier)
 		}
 
@@ -66,7 +77,7 @@ func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage) []model.
 			SourceKind: child.Kind,
 			Confidence: confidence,
 			ResolvedBy: "heritage_" + entry.Kind,
-			Candidates: len(parentCandidates),
+			Candidates: len(classParents),
 		})
 	}
 
