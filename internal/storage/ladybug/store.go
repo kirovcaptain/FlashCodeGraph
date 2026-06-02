@@ -1710,23 +1710,16 @@ func writeCSVRow(file *os.File, fields []string) {
 		}
 		builder.WriteByte('"')
 		if useBackslashEscape {
-			for _, char := range field {
-				switch char {
-				case '"':
-					builder.WriteString("\\\"")
-				case '\\':
-					builder.WriteString("\\\\")
-				default:
-					builder.WriteRune(char)
-				}
+			if strings.ContainsAny(field, "\"\\") {
+				builder.WriteString(strings.ReplaceAll(strings.ReplaceAll(field, "\\", "\\\\"), "\"", "\\\""))
+			} else {
+				builder.WriteString(field)
 			}
 		} else {
-			for _, char := range field {
-				if char == '"' {
-					builder.WriteString("\"\"")
-				} else {
-					builder.WriteRune(char)
-				}
+			if strings.Contains(field, "\"") {
+				builder.WriteString(strings.ReplaceAll(field, "\"", "\"\""))
+			} else {
+				builder.WriteString(field)
 			}
 		}
 		builder.WriteByte('"')
