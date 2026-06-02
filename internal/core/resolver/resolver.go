@@ -1225,13 +1225,6 @@ func (resolver *Resolver) substituteTypeArgs(args []model.TypeArg, receiverType,
 }
 
 func (resolver *Resolver) ensureExternalClassSymbol(typeName string, langHelper LanguageHelper) {
-	// Check if class already exists in SymbolTable
-	existing := resolver.symbolTable.FindByName(typeName)
-	for _, symbol := range existing {
-		if symbol.Kind == constants.KindClass || symbol.Kind == constants.KindInterface {
-			return // already exists
-		}
-	}
 	// Get TypeParams from language helper
 	typeParams := langHelper.LookupClassTypeParams(typeName)
 	if len(typeParams) == 0 {
@@ -1242,9 +1235,13 @@ func (resolver *Resolver) ensureExternalClassSymbol(typeName string, langHelper 
 		classQualifiedName = classQualifiedName[:len(classQualifiedName)-1]
 	}
 	externalClassID := "external:" + classQualifiedName
+	// Check if already exists by ID to avoid duplicates from FQN vs short name
+	if resolver.symbolTable.FindByID(externalClassID) != nil {
+		return
+	}
 	resolver.symbolTable.AddBatch([]model.Symbol{{
 		ID:            externalClassID,
-		Name:          typeName,
+		Name:          lastSegment(classQualifiedName),
 		QualifiedName: classQualifiedName,
 		Kind:          constants.KindInterface,
 		FilePath:      constants.FilePathExternal,

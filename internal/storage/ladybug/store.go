@@ -170,7 +170,11 @@ func (store *Store) createNodesCSV(nodes []model.Node) error {
 
 		if err := store.copyFromCSV(kind, csvPath); err != nil {
 			os.Remove(csvPath)
-			return err
+			// Fallback to legacy if COPY fails (e.g. table already has data)
+			if legacyErr := store.createNodesLegacy(kindNodes); legacyErr != nil {
+				return legacyErr
+			}
+			continue
 		}
 		os.Remove(csvPath)
 	}

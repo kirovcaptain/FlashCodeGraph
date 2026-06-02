@@ -3926,3 +3926,54 @@ func TestResolveCalls_FallbackNarrowByScope_ImportMatch(t *testing.T) {
 	}
 	t.Log("✅ Fallback NarrowByScope: import disambiguates between 2 same-name functions")
 }
+
+func TestEnsureExternalClassSymbol_NoDuplicateFromFQNAndShortName(t *testing.T) {
+	table := NewSymbolTable()
+	helper := testExternalClassHelper{}
+
+	resolver := NewResolver(table, map[string]LanguageHelper{"java": helper})
+
+	// Simulate path 1: called with FQN "java.util.Optional"
+	resolver.ensureExternalClassSymbol("java.util.Optional", helper)
+
+	// Simulate path 2: called with short name "Optional"
+	resolver.ensureExternalClassSymbol("Optional", helper)
+
+	// Should only have 1 class symbol, not 2
+	all := table.All()
+	var classCount int
+	for _, sym := range all {
+		if sym.ID == "external:java.util.Optional" || strings.Contains(sym.QualifiedName, "Optional") {
+			classCount++
+			t.Logf("  Found: ID=%s Name=%s QN=%s Kind=%s", sym.ID, sym.Name, sym.QualifiedName, sym.Kind)
+		}
+	}
+	if classCount > 1 {
+		t.Fatalf("expected 1 external class symbol, got %d (duplicate!)", classCount)
+	}
+	t.Log("✅ No duplicate external class symbol from FQN vs short name")
+}
+
+type testExternalClassHelper struct {
+	testGenericHelper
+}
+
+func (h testExternalClassHelper) LookupClassTypeParams(typeName string) []string {
+	// Return TypeParams for both FQN and short name to trigger ensureExternalClassSymbol
+	if typeName == "Optional" || typeName == "java.util.Optional" {
+		return []string{"T"}
+	}
+	return nil
+}
+
+func (h testExternalClassHelper) BuildExternalQualifiedName(typeName, methodName string) string {
+	// Normalize to FQN
+	base := typeName
+	if typeName == "Optional" {
+		base = "java.util.Optional"
+	}
+	if methodName == "" {
+		return base
+	}
+	return base + "." + methodName
+}
