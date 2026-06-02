@@ -340,7 +340,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 					result.Heritage = append(result.Heritage, model.RawHeritage{
 						ChildName: className, ChildQualified: qualifiedName,
 						ParentName: parentName,
-						Kind:       "extends", FilePath: file.RelPath,
+						Kind: "extends", Language: "typescript", FilePath: file.RelPath,
 						TypeArgs: heritageTypeArgs,
 					})
 				}
@@ -364,7 +364,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 					result.Heritage = append(result.Heritage, model.RawHeritage{
 						ChildName: className, ChildQualified: qualifiedName,
 						ParentName: ifaceName,
-						Kind:       "implements", FilePath: file.RelPath,
+						Kind: "implements", Language: "typescript", FilePath: file.RelPath,
 						TypeArgs: interfaceTypeArgs,
 					})
 				}
@@ -383,7 +383,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 					result.Heritage = append(result.Heritage, model.RawHeritage{
 						ChildName: className, ChildQualified: qualifiedName,
 						ParentName: parentName,
-						Kind:       kind, FilePath: file.RelPath,
+						Kind: kind, Language: "typescript", FilePath: file.RelPath,
 					})
 				}
 			}

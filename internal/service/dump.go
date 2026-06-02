@@ -377,7 +377,7 @@ func (d *FileDumpManager) OnExternalNodes(nodes []model.Node) {
 	if len(nodes) == 0 {
 		return
 	}
-	header := []string{"id", "name", "qualified_name"}
+	header := []string{"id", "kind", "name", "qualified_name"}
 	writer, file := d.createCSV("external_nodes.csv", header)
 	if writer == nil {
 		return
@@ -386,6 +386,7 @@ func (d *FileDumpManager) OnExternalNodes(nodes []model.Node) {
 		props := node.Properties
 		writer.Write([]string{
 			node.ID,
+			node.Kind,
 			propStr(props, "name"),
 			propStr(props, "qualified_name"),
 		})

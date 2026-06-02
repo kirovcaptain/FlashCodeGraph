@@ -68,6 +68,10 @@ type LanguageHelper interface {
 	// InferImplements infers implicit interface implementation relationships.
 	// Go: method signature matching (duck typing). Other languages: return nil.
 	InferImplements() []model.ResolvedRelation
+
+	// IsImportAccessible checks if a candidate symbol is accessible from the caller file
+	// via import statements. Used by heritage resolver to disambiguate same-name parents.
+	IsImportAccessible(candidate model.Symbol, callerFilePath string, env *model.TypeEnv) bool
 }
 
 // HeritageAware is an optional interface for helpers that need heritage data.

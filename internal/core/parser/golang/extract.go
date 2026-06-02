@@ -199,6 +199,7 @@ func extractStruct(specNode, structNode *tree_sitter.Node, content []byte, file 
 					ParentName:      parentName,
 					ParentQualified: parentQualified,
 					Kind:            "embedding",
+					Language:        "go",
 					FilePath:        file.RelPath,
 				})
 			}
@@ -261,6 +262,7 @@ func extractInterface(specNode, interfaceNode *tree_sitter.Node, content []byte,
 				ParentName:      parentName,
 				ParentQualified: parentQualified,
 				Kind:            "embedding",
+				Language:        "go",
 				FilePath:        file.RelPath,
 			})
 			continue

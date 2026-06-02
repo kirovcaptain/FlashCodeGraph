@@ -192,9 +192,13 @@ func (indexer *Indexer) writeResolvedRelations(
 	var externalNodes []model.Node
 	for _, sym := range symbolTable.All() {
 		if strings.HasPrefix(sym.ID, "external:") {
+			kind := sym.Kind
+			if kind == "" {
+				kind = constants.KindFunction
+			}
 			externalNodes = append(externalNodes, model.Node{
 				ID:   sym.ID,
-				Kind: constants.KindFunction,
+				Kind: kind,
 				Properties: map[string]interface{}{
 					"name":           sym.Name,
 					"qualified_name": sym.QualifiedName,

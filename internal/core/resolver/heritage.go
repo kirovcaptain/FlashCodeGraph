@@ -8,7 +8,7 @@ import (
 )
 
 // ResolveHeritage resolves inheritance/implementation relationships.
-func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage) []model.ResolvedRelation {
+func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage, envs map[string]*model.TypeEnv) []model.ResolvedRelation {
 	var relations []model.ResolvedRelation
 
 	for _, entry := range heritage {
@@ -38,8 +38,10 @@ func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage) []model.
 		var parentCandidates []model.Symbol
 		if entry.ParentQualified != "" {
 			parentCandidates = resolver.symbolTable.FindByQualifiedName(entry.ParentQualified)
-		}
-		if len(parentCandidates) == 0 {
+			if len(parentCandidates) == 0 {
+				continue // qualified name not in project → external dependency
+			}
+		} else {
 			parentCandidates = resolver.symbolTable.FindByName(entry.ParentName)
 		}
 
@@ -58,6 +60,22 @@ func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage) []model.
 			continue
 		}
 
+
+		// Filter by import accessibility when multiple candidates exist
+		if len(classParents) > 1 && envs != nil && entry.Language != "" {
+			if langHelper, ok := resolver.langHelpers[entry.Language]; ok {
+				env := envs[entry.FilePath]
+				var accessibleCandidates []model.Symbol
+				for _, candidate := range classParents {
+					if langHelper.IsImportAccessible(candidate, entry.FilePath, env) {
+						accessibleCandidates = append(accessibleCandidates, candidate)
+					}
+				}
+				if len(accessibleCandidates) > 0 {
+					classParents = accessibleCandidates
+				}
+			}
+		}
 		// Pick best parent match
 		parent := &classParents[0]
 		confidence := ConfidenceNameUnique // multiple candidates

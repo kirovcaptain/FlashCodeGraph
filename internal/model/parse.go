@@ -43,6 +43,7 @@ type RawHeritage struct {
 	Kind            string    `json:"kind"`                       // extends / implements / embedding
 	FilePath        string    `json:"file_path"`
 	TypeArgs        []TypeArg `json:"type_args,omitempty"`        // generic args: extends Base<User, Long> → [{Name:"User"}, {Name:"Long"}]
+	Language        string    `json:"language,omitempty"`
 }
 
 // RawRoute represents a route declaration extracted from AST.
@@ -110,6 +111,7 @@ type TypeBinding struct {
 	VarName        string    `json:"var_name"`
 	TypeName       string    `json:"type_name"`
 	TypeArgs       []TypeArg `json:"type_args,omitempty"`
+	Language        string    `json:"language,omitempty"`
 	Tier           int       `json:"tier"`
 	Scope          string    `json:"scope"`
 	FilePath       string    `json:"file_path"`

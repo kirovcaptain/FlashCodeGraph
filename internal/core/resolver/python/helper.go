@@ -159,3 +159,8 @@ func (pythonHelper *Helper) IsOverrideMatch(childMethod, parentMethod model.Symb
 
 // InferImplements is a no-op for Python (no interface concept).
 func (pythonHelper *Helper) InferImplements() []model.ResolvedRelation { return nil }
+
+// IsImportAccessible for Python always returns true — no same-name disambiguation needed.
+func (pythonHelper *Helper) IsImportAccessible(candidate model.Symbol, callerFilePath string, env *model.TypeEnv) bool {
+	return true
+}

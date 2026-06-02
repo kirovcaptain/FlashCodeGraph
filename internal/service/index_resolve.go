@@ -141,7 +141,7 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 	// Step 5: Heritage resolution — match "extends"/"implements" declarations against SymbolTable.
 	// Produces EXTENDS and IMPLEMENTS edges.
 	indexer.progress.EmitSub(PhaseResolving, SubResolveHeritage, "")
-	heritageRelations := resolverInstance.ResolveHeritage(allHeritage)
+	heritageRelations := resolverInstance.ResolveHeritage(allHeritage, envs)
 	indexer.progress.EmitSub(PhaseResolving, SubResolveHeritage, fmt.Sprintf("%d heritage", len(heritageRelations)))
 
 	// Step 6: Override and dispatch detection — find child methods overriding parent methods.

@@ -184,6 +184,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 					ParentName:      parentType,
 					ParentQualified: resolveParentQualified(parentType),
 					Kind:            "extends",
+					Language:        "java",
 					FilePath:        filePath,
 					TypeArgs:        heritageTypeArgs,
 				})
@@ -215,6 +216,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 								ParentName:      ifaceName,
 								ParentQualified: resolveParentQualified(ifaceName),
 								Kind:            "implements",
+								Language:        "java",
 								FilePath:        filePath,
 								TypeArgs:        interfaceTypeArgs,
 							})

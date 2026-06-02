@@ -201,3 +201,28 @@ func (tsHelper *Helper) IsOverrideMatch(childMethod, parentMethod model.Symbol) 
 
 // InferImplements is a no-op for TypeScript (explicit implements keyword).
 func (tsHelper *Helper) InferImplements() []model.ResolvedRelation { return nil }
+
+// IsImportAccessible checks if a candidate is accessible via import or same-file declaration.
+func (tsHelper *Helper) IsImportAccessible(candidate model.Symbol, callerFilePath string, env *model.TypeEnv) bool {
+	if candidate.FilePath == callerFilePath {
+		return true
+	}
+	if env == nil {
+		return true
+	}
+	for _, importEntry := range env.Imports {
+		modulePath := importEntry.ModulePath
+		for strings.HasPrefix(modulePath, "../") {
+			modulePath = modulePath[3:]
+		}
+		if strings.HasPrefix(modulePath, "./") {
+			modulePath = modulePath[2:]
+		}
+		modulePath = strings.TrimSuffix(modulePath, ".js")
+		modulePath = strings.TrimSuffix(modulePath, ".ts")
+		if modulePath != "" && strings.Contains(candidate.FilePath, modulePath) {
+			return true
+		}
+	}
+	return false
+}

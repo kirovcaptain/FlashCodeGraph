@@ -186,6 +186,7 @@ func extractClass(node *tree_sitter.Node, content []byte, file scanner.ScannedFi
 				ChildQualified: qualifiedName,
 				ParentName:     baseName,
 				Kind:           "extends",
+				Language:       "python",
 				FilePath:       file.RelPath,
 			})
 		}

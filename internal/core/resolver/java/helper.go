@@ -281,3 +281,8 @@ func (javaHelper *Helper) IsOverrideMatch(childMethod, parentMethod model.Symbol
 
 // InferImplements is a no-op for Java (explicit implements keyword).
 func (javaHelper *Helper) InferImplements() []model.ResolvedRelation { return nil }
+
+// IsImportAccessible for Java always returns true — Java uses ParentQualified for disambiguation.
+func (javaHelper *Helper) IsImportAccessible(candidate model.Symbol, callerFilePath string, env *model.TypeEnv) bool {
+	return true
+}

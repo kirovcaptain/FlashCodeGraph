@@ -13,7 +13,7 @@ from collections import defaultdict
 
 # Edge table schema: edge_type -> (from_kind, to_kind)
 EDGE_SCHEMA = {
-    "CALLS": ("Function", "Function"),
+    "CALLS": ("Function", ("Function", "Class", "Interface")),
     "EXTENDS": ("Class", "Class"),
     "IMPLEMENTS": ("Class", "Interface"),
     "IMPORTS": ("File", "File"),
@@ -49,13 +49,12 @@ def collect_node_ids(debug_dir):
         ("symbols.csv", 0, 1),           # id col 0, kind col 1
         ("routes.csv", 0, None),         # id col 0, kind is always "Route"
         ("structural_nodes.csv", 0, 1),  # id col 0, kind col 1
-        ("external_nodes.csv", 0, None), # id col 0, kind is always "Function"
+        ("external_nodes.csv", 0, 1),   # id col 0, kind col 1
     ]
 
     # Fixed kinds for files without kind column
     fixed_kinds = {
         "routes.csv": "Route",
-        "external_nodes.csv": "Function",
     }
 
     id_to_kind = {}  # id -> kind
@@ -94,6 +93,9 @@ def check_edges(debug_dir, id_to_kind):
     """Read edge CSVs and check orphan edges + type mismatches."""
     edge_files = [
         ("structural_edges.csv", 0, 1, 2),  # source col 0, target col 1, kind col 2
+        ("heritage.csv", 0, 1, 2),       # source col 0, target col 1, kind col 2
+        ("overrides.csv", 0, 1, 2),      # source col 0, target col 1, kind col 2
+        ("implements.csv", 0, 1, 2),     # source col 0, target col 1, kind col 2
     ]
 
     # calls_*.csv: resolved_by, confidence, candidates, source_id, target_id, ...
@@ -139,9 +141,11 @@ def check_edges(debug_dir, id_to_kind):
                     expected_from_kind, expected_to_kind = EDGE_SCHEMA[edge_type]
                     source_kind = id_to_kind.get(source_id)
                     target_kind = id_to_kind.get(target_id)
-                    if source_kind and source_kind != expected_from_kind:
+                    from_ok = isinstance(expected_from_kind, tuple) and source_kind in expected_from_kind or source_kind == expected_from_kind
+                    to_ok = isinstance(expected_to_kind, tuple) and target_kind in expected_to_kind or target_kind == expected_to_kind
+                    if source_kind and not from_ok:
                         type_mismatches.append((filename, line_number, edge_type, "source", source_id, source_kind, expected_from_kind))
-                    if target_kind and target_kind != expected_to_kind:
+                    if target_kind and not to_ok:
                         type_mismatches.append((filename, line_number, edge_type, "target", target_id, target_kind, expected_to_kind))
 
     return orphans, type_mismatches

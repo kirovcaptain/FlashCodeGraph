@@ -241,3 +241,8 @@ func isSubset(required, actual map[string]bool) bool {
 	}
 	return true
 }
+
+// IsImportAccessible for Go always returns true — Go package paths are unique.
+func (goHelper *Helper) IsImportAccessible(candidate model.Symbol, callerFilePath string, env *model.TypeEnv) bool {
+	return true
+}

@@ -77,6 +77,7 @@ func (testGenericHelper) IsOverrideMatch(child, parent model.Symbol) bool {
 	return child.Name == parent.Name
 }
 func (testGenericHelper) InferImplements() []model.ResolvedRelation { return nil }
+func (testGenericHelper) IsImportAccessible(_ model.Symbol, _ string, _ *model.TypeEnv) bool { return true }
 func (testGenericHelper) ResolveSuperCall(_ model.RawCall, _ []model.Symbol, _ []model.RawHeritage, _ map[string]*model.TypeEnv, _ string) ([]model.ResolvedRelation, bool) {
 	return nil, false
 }
@@ -276,6 +277,7 @@ func (h *testJavaHelper) IsOverrideMatch(child, parent model.Symbol) bool {
 	return child.Name == parent.Name
 }
 func (h *testJavaHelper) InferImplements() []model.ResolvedRelation { return nil }
+func (h *testJavaHelper) IsImportAccessible(_ model.Symbol, _ string, _ *model.TypeEnv) bool { return true }
 
 func buildTestTable() *SymbolTable {
 	table := NewSymbolTable()
@@ -434,7 +436,7 @@ func TestResolveHeritage(t *testing.T) {
 		{ChildName: "UserService", ParentName: "OrderService", Kind: "extends", FilePath: "service.go"},
 	}
 
-	relations := resolver.ResolveHeritage(heritage)
+	relations := resolver.ResolveHeritage(heritage, nil)
 	if len(relations) != 1 {
 		t.Fatalf("expected 1 heritage relation, got %d", len(relations))
 	}
@@ -668,7 +670,7 @@ func TestResolveHeritage_UniqueParentHighConfidence(t *testing.T) {
 		{ChildName: "Dog", ParentName: "Animal", Kind: "extends", FilePath: "dog.py"},
 	}
 
-	relations := resolver.ResolveHeritage(heritage)
+	relations := resolver.ResolveHeritage(heritage, nil)
 	if len(relations) != 1 {
 		t.Fatalf("expected 1 relation, got %d", len(relations))
 	}
@@ -696,7 +698,7 @@ func TestResolveHeritage_MultipleParentCandidatesLowerConfidence(t *testing.T) {
 		{ChildName: "Dog", ParentName: "Animal", Kind: "extends", FilePath: "dog.py"},
 	}
 
-	relations := resolver.ResolveHeritage(heritage)
+	relations := resolver.ResolveHeritage(heritage, nil)
 	if len(relations) != 1 {
 		t.Fatalf("expected 1 relation, got %d", len(relations))
 	}
@@ -719,7 +721,7 @@ func TestResolveHeritage_ImplementsKind(t *testing.T) {
 		{ChildName: "UserService", ParentName: "Serializable", Kind: "implements", FilePath: "svc.java"},
 	}
 
-	relations := resolver.ResolveHeritage(heritage)
+	relations := resolver.ResolveHeritage(heritage, nil)
 	if len(relations) != 1 {
 		t.Fatalf("expected 1 relation, got %d", len(relations))
 	}
@@ -746,7 +748,7 @@ func TestResolveHeritage_SameShortNameDisambiguation(t *testing.T) {
 		{ChildName: "UserDao", ChildQualified: "com.msg.dao.UserDao", ParentName: "BaseDao", ParentQualified: "com.msg.dao.BaseDao", Kind: "extends", FilePath: "UserDao.java"},
 	}
 
-	relations := resolver.ResolveHeritage(heritage)
+	relations := resolver.ResolveHeritage(heritage, nil)
 	if len(relations) != 2 {
 		t.Fatalf("expected 2 relations, got %d", len(relations))
 	}
