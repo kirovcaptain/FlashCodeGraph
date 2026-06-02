@@ -73,6 +73,9 @@ func (store *Store) Migrate(_ context.Context) error {
 	// Relationship tables — generated from model.EdgeColumns schema
 	for tableName, def := range model.EdgeColumns {
 		colDefs := fmt.Sprintf("FROM %s TO %s", def.FromKind, def.ToKind)
+		for _, extraToKind := range def.ToKinds {
+			colDefs += fmt.Sprintf(", FROM %s TO %s", def.FromKind, extraToKind)
+		}
 		for _, col := range def.Columns {
 			colDefs += ", " + col.Name + " " + col.Type
 		}

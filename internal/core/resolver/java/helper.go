@@ -84,14 +84,14 @@ func (javaHelper *Helper) ResolveSuperCall(call model.RawCall, funcCandidates []
 			}
 
 			if len(matched) == 1 {
-				relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1)}
+				relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1, matched[0].Kind)}
 				setDeclaredType(relations)
 				return relations, true
 			}
 			if len(matched) > 1 {
 				argMatched := resolver.FilterByArgCount(matched, call.ArgCount)
 				if len(argMatched) == 1 {
-					relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, argMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_count", 1)}
+					relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, argMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_count", 1, argMatched[0].Kind)}
 					setDeclaredType(relations)
 					return relations, true
 				}
@@ -104,7 +104,7 @@ func (javaHelper *Helper) ResolveSuperCall(call model.RawCall, funcCandidates []
 				hierarchyClassName = parentName
 			}
 			if sym := resolver.FindMethodInHierarchyPublic(javaHelper.symbolTable, hierarchyClassName, call.CalledName, heritage); sym != nil {
-				relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, sym.ID, call, resolver.ConfidenceTypeExact, "type_hierarchy", 1)}
+				relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, sym.ID, call, resolver.ConfidenceTypeExact, "type_hierarchy", 1, sym.Kind)}
 				setDeclaredType(relations)
 				return relations, true
 			}
@@ -169,21 +169,21 @@ func (javaHelper *Helper) ResolveReceiverFallback(call model.RawCall, funcCandid
 			}
 		}
 		if len(staticMatched) == 1 {
-			rel := resolver.MakeRelation(callerID, staticMatched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1)
+			rel := resolver.MakeRelation(callerID, staticMatched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1, staticMatched[0].Kind)
 			rel.Metadata["declared_type"] = cls.QualifiedName
 			return []model.ResolvedRelation{rel}, true
 		}
 		if len(staticMatched) > 1 {
 			argMatched := resolver.FilterByArgCount(staticMatched, call.ArgCount)
 			if len(argMatched) == 1 {
-				rel := resolver.MakeRelation(callerID, argMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_count", 1)
+				rel := resolver.MakeRelation(callerID, argMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_count", 1, argMatched[0].Kind)
 				rel.Metadata["declared_type"] = cls.QualifiedName
 				return []model.ResolvedRelation{rel}, true
 			}
 			if len(argMatched) > 1 {
 				typeMatched := resolver.FilterByArgTypesWithHelper(argMatched, resolver.EnrichArgTypes(call, envs, symbolTable, javaHelper), javaHelper)
 				if len(typeMatched) == 1 {
-					rel := resolver.MakeRelation(callerID, typeMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_type", 1)
+					rel := resolver.MakeRelation(callerID, typeMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_type", 1, typeMatched[0].Kind)
 					rel.Metadata["declared_type"] = cls.QualifiedName
 					return []model.ResolvedRelation{rel}, true
 				}

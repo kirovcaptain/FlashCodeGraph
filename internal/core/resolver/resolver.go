@@ -146,7 +146,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 		qualifiedNameMatches := resolver.symbolTable.FindByQualifiedName(call.CalledName)
 		if len(qualifiedNameMatches) == 1 {
 			callerID := resolver.findCallerID(call)
-			return []model.ResolvedRelation{makeRelation(callerID, qualifiedNameMatches[0].ID, call, 0.95, "qualified_name_exact", 1)}, nil
+			return []model.ResolvedRelation{makeRelation(callerID, qualifiedNameMatches[0].ID, call, 0.95, "qualified_name_exact", 1, qualifiedNameMatches[0].Kind)}, nil
 		}
 		return nil, nil
 	}
@@ -157,7 +157,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 			scope := effectiveCallerScope(call)
 			if info := lookupBindingWithScopeChain(env, scope, call.CalledName); info != nil && info.LambdaSymbolID != "" {
 				callerID := resolver.findCallerID(call)
-				return []model.ResolvedRelation{makeRelation(callerID, info.LambdaSymbolID, call, 0.95, "lambda_direct_call", 1)}, nil
+				return []model.ResolvedRelation{makeRelation(callerID, info.LambdaSymbolID, call, 0.95, "lambda_direct_call", 1, constants.KindFunction)}, nil
 			}
 		}
 	}
@@ -183,7 +183,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 				scope := effectiveCallerScope(call)
 				if info := lookupBindingWithScopeChain(env, scope, call.ReceiverExpr); info != nil && info.LambdaSymbolID != "" {
 					callerID := resolver.findCallerID(call)
-					return []model.ResolvedRelation{makeRelation(callerID, info.LambdaSymbolID, call, 0.95, "lambda_redirect", 1)}, nil
+					return []model.ResolvedRelation{makeRelation(callerID, info.LambdaSymbolID, call, 0.95, "lambda_redirect", 1, constants.KindFunction)}, nil
 				}
 			}
 		}
@@ -229,7 +229,7 @@ func (resolver *Resolver) resolveCallNoCandidate(call model.RawCall, envs map[st
 		candidates := resolver.symbolTable.FindByName(call.CalledName)
 		matched := filterByOwnerClass(candidates, receiverType)
 		if len(matched) > 0 {
-			return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "receiver_type_internal", 1)}, nil
+			return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "receiver_type_internal", 1, matched[0].Kind)}, nil
 		}
 		// Second: check if method is known in external method registry (e.g. Stream.map from chain inference)
 		if returnType, known := langHelper.LookupMethodReturn(receiverType, call.CalledName, call.ArgTypes); known {
@@ -242,7 +242,7 @@ func (resolver *Resolver) resolveCallNoCandidate(call model.RawCall, envs map[st
 			}})
 			// Ensure the owning class external Symbol exists (with TypeParams for generic substitution)
 			resolver.ensureExternalClassSymbol(receiverType, langHelper)
-			return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
+			return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1, constants.KindFunction)}, nil
 		}
 		// Third: resolve as external via import path
 		if env := envs[call.FilePath]; env != nil {
@@ -257,7 +257,7 @@ func (resolver *Resolver) resolveCallNoCandidate(call model.RawCall, envs map[st
 						ID: externalID, Name: call.CalledName,
 						QualifiedName: qualifiedName, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
 					}})
-					return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil
+					return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1, constants.KindFunction)}, nil
 				}
 			}
 		}
@@ -305,7 +305,7 @@ func (resolver *Resolver) resolveCallWithReceiver(
 	if env := envs[call.FilePath]; env != nil {
 		scope := effectiveCallerScope(call)
 		if info := lookupBindingWithScopeChain(env, scope, call.ReceiverExpr); info != nil && info.LambdaSymbolID != "" {
-			return []model.ResolvedRelation{makeRelation(callerID, info.LambdaSymbolID, call, 0.95, "lambda_redirect", 1)}, nil, false
+			return []model.ResolvedRelation{makeRelation(callerID, info.LambdaSymbolID, call, 0.95, "lambda_redirect", 1, constants.KindFunction)}, nil, false
 		}
 	}
 
@@ -330,7 +330,7 @@ func (resolver *Resolver) resolveCallWithReceiver(
 	// e.g. ReceiverExpr="falkor", QN="falkor.New" → match.
 	matched := filterByOwnerClass(funcCandidates, call.ReceiverExpr)
 	if len(matched) == 1 {
-		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceSameFile, "package_prefix", 1)}, nil, false
+		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceSameFile, "package_prefix", 1, matched[0].Kind)}, nil, false
 	}
 
 	// Strategy 5: Language-specific receiver fallback (e.g. Java same-package static call).
@@ -399,7 +399,7 @@ func (resolver *Resolver) resolveByHierarchyWalk(call model.RawCall, callerID, r
 	if resolvedMethod == nil {
 		return nil, nil, false
 	}
-	relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)
+	relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "type_hierarchy", 1, resolvedMethod.Kind)
 	relation.Metadata["declared_type"] = receiverType
 	receiverSymbol := resolver.findClassSymbol(receiverType)
 	if receiverSymbol != nil && (receiverSymbol.Kind == constants.KindInterface || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
@@ -410,7 +410,7 @@ func (resolver *Resolver) resolveByHierarchyWalk(call model.RawCall, callerID, r
 
 // resolveExactMatch handles the case where exactly one candidate matches the receiver type.
 func (resolver *Resolver) resolveExactMatch(call model.RawCall, callerID string, matched model.Symbol, receiverType string) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
-	relation := makeRelation(callerID, matched.ID, call, ConfidenceTypeExact, "type_exact", 1)
+	relation := makeRelation(callerID, matched.ID, call, ConfidenceTypeExact, "type_exact", 1, matched.Kind)
 	relation.Metadata["declared_type"] = receiverType
 	return []model.ResolvedRelation{relation}, nil, true
 }
@@ -429,21 +429,21 @@ func (resolver *Resolver) disambiguateMultipleMatches(
 	// Narrow by language-specific scope rules.
 	matched = langHelper.NarrowByScope(matched, call, envs[call.FilePath], resolver.symbolTable)
 	if len(matched) == 1 {
-		rel := makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)
+		rel := makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1, matched[0].Kind)
 		rel.Metadata["declared_type"] = receiverType
 		return []model.ResolvedRelation{rel}, nil, true
 	}
 	// Same file proximity.
 	sameFile := filterByFile(matched, call.FilePath)
 	if len(sameFile) == 1 {
-		rel := makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "type_same_file", 1)
+		rel := makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "type_same_file", 1, sameFile[0].Kind)
 		rel.Metadata["declared_type"] = receiverType
 		return []model.ResolvedRelation{rel}, nil, true
 	}
 	// Argument count.
 	argMatched := filterByArgCount(matched, call.ArgCount)
 	if len(argMatched) == 1 {
-		rel := makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)
+		rel := makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1, argMatched[0].Kind)
 		rel.Metadata["declared_type"] = receiverType
 		return []model.ResolvedRelation{rel}, nil, true
 	}
@@ -451,7 +451,7 @@ func (resolver *Resolver) disambiguateMultipleMatches(
 	if len(argMatched) > 1 {
 		typeMatched := filterByArgTypes(argMatched, resolver.enrichArgTypes(call, envs, langHelper), langHelper)
 		if len(typeMatched) == 1 {
-			rel := makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1)
+			rel := makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1, typeMatched[0].Kind)
 			rel.Metadata["declared_type"] = receiverType
 			return []model.ResolvedRelation{rel}, nil, true
 		}
@@ -486,7 +486,7 @@ func (resolver *Resolver) resolveAsExternalDependency(
 			ID: externalID, Name: call.CalledName,
 			QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
 		}})
-		return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
+		return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1, constants.KindFunction)}, nil, true
 	}
 
 	// Short receiver type (e.g. "List") — try resolving via direct import match.
@@ -499,7 +499,7 @@ func (resolver *Resolver) resolveAsExternalDependency(
 					ID: externalID, Name: call.CalledName,
 					QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
 				}})
-				return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
+				return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1, constants.KindFunction)}, nil, true
 			}
 		}
 	}
@@ -515,7 +515,7 @@ func (resolver *Resolver) resolveAsExternalDependency(
 			ReturnTypes: []model.ReturnType{returnType},
 		}})
 		resolver.ensureExternalClassSymbol(receiverType, langHelper)
-		return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
+		return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1, constants.KindFunction)}, nil, true
 	}
 
 	// Try wildcard import or same-package resolution.
@@ -575,12 +575,12 @@ func (resolver *Resolver) resolveByWildcardOrSamePackage(
 		if isSamePackage || isWildcardImport {
 			matched := filterByOwnerClass(funcCandidates, sym.Name)
 			if len(matched) == 1 {
-				return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}, nil, true
+				return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1, matched[0].Kind)}, nil, true
 			}
 			if len(matched) > 1 {
 				argMatched := filterByArgCount(matched, call.ArgCount)
 				if len(argMatched) == 1 {
-					return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil, true
+					return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1, argMatched[0].Kind)}, nil, true
 				}
 				return makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "type_multi"), nil, true
 			}
@@ -610,7 +610,7 @@ func (resolver *Resolver) resolveExternalByImport(
 				ID: externalID, Name: call.CalledName,
 				QualifiedName: externalQN, Kind: constants.KindFunction, FilePath: constants.FilePathExternal,
 			}})
-			return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, nil, true
+			return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1, constants.KindFunction)}, nil, true
 		}
 	}
 	return nil, nil, true
@@ -632,14 +632,14 @@ func (resolver *Resolver) resolveCallFallback(
 	// Strategy 1: Same file — if only one candidate is in the same file, high confidence.
 	sameFile := filterByFile(realCandidates, call.FilePath)
 	if len(sameFile) == 1 {
-		return []model.ResolvedRelation{makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "same_file", 1)}, nil
+		return []model.ResolvedRelation{makeRelation(callerID, sameFile[0].ID, call, ConfidenceSameFile, "same_file", 1, sameFile[0].Kind)}, nil
 	}
 
 	// Strategy 1.5: Import-based narrowing for no-receiver calls.
 	if call.ReceiverExpr == "" && len(realCandidates) > 1 {
 		narrowed := langHelper.NarrowByScope(realCandidates, call, envs[call.FilePath], resolver.symbolTable)
 		if len(narrowed) == 1 {
-			return []model.ResolvedRelation{makeRelation(callerID, narrowed[0].ID, call, ConfidenceSameFile, "import_exact", 1)}, nil
+			return []model.ResolvedRelation{makeRelation(callerID, narrowed[0].ID, call, ConfidenceSameFile, "import_exact", 1, narrowed[0].Kind)}, nil
 		}
 		if len(narrowed) > 0 && len(narrowed) < len(realCandidates) {
 			realCandidates = narrowed
@@ -650,12 +650,12 @@ func (resolver *Resolver) resolveCallFallback(
 	if call.ArgCount > 0 {
 		argMatched := filterByArgCount(realCandidates, call.ArgCount)
 		if len(argMatched) == 1 {
-			return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}, nil
+			return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1, argMatched[0].Kind)}, nil
 		}
 		if len(argMatched) > 1 {
 			typeMatched := filterByArgTypes(argMatched, resolver.enrichArgTypes(call, envs, langHelper), langHelper)
 			if len(typeMatched) == 1 {
-				return []model.ResolvedRelation{makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1)}, nil
+				return []model.ResolvedRelation{makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "arg_type", 1, typeMatched[0].Kind)}, nil
 			}
 		}
 	}
@@ -667,13 +667,13 @@ func (resolver *Resolver) resolveCallFallback(
 			callerClass = callerClass[:dotIdx]
 		}
 		if sym := resolver.FindMethodInHierarchy(callerClass, call.CalledName, resolver.heritage); sym != nil {
-			return []model.ResolvedRelation{makeRelation(callerID, sym.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)}, nil
+			return []model.ResolvedRelation{makeRelation(callerID, sym.ID, call, ConfidenceTypeExact, "type_hierarchy", 1, sym.Kind)}, nil
 		}
 	}
 
 	// Strategy 4: Global unique name — only one candidate exists in the entire project.
 	if len(realCandidates) == 1 {
-		return []model.ResolvedRelation{makeRelation(callerID, realCandidates[0].ID, call, ConfidenceNameUnique, "name_unique", 1)}, nil
+		return []model.ResolvedRelation{makeRelation(callerID, realCandidates[0].ID, call, ConfidenceNameUnique, "name_unique", 1, realCandidates[0].Kind)}, nil
 	}
 
 	// Multiple candidates remain — cannot resolve confidently, generate unresolved hint.
@@ -797,12 +797,12 @@ func (resolver *Resolver) resolveViaReExportIndex(call model.RawCall, matchedImp
 	matched := filterByOwnerClass(candidates, realClass.Name)
 
 	if len(matched) == 1 {
-		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "import_reexport_exact", 1)}, true
+		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "import_reexport_exact", 1, matched[0].Kind)}, true
 	}
 	if len(matched) > 1 {
 		argMatched := filterByArgCount(matched, call.ArgCount)
 		if len(argMatched) == 1 {
-			return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "import_reexport_arg", 1)}, true
+			return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "import_reexport_arg", 1, argMatched[0].Kind)}, true
 		}
 		return makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "import_reexport_multi"), true
 	}
@@ -810,7 +810,7 @@ func (resolver *Resolver) resolveViaReExportIndex(call model.RawCall, matchedImp
 	// Try inheritance chain on the real class
 	if len(resolver.heritage) > 0 {
 		if resolvedMethod := resolver.FindMethodInHierarchy(realClass.QualifiedName, call.CalledName, resolver.heritage); resolvedMethod != nil {
-			relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "import_reexport_hierarchy", 1)
+			relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "import_reexport_hierarchy", 1, resolvedMethod.Kind)
 			relation.Metadata["declared_type"] = realClass.QualifiedName
 			return []model.ResolvedRelation{relation}, true
 		}
@@ -831,17 +831,17 @@ func (resolver *Resolver) resolveImportedCallLegacy(call model.RawCall, receiver
 		}
 	}
 	if len(matched) == 1 {
-		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "import_exact", 1)}, true
+		return []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "import_exact", 1, matched[0].Kind)}, true
 	}
 	if len(matched) > 1 {
 		argMatched := filterByArgCount(matched, call.ArgCount)
 		if len(argMatched) == 1 {
-			return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "import_arg_count", 1)}, true
+			return []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "import_arg_count", 1, argMatched[0].Kind)}, true
 		}
 		if len(argMatched) > 1 {
 			typeMatched := filterByArgTypes(argMatched, resolver.enrichArgTypes(call, envs, langHelper), langHelper)
 			if len(typeMatched) == 1 {
-				return []model.ResolvedRelation{makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "import_arg_type", 1)}, true
+				return []model.ResolvedRelation{makeRelation(callerID, typeMatched[0].ID, call, ConfidenceArgCount, "import_arg_type", 1, typeMatched[0].Kind)}, true
 			}
 		}
 		return makeMultiRelations(callerID, matched, call, ConfidenceTypeParent, "import_multi"), true
@@ -850,7 +850,7 @@ func (resolver *Resolver) resolveImportedCallLegacy(call model.RawCall, receiver
 	// 0 match — try inheritance chain
 	if len(resolver.heritage) > 0 {
 		if resolvedMethod := resolver.FindMethodInHierarchy(receiverFQN, call.CalledName, resolver.heritage); resolvedMethod != nil {
-			relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "import_hierarchy", 1)
+			relation := makeRelation(callerID, resolvedMethod.ID, call, ConfidenceTypeExact, "import_hierarchy", 1, resolvedMethod.Kind)
 			relation.Metadata["declared_type"] = receiverFQN
 			receiverSymbol := resolver.findClassSymbol(receiverFQN)
 			if receiverSymbol != nil && (receiverSymbol.Kind == constants.KindInterface || receiverSymbol.Kind == "abstract_class" || resolvedMethod.IsAbstract) {
@@ -870,7 +870,7 @@ func (resolver *Resolver) resolveImportedCallLegacy(call model.RawCall, receiver
 		Kind:          constants.KindFunction,
 		FilePath:      constants.FilePathExternal,
 	}})
-	return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1)}, true
+	return []model.ResolvedRelation{makeRelation(callerID, externalID, call, ConfidenceExternal, "external", 1, constants.KindFunction)}, true
 }
 
 // resolveChainedReceiver resolves "obj.method()" or "obj.method().method2()" receiver chains.
@@ -1649,13 +1649,14 @@ func lookupBindingWithScopeChain(env *model.TypeEnv, callerScope, varName string
 }
 
 // isSingleLetterGeneric returns true if the type name is a single uppercase letter (generic type parameter).
-func makeRelation(sourceID, targetID string, call model.RawCall, confidence float64, resolvedBy string, candidates int) model.ResolvedRelation {
+func makeRelation(sourceID, targetID string, call model.RawCall, confidence float64, resolvedBy string, candidates int, targetKind string) model.ResolvedRelation {
 	return model.ResolvedRelation{
 		SourceID:    sourceID,
 		TargetID:    targetID,
 		Kind:        model.RelCalls,
 // makeRelation constructs a ResolvedRelation with standard metadata (line, flow_context, declared_type).
 		SourceKind:  "Function",
+		TargetKind:  targetKind,
 		Confidence:  confidence,
 		ResolvedBy:  resolvedBy,
 		Candidates:  candidates,
@@ -1677,6 +1678,7 @@ func makeMultiRelations(sourceID string, candidates []model.Symbol, call model.R
 			TargetID:    candidate.ID,
 			Kind:        model.RelCalls,
 			SourceKind:  "Function",
+			TargetKind:  candidate.Kind,
 // makeMultiRelations creates a ResolvedRelation for each candidate when multiple matches exist.
 // Uses best_guess confidence since the resolver cannot determine which is correct.
 			Confidence:  confidence,

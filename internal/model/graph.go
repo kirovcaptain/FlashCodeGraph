@@ -54,6 +54,7 @@ type Edge struct {
 	TargetID   string            `json:"target_id"`
 	Kind       RelationKind      `json:"kind"`
 	SourceKind string            `json:"source_kind,omitempty"` // Source node type (Function/Class/Interface)
+	TargetKind string            `json:"target_kind,omitempty"` // Target node type (Function/Class) — used for multi-target REL TABLE routing
 	Properties map[string]any    `json:"properties,omitempty"`
 }
 

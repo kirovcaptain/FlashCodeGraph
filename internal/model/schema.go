@@ -192,14 +192,15 @@ func QueryReturnClause(kind string) string {
 // EdgeTableDef defines the schema for a relationship table.
 type EdgeTableDef struct {
 	FromKind string      // Source node table (e.g. "Function")
-	ToKind   string      // Target node table (e.g. "Function")
+	ToKind   string      // Primary target node table (e.g. "Function")
+	ToKinds  []string    // Additional target node tables (e.g. ["Class"] for multi-target)
 	Columns  []ColumnDef // Property columns (excluding from/to)
 }
 
 // EdgeColumns defines the columns for each edge table.
 // Used by: Migrate (CREATE REL TABLE), CSV COPY FROM column generation.
 var EdgeColumns = map[string]EdgeTableDef{
-	"CALLS": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+	"CALLS": {FromKind: "Function", ToKind: "Function", ToKinds: []string{"Class"}, Columns: []ColumnDef{
 		{"confidence", "DOUBLE"},
 		{"resolved_by", "STRING"},
 		{"candidates", "INT32"},

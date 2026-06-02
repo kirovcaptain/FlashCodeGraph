@@ -386,6 +386,7 @@ func (indexer *Indexer) writeRelations(ctx context.Context, relations []model.Re
 			TargetID:   relation.TargetID,
 			Kind:       relation.Kind,
 			SourceKind: relation.SourceKind,
+			TargetKind: relation.TargetKind,
 			Properties: map[string]any{},
 		}
 		if relation.Kind == model.RelImports {

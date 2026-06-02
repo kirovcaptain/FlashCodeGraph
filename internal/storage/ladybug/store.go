@@ -79,6 +79,9 @@ func (store *Store) Migrate(_ context.Context) error {
 	// Relationship tables — generated from model.EdgeColumns schema
 	for tableName, def := range model.EdgeColumns {
 		colDefs := fmt.Sprintf("FROM %s TO %s", def.FromKind, def.ToKind)
+		for _, extraToKind := range def.ToKinds {
+			colDefs += fmt.Sprintf(", FROM %s TO %s", def.FromKind, extraToKind)
+		}
 		for _, col := range def.Columns {
 			colDefs += ", " + col.Name + " " + col.Type
 		}
@@ -359,34 +362,106 @@ func (store *Store) createEdgesCSV(edges []model.Edge) error {
 	// Write CSV and COPY FROM for each group
 	for _, group := range groups {
 		columns := model.EdgeColumnNames(group.relTable)
+		def := model.EdgeColumns[group.relTable]
 
-		csvPath := filepath.Join(store.csvDir(), fmt.Sprintf("_import_edges_%s.csv", group.relTable))
-		file, err := os.Create(csvPath)
-		if err != nil {
-			return fmt.Errorf("ladybug: create csv %s: %w", csvPath, err)
-		}
-
-		header := []string{"from", "to"}
-		header = append(header, columns...)
-		writeCSVRow(file, header)
-
-		for _, edge := range group.edges {
-			row := make([]string, len(header))
-			row[0] = edge.SourceID
-			row[1] = edge.TargetID
-			for colIndex, key := range columns {
-				row[colIndex+2] = formatEdgePropertyValue(edge.Properties[key])
+		// Check if this is a multi-target table
+		if len(def.ToKinds) > 0 {
+			// Split edges by TargetKind
+			edgesByTargetKind := make(map[string][]model.Edge)
+			for _, edge := range group.edges {
+				targetKind := edge.TargetKind
+				if targetKind == "" {
+					targetKind = def.ToKind // default
+				}
+				edgesByTargetKind[targetKind] = append(edgesByTargetKind[targetKind], edge)
 			}
-			writeCSVRow(file, row)
+			for targetKind, kindEdges := range edgesByTargetKind {
+				if err := store.writeEdgeCSVWithFromTo(group.relTable, def.FromKind, targetKind, columns, kindEdges); err != nil {
+					return err
+				}
+			}
+		} else {
+			// Single target — write as before
+			if err := store.writeEdgeCSV(group.relTable, columns, group.edges); err != nil {
+				return err
+			}
 		}
-		file.Close()
-
-		if err := store.copyFromCSV(group.relTable, csvPath); err != nil {
-			os.Remove(csvPath)
-			return err
-		}
-		os.Remove(csvPath)
 	}
+	return nil
+}
+
+func (store *Store) writeEdgeCSV(relTable string, columns []string, edges []model.Edge) error {
+	csvPath := filepath.Join(store.csvDir(), fmt.Sprintf("_import_edges_%s.csv", relTable))
+	file, err := os.Create(csvPath)
+	if err != nil {
+		return fmt.Errorf("ladybug: create csv %s: %w", csvPath, err)
+	}
+
+	header := []string{"from", "to"}
+	header = append(header, columns...)
+	writeCSVRow(file, header)
+
+	for _, edge := range edges {
+		row := make([]string, len(header))
+		row[0] = edge.SourceID
+		row[1] = edge.TargetID
+		for colIndex, key := range columns {
+			row[colIndex+2] = formatEdgePropertyValue(edge.Properties[key])
+		}
+		writeCSVRow(file, row)
+	}
+	file.Close()
+
+	if err := store.copyFromCSV(relTable, csvPath); err != nil {
+		os.Remove(csvPath)
+		return err
+	}
+	os.Remove(csvPath)
+	return nil
+}
+
+func (store *Store) writeEdgeCSVWithFromTo(relTable, fromKind, toKind string, columns []string, edges []model.Edge) error {
+	csvPath := filepath.Join(store.csvDir(), fmt.Sprintf("_import_edges_%s_%s.csv", relTable, toKind))
+	file, err := os.Create(csvPath)
+	if err != nil {
+		return fmt.Errorf("ladybug: create csv %s: %w", csvPath, err)
+	}
+
+	header := []string{"from", "to"}
+	header = append(header, columns...)
+	writeCSVRow(file, header)
+
+	for _, edge := range edges {
+		row := make([]string, len(header))
+		row[0] = edge.SourceID
+		row[1] = edge.TargetID
+		for colIndex, key := range columns {
+			row[colIndex+2] = formatEdgePropertyValue(edge.Properties[key])
+		}
+		writeCSVRow(file, row)
+	}
+	file.Close()
+
+	if err := store.copyFromCSVWithFromTo(relTable, csvPath, fromKind, toKind); err != nil {
+		os.Remove(csvPath)
+		return err
+	}
+	os.Remove(csvPath)
+	return nil
+}
+
+func (store *Store) copyFromCSVWithFromTo(tableName, csvPath, fromKind, toKind string) error {
+	absPath, err := filepath.Abs(csvPath)
+	if err != nil {
+		absPath = csvPath
+	}
+	absPath = filepath.ToSlash(absPath)
+	query := fmt.Sprintf("COPY %s FROM '%s' (HEADER=true, PARALLEL=false, FROM='%s', TO='%s')", tableName, absPath, fromKind, toKind)
+	result, err := store.conn.Query(query)
+	if err != nil {
+		return fmt.Errorf("ladybug: COPY %s FROM csv (%s->%s): %w", tableName, fromKind, toKind, err)
+	}
+	result.Close()
 	return nil
 }
 

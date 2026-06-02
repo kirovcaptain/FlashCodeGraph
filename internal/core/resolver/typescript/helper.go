@@ -55,14 +55,14 @@ func (tsHelper *Helper) ResolveSuperCall(call model.RawCall, funcCandidates []mo
 				matched = resolver.FilterByOwnerClass(funcCandidates, heritageItem.ParentName)
 			}
 			if len(matched) == 1 {
-				relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1)}
+				relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1, matched[0].Kind)}
 				setDeclaredType(relations)
 				return relations, true
 			}
 			if len(matched) > 1 {
 				argMatched := resolver.FilterByArgCount(matched, call.ArgCount)
 				if len(argMatched) == 1 {
-					relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, argMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_count", 1)}
+					relations := []model.ResolvedRelation{resolver.MakeRelation(callerID, argMatched[0].ID, call, resolver.ConfidenceArgCount, "arg_count", 1, argMatched[0].Kind)}
 					setDeclaredType(relations)
 					return relations, true
 				}

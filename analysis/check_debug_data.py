@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-check_debug_data.py — Detect duplicate IDs and orphan edges in FCG debug dump.
+check_debug_data.py — Detect duplicate IDs, orphan edges, and type mismatches in FCG debug dump.
 
 Usage:
     python3 analysis/check_debug_data.py /path/to/project
@@ -10,6 +10,28 @@ import csv
 import os
 import sys
 from collections import defaultdict
+
+# Edge table schema: edge_type -> (from_kind, to_kind)
+EDGE_SCHEMA = {
+    "CALLS": ("Function", "Function"),
+    "EXTENDS": ("Class", "Class"),
+    "IMPLEMENTS": ("Class", "Interface"),
+    "IMPORTS": ("File", "File"),
+    "OVERRIDES": ("Function", "Function"),
+    "DISPATCHES": ("Function", "Function"),
+    "CONTAINS": None,  # Dynamic routing by SourceKind, skip type check
+    "DIR_CONTAINS": ("Directory", "File"),
+    "FILE_CONTAINS": ("File", "Function"),
+    "FILE_CONTAINS_CLASS": ("File", "Class"),
+    "FILE_CONTAINS_IFACE": ("File", "Interface"),
+    "FILE_CONTAINS_VAR": ("File", "Variable"),
+    "CLASS_CONTAINS_FUNC": ("Class", "Function"),
+    "IFACE_CONTAINS_FUNC": ("Interface", "Function"),
+    "CLASS_CONTAINS_VAR": ("Class", "Variable"),
+    "HANDLES": ("Function", "Route"),
+    "UNRESOLVED_CALL": ("Function", "Function"),
+    "USES": ("Function", "Variable"),
+}
 
 
 def find_debug_dir(project_path):
@@ -22,22 +44,29 @@ def find_debug_dir(project_path):
 
 
 def collect_node_ids(debug_dir):
-    """Read all node CSVs and collect IDs. Returns (id_set, duplicates)."""
+    """Read all node CSVs and collect id -> kind mapping. Returns (id_to_kind, duplicates)."""
     node_files = [
-        ("symbols.csv", 0),           # id in column 0
-        ("routes.csv", 0),
-        ("structural_nodes.csv", 0),
-        ("external_nodes.csv", 0),
+        ("symbols.csv", 0, 1),           # id col 0, kind col 1
+        ("routes.csv", 0, None),         # id col 0, kind is always "Route"
+        ("structural_nodes.csv", 0, 1),  # id col 0, kind col 1
+        ("external_nodes.csv", 0, None), # id col 0, kind is always "Function"
     ]
 
-    all_ids = set()
+    # Fixed kinds for files without kind column
+    fixed_kinds = {
+        "routes.csv": "Route",
+        "external_nodes.csv": "Function",
+    }
+
+    id_to_kind = {}  # id -> kind
     id_sources = defaultdict(list)  # id -> [(file, line)]
     duplicates = []
 
-    for filename, id_column in node_files:
+    for filename, id_column, kind_column in node_files:
         filepath = os.path.join(debug_dir, filename)
         if not os.path.exists(filepath):
             continue
+        fixed_kind = fixed_kinds.get(filename)
         with open(filepath, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
             header = next(reader, None)
@@ -47,35 +76,44 @@ def collect_node_ids(debug_dir):
                 if len(row) <= id_column:
                     continue
                 node_id = row[id_column]
-                if node_id in all_ids:
-                    id_sources[node_id].append((filename, line_number))
-                else:
-                    all_ids.add(node_id)
-                    id_sources[node_id].append((filename, line_number))
+                kind = fixed_kind if fixed_kind else (row[kind_column] if kind_column and len(row) > kind_column else "Unknown")
+
+                id_sources[node_id].append((filename, line_number))
+                if node_id in id_to_kind:
+                    continue  # already recorded, will check duplicates below
+                id_to_kind[node_id] = kind
 
     for node_id, sources in id_sources.items():
         if len(sources) > 1:
-            duplicates.append((node_id, sources))
+            duplicates.append((node_id, id_to_kind.get(node_id, "?"), sources))
 
-    return all_ids, duplicates
+    return id_to_kind, duplicates
 
 
-def check_orphan_edges(debug_dir, all_node_ids):
-    """Read edge CSVs and check if source/target exist in node set."""
+def check_edges(debug_dir, id_to_kind):
+    """Read edge CSVs and check orphan edges + type mismatches."""
     edge_files = [
-        ("structural_edges.csv", 0, 1),  # source_id col 0, target_id col 1
+        ("structural_edges.csv", 0, 1, 2),  # source col 0, target col 1, kind col 2
     ]
 
-    # Also check calls_*.csv and hints.csv if they exist
+    # calls_*.csv: resolved_by, confidence, candidates, source_id, target_id, ...
     for filename in os.listdir(debug_dir):
         if filename.startswith("calls_") and filename.endswith(".csv"):
-            edge_files.append((filename, 3, 4))  # source_id col 3, target_id col 4
+            edge_files.append((filename, 3, 4, None))  # source col 3, target col 4, kind inferred
 
     orphans = []
-    for filename, source_column, target_column in edge_files:
+    type_mismatches = []
+
+    for filename, source_column, target_column, kind_column in edge_files:
         filepath = os.path.join(debug_dir, filename)
         if not os.path.exists(filepath):
             continue
+
+        # Infer edge type from filename for calls_*.csv
+        inferred_edge_type = None
+        if filename.startswith("calls_"):
+            inferred_edge_type = "CALLS"
+
         with open(filepath, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
             header = next(reader, None)
@@ -86,12 +124,27 @@ def check_orphan_edges(debug_dir, all_node_ids):
                     continue
                 source_id = row[source_column]
                 target_id = row[target_column]
-                if source_id and source_id not in all_node_ids:
+                edge_type = inferred_edge_type
+                if kind_column is not None and len(row) > kind_column:
+                    edge_type = row[kind_column]
+
+                # Check orphans
+                if source_id and source_id not in id_to_kind:
                     orphans.append((filename, line_number, "source", source_id))
-                if target_id and target_id not in all_node_ids:
+                if target_id and target_id not in id_to_kind:
                     orphans.append((filename, line_number, "target", target_id))
 
-    return orphans
+                # Check type mismatch
+                if edge_type and edge_type in EDGE_SCHEMA and EDGE_SCHEMA[edge_type] is not None:
+                    expected_from_kind, expected_to_kind = EDGE_SCHEMA[edge_type]
+                    source_kind = id_to_kind.get(source_id)
+                    target_kind = id_to_kind.get(target_id)
+                    if source_kind and source_kind != expected_from_kind:
+                        type_mismatches.append((filename, line_number, edge_type, "source", source_id, source_kind, expected_from_kind))
+                    if target_kind and target_kind != expected_to_kind:
+                        type_mismatches.append((filename, line_number, edge_type, "target", target_id, target_kind, expected_to_kind))
+
+    return orphans, type_mismatches
 
 
 def main():
@@ -105,14 +158,14 @@ def main():
     print(f"Checking: {debug_dir}\n")
 
     # Check duplicates
-    all_node_ids, duplicates = collect_node_ids(debug_dir)
+    id_to_kind, duplicates = collect_node_ids(debug_dir)
 
     print("=== Duplicate ID Check ===")
     if duplicates:
         print(f"❌ {len(duplicates)} duplicates found:")
-        for node_id, sources in duplicates[:20]:
+        for node_id, kind, sources in duplicates[:20]:
             locations = ", ".join(f"{f}:{line}" for f, line in sources)
-            print(f"  {node_id} ({len(sources)} times, in {locations})")
+            print(f"  [{kind}] {node_id} ({len(sources)} times, in {locations})")
         if len(duplicates) > 20:
             print(f"  ... and {len(duplicates) - 20} more")
     else:
@@ -120,8 +173,8 @@ def main():
 
     print()
 
-    # Check orphan edges
-    orphans = check_orphan_edges(debug_dir, all_node_ids)
+    # Check edges
+    orphans, type_mismatches = check_edges(debug_dir, id_to_kind)
 
     print("=== Orphan Edge Check ===")
     if orphans:
@@ -134,12 +187,25 @@ def main():
         print("✅ No orphan edges")
 
     print()
+
+    print("=== Type Mismatch Check ===")
+    if type_mismatches:
+        print(f"❌ {len(type_mismatches)} type mismatches found:")
+        for filename, line_number, edge_type, side, node_id, actual_kind, expected_kind in type_mismatches[:20]:
+            print(f"  {filename}:{line_number} {edge_type} {side}={node_id} is {actual_kind}, expected {expected_kind}")
+        if len(type_mismatches) > 20:
+            print(f"  ... and {len(type_mismatches) - 20} more")
+    else:
+        print("✅ No type mismatches")
+
+    print()
     print("=== Summary ===")
-    print(f"Total node IDs: {len(all_node_ids)}")
+    print(f"Total node IDs: {len(id_to_kind)}")
     print(f"Duplicates: {len(duplicates)}")
     print(f"Orphan edges: {len(orphans)}")
+    print(f"Type mismatches: {len(type_mismatches)}")
 
-    if duplicates or orphans:
+    if duplicates or orphans or type_mismatches:
         sys.exit(1)
 
 

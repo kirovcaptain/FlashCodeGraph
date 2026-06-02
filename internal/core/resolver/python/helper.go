@@ -35,7 +35,7 @@ func (pythonHelper *Helper) ResolveSuperCall(call model.RawCall, funcCandidates 
 		if heritageItem.ChildName == callerClass && heritageItem.Kind == "extends" && heritageItem.FilePath == call.FilePath {
 			matched := resolver.FilterByOwnerClass(funcCandidates, heritageItem.ParentName)
 			if len(matched) == 1 {
-				rel := resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1)
+				rel := resolver.MakeRelation(callerID, matched[0].ID, call, resolver.ConfidenceTypeExact, "type_exact", 1, matched[0].Kind)
 				if callerClassQN != "" {
 					rel.Metadata["declared_type"] = callerClassQN
 				}

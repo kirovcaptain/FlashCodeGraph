@@ -177,14 +177,14 @@ func (h *testJavaHelper) ResolveSuperCall(call model.RawCall, funcCandidates []m
 				matched = filterByOwnerClass(funcCandidates, parentName)
 			}
 			if len(matched) == 1 {
-				relations := []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1)}
+				relations := []model.ResolvedRelation{makeRelation(callerID, matched[0].ID, call, ConfidenceTypeExact, "type_exact", 1, "Function")}
 				setDeclaredType(relations)
 				return relations, true
 			}
 			if len(matched) > 1 {
 				argMatched := filterByArgCount(matched, call.ArgCount)
 				if len(argMatched) == 1 {
-					relations := []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1)}
+					relations := []model.ResolvedRelation{makeRelation(callerID, argMatched[0].ID, call, ConfidenceArgCount, "arg_count", 1, "Function")}
 					setDeclaredType(relations)
 					return relations, true
 				}
@@ -194,7 +194,7 @@ func (h *testJavaHelper) ResolveSuperCall(call model.RawCall, funcCandidates []m
 			}
 			r := &Resolver{symbolTable: h.symbolTable, heritage: heritage}
 			if sym := r.FindMethodInHierarchy(her.ParentName, call.CalledName, heritage); sym != nil {
-				relations := []model.ResolvedRelation{makeRelation(callerID, sym.ID, call, ConfidenceTypeExact, "type_hierarchy", 1)}
+				relations := []model.ResolvedRelation{makeRelation(callerID, sym.ID, call, ConfidenceTypeExact, "type_hierarchy", 1, "Function")}
 				setDeclaredType(relations)
 				return relations, true
 			}

@@ -31,6 +31,7 @@ type ResolvedRelation struct {
 	TargetID    string            `json:"target_id"`
 	Kind        RelationKind      `json:"kind"`
 	SourceKind  string            `json:"source_kind,omitempty"`
+	TargetKind  string            `json:"target_kind,omitempty"`
 	Confidence  float64           `json:"confidence"`
 	ResolvedBy  string            `json:"resolved_by"`
 	Candidates  int               `json:"candidates"`

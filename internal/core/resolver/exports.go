@@ -21,8 +21,8 @@ func FilterByArgTypesWithHelper(candidates []model.Symbol, argTypes []string, la
 	return filterByArgTypes(candidates, argTypes, langHelper)
 }
 
-func MakeRelation(sourceID, targetID string, call model.RawCall, confidence float64, resolvedBy string, candidates int) model.ResolvedRelation {
-	return makeRelation(sourceID, targetID, call, confidence, resolvedBy, candidates)
+func MakeRelation(sourceID, targetID string, call model.RawCall, confidence float64, resolvedBy string, candidates int, targetKind string) model.ResolvedRelation {
+	return makeRelation(sourceID, targetID, call, confidence, resolvedBy, candidates, targetKind)
 }
 
 func MakeMultiRelations(sourceID string, candidates []model.Symbol, call model.RawCall, baseConfidence float64, resolvedBy string) []model.ResolvedRelation {
