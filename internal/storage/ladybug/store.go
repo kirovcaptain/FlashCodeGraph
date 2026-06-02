@@ -1625,7 +1625,7 @@ func (store *Store) copyFromCSV(tableName, csvPath string) error {
 	}
 	// LadybugDB requires forward slashes in path
 	absPath = filepath.ToSlash(absPath)
-	query := fmt.Sprintf("COPY %s FROM '%s' (HEADER=true)", tableName, absPath)
+	query := fmt.Sprintf(`COPY %s FROM '%s' (HEADER=true, ESCAPE='"')`, tableName, absPath)
 	result, err := store.conn.Query(query)
 	if err != nil {
 		return fmt.Errorf("ladybug: COPY %s FROM csv: %w", tableName, err)
