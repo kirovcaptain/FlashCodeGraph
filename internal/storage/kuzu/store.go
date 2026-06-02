@@ -1419,6 +1419,8 @@ func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLa
 			return "FILE_CONTAINS_CLASS", constants.KindFile, constants.KindClass
 		case constants.SourceKindFileInterface:
 			return "FILE_CONTAINS_IFACE", constants.KindFile, constants.KindInterface
+		case constants.SourceKindFileVar:
+			return "FILE_CONTAINS_VAR", constants.KindFile, constants.KindVariable
 		default:
 			return "CONTAINS", constants.KindRepository, constants.KindFile
 		}

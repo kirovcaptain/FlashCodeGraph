@@ -581,6 +581,8 @@ func buildStructuralData(repoID, repoName, absPath string, frameworks []string, 
 				sourceKind = constants.SourceKindFileClass
 			case constants.KindInterface:
 				sourceKind = constants.SourceKindFileInterface
+			case constants.KindVariable:
+				sourceKind = constants.SourceKindFileVar
 			}
 			symbolEdges = append(symbolEdges, model.Edge{
 				SourceID: fileID, TargetID: symbol.ID,

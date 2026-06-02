@@ -55,6 +55,7 @@ const (
 	SourceKindFile          = "File"
 	SourceKindFileClass     = "FileClass"
 	SourceKindFileInterface = "FileInterface"
+	SourceKindFileVar       = "FileVar"
 	SourceKindClassFunc      = "ClassFunc"
 	SourceKindInterfaceFunc = "InterfaceFunc"
 )
