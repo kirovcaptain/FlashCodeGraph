@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -1619,29 +1620,40 @@ func (store *Store) copyFromCSV(tableName, csvPath string) error {
 	return nil
 }
 
-// writeCSVRow writes a single CSV row. All fields are unconditionally quoted
-// with internal double quotes and backslashes escaped with backslash.
-// LadybugDB default escape char is backslash — this avoids the "" ambiguity
-// that breaks its parser when field values contain quotes adjacent to commas.
+// writeCSVRow writes a single CSV row. All fields are unconditionally quoted.
+// Escape style depends on platform: Linux uses backslash (\"), Windows uses doubled quote ("").
 func writeCSVRow(file *os.File, fields []string) {
+	var builder strings.Builder
+	useBackslashEscape := runtime.GOOS != "windows"
 	for i, field := range fields {
 		if i > 0 {
-			file.WriteString(",")
+			builder.WriteByte(',')
 		}
-		file.WriteString("\"")
-		for _, char := range field {
-			switch char {
-			case '"':
-				file.WriteString("\\\"")
-			case '\\':
-				file.WriteString("\\\\")
-			default:
-				file.WriteString(string(char))
+		builder.WriteByte('"')
+		if useBackslashEscape {
+			for _, char := range field {
+				switch char {
+				case '"':
+					builder.WriteString("\\\"")
+				case '\\':
+					builder.WriteString("\\\\")
+				default:
+					builder.WriteRune(char)
+				}
+			}
+		} else {
+			for _, char := range field {
+				if char == '"' {
+					builder.WriteString("\"\"")
+				} else {
+					builder.WriteRune(char)
+				}
 			}
 		}
-		file.WriteString("\"")
+		builder.WriteByte('"')
 	}
-	file.WriteString("\n")
+	builder.WriteByte('\n')
+	file.WriteString(builder.String())
 }
 
 // csvDir returns the directory for CSV temporary files (parent of dbPath).

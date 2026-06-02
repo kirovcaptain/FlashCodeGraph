@@ -20,6 +20,9 @@ type DumpManager interface {
 	OnRemoteCalls(remoteCalls []model.RawRemoteCall, pendingCalls []model.PendingRemoteCall)
 	OnCrossServiceEdges(nodes []model.Node, edges []model.Edge)
 	OnCrossProjectSymbols(prepared int, referenced int)
+	OnSymbolNodes(nodes []model.Node)
+	OnStructuralNodes(nodes []model.Node, edges []model.Edge)
+	OnExternalNodes(nodes []model.Node)
 }
 
 // NopDumpManager does nothing (debug=false).
@@ -33,6 +36,9 @@ func (NopDumpManager) OnRoutes([]model.Node)                                    
 func (NopDumpManager) OnRemoteCalls([]model.RawRemoteCall, []model.PendingRemoteCall) {}
 func (NopDumpManager) OnCrossServiceEdges([]model.Node, []model.Edge)             {}
 func (NopDumpManager) OnCrossProjectSymbols(int, int)                             {}
+func (NopDumpManager) OnSymbolNodes([]model.Node)                                 {}
+func (NopDumpManager) OnStructuralNodes([]model.Node, []model.Edge)               {}
+func (NopDumpManager) OnExternalNodes([]model.Node)                               {}
 
 // FileDumpManager writes CSV files to .fcg/debug/.
 type FileDumpManager struct {
@@ -303,4 +309,88 @@ func (d *FileDumpManager) OnCrossProjectSymbols(prepared int, referenced int) {
 	writer.Flush()
 	file.Close()
 	log.Printf("[debug] cross-project symbols: %d prepared, %d referenced", prepared, referenced)
+}
+
+func (d *FileDumpManager) OnSymbolNodes(nodes []model.Node) {
+	if len(nodes) == 0 {
+		return
+	}
+	header := []string{"id", "kind", "name", "qualified_name", "file_path", "start_line"}
+	writer, file := d.createCSV("symbols.csv", header)
+	if writer == nil {
+		return
+	}
+	for _, node := range nodes {
+		props := node.Properties
+		writer.Write([]string{
+			node.ID,
+			node.Kind,
+			propStr(props, "name"),
+			propStr(props, "qualified_name"),
+			propStr(props, "file_path"),
+			propStr(props, "start_line"),
+		})
+	}
+	writer.Flush()
+	file.Close()
+	log.Printf("[debug] dumped %d symbol nodes to .fcg/debug/symbols.csv", len(nodes))
+}
+
+func (d *FileDumpManager) OnStructuralNodes(nodes []model.Node, edges []model.Edge) {
+	if len(nodes) > 0 {
+		header := []string{"id", "kind", "name", "file_path"}
+		writer, file := d.createCSV("structural_nodes.csv", header)
+		if writer != nil {
+			for _, node := range nodes {
+				props := node.Properties
+				writer.Write([]string{
+					node.ID,
+					node.Kind,
+					propStr(props, "name"),
+					propStr(props, "file_path"),
+				})
+			}
+			writer.Flush()
+			file.Close()
+			log.Printf("[debug] dumped %d structural nodes to .fcg/debug/structural_nodes.csv", len(nodes))
+		}
+	}
+	if len(edges) > 0 {
+		header := []string{"source_id", "target_id", "kind"}
+		writer, file := d.createCSV("structural_edges.csv", header)
+		if writer != nil {
+			for _, edge := range edges {
+				writer.Write([]string{
+					edge.SourceID,
+					edge.TargetID,
+					string(edge.Kind),
+				})
+			}
+			writer.Flush()
+			file.Close()
+			log.Printf("[debug] dumped %d structural edges to .fcg/debug/structural_edges.csv", len(edges))
+		}
+	}
+}
+
+func (d *FileDumpManager) OnExternalNodes(nodes []model.Node) {
+	if len(nodes) == 0 {
+		return
+	}
+	header := []string{"id", "name", "qualified_name"}
+	writer, file := d.createCSV("external_nodes.csv", header)
+	if writer == nil {
+		return
+	}
+	for _, node := range nodes {
+		props := node.Properties
+		writer.Write([]string{
+			node.ID,
+			propStr(props, "name"),
+			propStr(props, "qualified_name"),
+		})
+	}
+	writer.Flush()
+	file.Close()
+	log.Printf("[debug] dumped %d external nodes to .fcg/debug/external_nodes.csv", len(nodes))
 }

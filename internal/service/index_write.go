@@ -204,6 +204,7 @@ func (indexer *Indexer) writeResolvedRelations(
 		}
 	}
 	if len(externalNodes) > 0 {
+		indexer.dump.OnExternalNodes(externalNodes)
 		if err := indexer.graphStore.CreateNodes(ctx, externalNodes); err != nil {
 			return fmt.Errorf("indexer: write external nodes: %w", err)
 		}
@@ -371,6 +372,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 	}
 
 	if len(nodes) > 0 {
+		indexer.dump.OnSymbolNodes(nodes)
 		return indexer.graphStore.CreateNodes(ctx, nodes)
 	}
 	return nil
@@ -459,6 +461,7 @@ func (indexer *Indexer) writeFileSystemNodes(ctx context.Context, absPath string
 
 	nodes, edges, symbolEdges := buildStructuralData(repoID, repoName, absPath, frameworks, files, parseResults, buildClassMap(parseResults))
 
+	indexer.dump.OnStructuralNodes(nodes, edges)
 	if len(nodes) > 0 {
 		if err := indexer.graphStore.CreateNodes(ctx, nodes); err != nil {
 			return nil, err
