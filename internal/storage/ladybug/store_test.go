@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
@@ -983,4 +984,152 @@ func TestSearchFTS_FieldSearch(t *testing.T) {
 		}
 		t.Log("✅ 无匹配返回空")
 	})
+}
+
+func setupDiskStore(t *testing.T) *Store {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "testdb")
+	store, err := New(dbPath, 0)
+	if err != nil {
+		t.Fatal("open disk store:", err)
+	}
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal("migrate:", err)
+	}
+	return store
+}
+
+func TestCreateEdgesCSV_Basic(t *testing.T) {
+	store := setupDiskStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	// Create source and target nodes first
+	nodes := []model.Node{
+		{ID: "f1", Kind: constants.KindFunction, Properties: map[string]any{"name": "caller", "file_path": "a.ts", "start_line": 1}},
+		{ID: "f2", Kind: constants.KindFunction, Properties: map[string]any{"name": "callee", "file_path": "b.ts", "start_line": 10}},
+		{ID: "f3", Kind: constants.KindFunction, Properties: map[string]any{"name": "other", "file_path": "c.ts", "start_line": 20}},
+	}
+	if err := store.CreateNodes(ctx, nodes); err != nil {
+		t.Fatal("create nodes:", err)
+	}
+
+	// Create edges via CSV path
+	edges := []model.Edge{
+		{SourceID: "f1", TargetID: "f2", Kind: model.RelCalls, SourceKind: constants.KindFunction, Properties: map[string]any{
+			"confidence": 0.95, "resolved_by": "type_exact", "line": 5,
+		}},
+		{SourceID: "f1", TargetID: "f3", Kind: model.RelCalls, SourceKind: constants.KindFunction, Properties: map[string]any{
+			"confidence": 0.70, "resolved_by": "name_unique",
+		}},
+	}
+	if err := store.CreateEdges(ctx, edges); err != nil {
+		t.Fatal("create edges:", err)
+	}
+
+	// Verify
+	result, err := store.conn.Query("MATCH (a:Function)-[r:CALLS]->(b:Function) RETURN a.id, b.id, r.confidence, r.resolved_by, r.line ORDER BY a.id, b.id")
+	if err != nil {
+		t.Fatal("query:", err)
+	}
+	count := 0
+	for result.HasNext() {
+		row, _ := result.Next()
+		sourceID, _ := row.GetValue(0)
+		targetID, _ := row.GetValue(1)
+		confidence, _ := row.GetValue(2)
+		resolvedBy, _ := row.GetValue(3)
+		t.Logf("  %v -> %v conf=%v by=%v", sourceID, targetID, confidence, resolvedBy)
+		count++
+	}
+	result.Close()
+	if count != 2 {
+		t.Fatalf("expected 2 edges, got %d", count)
+	}
+	t.Log("✅ CreateEdgesCSV basic: 2 CALLS edges written and verified")
+}
+
+func TestCreateNodesCSV_Basic(t *testing.T) {
+	store := setupDiskStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	nodes := []model.Node{
+		{ID: "f1", Kind: constants.KindFunction, Properties: map[string]any{
+			"name": "main", "qualified_name": "pkg.main", "file_path": "main.go",
+			"start_line": 1, "end_line": 50, "is_exported": true,
+			"annotations": []string{"Service", "Transactional"},
+		}},
+		{ID: "f2", Kind: constants.KindFunction, Properties: map[string]any{
+			"name": "helper", "qualified_name": "pkg.helper", "file_path": "util.go",
+			"start_line": 10, "end_line": 20, "is_exported": false,
+		}},
+	}
+	if err := store.CreateNodes(ctx, nodes); err != nil {
+		t.Fatal("create nodes:", err)
+	}
+
+	// Verify
+	result, err := store.conn.Query("MATCH (n:Function) RETURN n.id, n.name, n.is_exported, n.annotations ORDER BY n.id")
+	if err != nil {
+		t.Fatal("query:", err)
+	}
+	count := 0
+	for result.HasNext() {
+		row, _ := result.Next()
+		nodeID, _ := row.GetValue(0)
+		name, _ := row.GetValue(1)
+		exported, _ := row.GetValue(2)
+		annotations, _ := row.GetValue(3)
+		t.Logf("  id=%v name=%v exported=%v annotations=%v", nodeID, name, exported, annotations)
+		count++
+	}
+	result.Close()
+	if count != 2 {
+		t.Fatalf("expected 2 nodes, got %d", count)
+	}
+	t.Log("✅ CreateNodesCSV basic: 2 Function nodes written and verified")
+}
+
+func TestCreateEdgesCSV_MixedRelTypes(t *testing.T) {
+	store := setupDiskStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	nodes := []model.Node{
+		{ID: "f1", Kind: constants.KindFunction, Properties: map[string]any{"name": "a", "file_path": "a.ts", "start_line": 1}},
+		{ID: "f2", Kind: constants.KindFunction, Properties: map[string]any{"name": "b", "file_path": "b.ts", "start_line": 1}},
+		{ID: "c1", Kind: constants.KindClass, Properties: map[string]any{"name": "Base", "file_path": "base.ts", "start_line": 1}},
+		{ID: "c2", Kind: constants.KindClass, Properties: map[string]any{"name": "Child", "file_path": "child.ts", "start_line": 1}},
+	}
+	if err := store.CreateNodes(ctx, nodes); err != nil {
+		t.Fatal("create nodes:", err)
+	}
+
+	edges := []model.Edge{
+		{SourceID: "f1", TargetID: "f2", Kind: model.RelCalls, SourceKind: constants.KindFunction, Properties: map[string]any{"confidence": 0.95}},
+		{SourceID: "c2", TargetID: "c1", Kind: model.RelExtends, SourceKind: constants.KindClass, Properties: map[string]any{"confidence": 0.90}},
+	}
+	if err := store.CreateEdges(ctx, edges); err != nil {
+		t.Fatal("create edges:", err)
+	}
+
+	// Verify CALLS
+	result, _ := store.conn.Query("MATCH ()-[r:CALLS]->() RETURN count(r)")
+	result.HasNext()
+	row, _ := result.Next()
+	callCount, _ := row.GetValue(0)
+	result.Close()
+
+	// Verify EXTENDS
+	result, _ = store.conn.Query("MATCH ()-[r:EXTENDS]->() RETURN count(r)")
+	result.HasNext()
+	row, _ = result.Next()
+	extendsCount, _ := row.GetValue(0)
+	result.Close()
+
+	if callCount.(int64) != 1 || extendsCount.(int64) != 1 {
+		t.Fatalf("expected 1 CALLS + 1 EXTENDS, got %v + %v", callCount, extendsCount)
+	}
+	t.Log("✅ CreateEdgesCSV mixed: CALLS + EXTENDS in separate CSV files")
 }

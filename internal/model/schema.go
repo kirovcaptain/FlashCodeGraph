@@ -188,3 +188,129 @@ func QueryReturnClause(kind string) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// EdgeTableDef defines the schema for a relationship table.
+type EdgeTableDef struct {
+	FromKind string      // Source node table (e.g. "Function")
+	ToKind   string      // Target node table (e.g. "Function")
+	Columns  []ColumnDef // Property columns (excluding from/to)
+}
+
+// EdgeColumns defines the columns for each edge table.
+// Used by: Migrate (CREATE REL TABLE), CSV COPY FROM column generation.
+var EdgeColumns = map[string]EdgeTableDef{
+	"CALLS": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+		{"confidence", "DOUBLE"},
+		{"resolved_by", "STRING"},
+		{"candidates", "INT32"},
+		{"line", "INT32"},
+		{"declared_type", "STRING"},
+		{"polymorphic", "BOOLEAN"},
+		{"flow_context", "STRING"},
+		{"flow_line", "INT32"},
+		{"via_route", "STRING"},
+		{"cross_service", "BOOLEAN"},
+		{"consumer_interface", "STRING"},
+		{"target_service", "STRING"},
+		{"target_project", "STRING"},
+		{"target_branch", "STRING"},
+		{"target_handler", "STRING"},
+		{"protocol", "STRING"},
+		{"event_type", "STRING"},
+		{"chain_id", "INT32"},
+		{"chain_depth", "INT32"},
+	}},
+	"EXTENDS": {FromKind: "Class", ToKind: "Class", Columns: []ColumnDef{
+		{"confidence", "DOUBLE"},
+		{"resolved_by", "STRING"},
+		{"candidates", "INT32"},
+	}},
+	"IMPLEMENTS": {FromKind: "Class", ToKind: "Interface", Columns: []ColumnDef{
+		{"confidence", "DOUBLE"},
+		{"resolved_by", "STRING"},
+		{"candidates", "INT32"},
+	}},
+	"IMPORTS": {FromKind: "File", ToKind: "File", Columns: []ColumnDef{
+		{"symbol_name", "STRING"},
+		{"alias", "STRING"},
+	}},
+	"OVERRIDES": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+		{"confidence", "DOUBLE"},
+		{"resolved_by", "STRING"},
+		{"candidates", "INT32"},
+	}},
+	"DISPATCHES": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+		{"confidence", "DOUBLE"},
+		{"resolved_by", "STRING"},
+		{"candidates", "INT32"},
+		{"flow_context", "STRING"},
+		{"flow_line", "INT32"},
+	}},
+	"CONTAINS":           {FromKind: "Repository", ToKind: "File", Columns: nil},
+	"DIR_CONTAINS":       {FromKind: "Directory", ToKind: "File", Columns: nil},
+	"FILE_CONTAINS":      {FromKind: "File", ToKind: "Function", Columns: nil},
+	"FILE_CONTAINS_CLASS": {FromKind: "File", ToKind: "Class", Columns: nil},
+	"FILE_CONTAINS_IFACE": {FromKind: "File", ToKind: "Interface", Columns: nil},
+	"FILE_CONTAINS_VAR":  {FromKind: "File", ToKind: "Variable", Columns: nil},
+	"CLASS_CONTAINS_FUNC": {FromKind: "Class", ToKind: "Function", Columns: nil},
+	"IFACE_CONTAINS_FUNC": {FromKind: "Interface", ToKind: "Function", Columns: nil},
+	"CLASS_CONTAINS_VAR": {FromKind: "Class", ToKind: "Variable", Columns: nil},
+	"MEMBER_OF_FUNC":     {FromKind: "Function", ToKind: "Community", Columns: nil},
+	"MEMBER_OF_CLASS":    {FromKind: "Class", ToKind: "Community", Columns: nil},
+	"HANDLES": {FromKind: "Function", ToKind: "Route", Columns: []ColumnDef{
+		{"handler_order", "INT32"},
+	}},
+	"INJECTS": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+		{"inject_type", "STRING"},
+	}},
+	"DEPENDS_ON": {FromKind: "Directory", ToKind: "Directory", Columns: []ColumnDef{
+		{"call_count", "INT32"},
+	}},
+	"REMOTE_CALLS_ROUTE": {FromKind: "Function", ToKind: "Route", Columns: []ColumnDef{
+		{"protocol", "STRING"},
+		{"target_url", "STRING"},
+		{"target_service", "STRING"},
+		{"confidence", "DOUBLE"},
+	}},
+	"REMOTE_CALLS_EXT": {FromKind: "Function", ToKind: "ExternalService", Columns: []ColumnDef{
+		{"protocol", "STRING"},
+		{"target_url", "STRING"},
+		{"target_service", "STRING"},
+		{"field_name", "STRING"},
+		{"confidence", "DOUBLE"},
+	}},
+	"EXECUTES":           {FromKind: "Function", ToKind: "QueryNode", Columns: nil},
+	"FETCHES": {FromKind: "Function", ToKind: "Route", Columns: []ColumnDef{
+		{"http_method", "STRING"},
+		{"url_path", "STRING"},
+	}},
+	"STEP": {FromKind: "Process", ToKind: "Function", Columns: []ColumnDef{
+		{"seq", "INT32"},
+	}},
+	"HAS_ANNOTATION_FUNC":  {FromKind: "Function", ToKind: "Annotation", Columns: nil},
+	"HAS_ANNOTATION_CLASS": {FromKind: "Class", ToKind: "Annotation", Columns: nil},
+	"HAS_ANNOTATION_IFACE": {FromKind: "Interface", ToKind: "Annotation", Columns: nil},
+	"UNRESOLVED_CALL": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+		{"hint_type", "STRING"},
+		{"line", "INT32"},
+		{"receiver_expr", "STRING"},
+		{"candidate_count", "INT32"},
+	}},
+	"USES": {FromKind: "Function", ToKind: "Variable", Columns: []ColumnDef{
+		{"line", "INT32"},
+		{"ref_kind", "STRING"},
+	}},
+}
+
+// EdgeColumnNames returns the property column names for an edge table.
+func EdgeColumnNames(edgeTable string) []string {
+	def, ok := EdgeColumns[edgeTable]
+	if !ok {
+		return nil
+	}
+	names := make([]string, len(def.Columns))
+	for i, col := range def.Columns {
+		names[i] = col.Name
+	}
+	return names
+}

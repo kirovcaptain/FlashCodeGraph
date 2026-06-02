@@ -3,8 +3,11 @@ package ladybug
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -17,8 +20,9 @@ import (
 
 // Store implements storage.GraphStore backed by LadybugDB.
 type Store struct {
-	db   *lbug.Database
-	conn *lbug.Connection
+	db     *lbug.Database
+	conn   *lbug.Connection
+	dbPath string
 }
 
 // New creates a LadybugDB store. Pass "" for dbPath to use in-memory mode.
@@ -37,7 +41,7 @@ func New(dbPath string, bufferPoolSize uint64) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("ladybug: open connection: %w", err)
 	}
-	return &Store{db: db, conn: conn}, nil
+	return &Store{db: db, conn: conn, dbPath: dbPath}, nil
 }
 
 // exec runs a parameterized query.
@@ -72,40 +76,14 @@ func (store *Store) Migrate(_ context.Context) error {
 		stmts = append(stmts, fmt.Sprintf("CREATE NODE TABLE IF NOT EXISTS %s (%s, PRIMARY KEY (id))", kind, colDefs))
 	}
 
-	// Relationship tables (not schema-driven — relationships have custom columns)
-	relStmts := []string{
-		`CREATE REL TABLE IF NOT EXISTS CONTAINS (FROM Repository TO File, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS DIR_CONTAINS (FROM Directory TO File, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS (FROM File TO Function, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS_CLASS (FROM File TO Class, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS_IFACE (FROM File TO Interface, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS_VAR (FROM File TO Variable, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_FUNC (FROM Class TO Function, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS IFACE_CONTAINS_FUNC (FROM Interface TO Function, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_VAR (FROM Class TO Variable, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS CALLS (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, line INT32, declared_type STRING, polymorphic BOOLEAN, flow_context STRING, flow_line INT32, via_route STRING, cross_service BOOLEAN, consumer_interface STRING, target_service STRING, target_project STRING, target_branch STRING, target_handler STRING, protocol STRING, chain_id INT32, chain_depth INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS EXTENDS (FROM Class TO Class, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS IMPLEMENTS (FROM Class TO Interface, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, symbol_name STRING, alias STRING, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS OVERRIDES (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS DISPATCHES (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, flow_context STRING, flow_line INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS MEMBER_OF_FUNC (FROM Function TO Community, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS MEMBER_OF_CLASS (FROM Class TO Community, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS HANDLES (FROM Function TO Route, handler_order INT32 DEFAULT 0, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS INJECTS (FROM Function TO Function, inject_type STRING, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS DEPENDS_ON (FROM Directory TO Directory, call_count INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS REMOTE_CALLS_ROUTE (FROM Function TO Route, protocol STRING, target_url STRING, target_service STRING, confidence DOUBLE, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS REMOTE_CALLS_EXT (FROM Function TO ExternalService, protocol STRING, target_url STRING, target_service STRING, field_name STRING, confidence DOUBLE, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS EXECUTES (FROM Function TO QueryNode, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FETCHES (FROM Function TO Route, http_method STRING, url_path STRING, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS STEP (FROM Process TO Function, seq INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_FUNC (FROM Function TO Annotation, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_CLASS (FROM Class TO Annotation, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_IFACE (FROM Interface TO Annotation, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS UNRESOLVED_CALL (FROM Function TO Function, hint_type STRING, line INT32, receiver_expr STRING, candidate_count INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS USES (FROM Function TO Variable, line INT32, ref_kind STRING, MANY_MANY)`,
+	// Relationship tables — generated from model.EdgeColumns schema
+	for tableName, def := range model.EdgeColumns {
+		colDefs := fmt.Sprintf("FROM %s TO %s", def.FromKind, def.ToKind)
+		for _, col := range def.Columns {
+			colDefs += ", " + col.Name + " " + col.Type
+		}
+		stmts = append(stmts, fmt.Sprintf("CREATE REL TABLE IF NOT EXISTS %s (%s, MANY_MANY)", tableName, colDefs))
 	}
-	stmts = append(stmts, relStmts...)
 
 	for _, stmt := range stmts {
 		if err := store.execNoParams(stmt); err != nil {
@@ -122,21 +100,11 @@ func (store *Store) Migrate(_ context.Context) error {
 		}
 	}
 
-	// Upgrade CALLS rel table with cross-service columns added after initial schema.
-	for _, column := range []struct{ name, colType string }{
-		{"via_route", "STRING"},
-		{"cross_service", "BOOLEAN"},
-		{"consumer_interface", "STRING"},
-		{"target_service", "STRING"},
-		{"target_project", "STRING"},
-		{"target_branch", "STRING"},
-		{"target_handler", "STRING"},
-		{"protocol", "STRING"},
-		{"event_type", "STRING"},
-		{"chain_id", "INT32"},
-		{"chain_depth", "INT32"},
-	} {
-		store.execNoParams(fmt.Sprintf("ALTER TABLE CALLS ADD %s %s", column.name, column.colType))
+	// Upgrade existing edge tables with columns added after initial schema.
+	for tableName, def := range model.EdgeColumns {
+		for _, col := range def.Columns {
+			store.execNoParams(fmt.Sprintf("ALTER TABLE %s ADD %s %s", tableName, col.Name, col.Type))
+		}
 	}
 
 	return nil
@@ -156,6 +124,62 @@ func (store *Store) WriteNodes(_ context.Context, nodes []model.Node) error {
 }
 
 func (store *Store) CreateNodes(_ context.Context, nodes []model.Node) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	if store.dbPath == "" {
+		return store.createNodesLegacy(nodes)
+	}
+	return store.createNodesCSV(nodes)
+}
+
+func (store *Store) createNodesCSV(nodes []model.Node) error {
+	grouped := make(map[string][]model.Node)
+	for i := range nodes {
+		grouped[nodes[i].Kind] = append(grouped[nodes[i].Kind], nodes[i])
+	}
+	for kind, kindNodes := range grouped {
+		if !isValidIdentifier(kind) {
+			return fmt.Errorf("ladybug: invalid kind: %s", kind)
+		}
+		columns := model.ColumnNames(kind)
+		csvPath := filepath.Join(store.csvDir(), fmt.Sprintf("_import_nodes_%s.csv", kind))
+
+		file, err := os.Create(csvPath)
+		if err != nil {
+			return fmt.Errorf("ladybug: create csv %s: %w", csvPath, err)
+		}
+
+		writer := csv.NewWriter(file)
+		header := []string{"id"}
+		header = append(header, columns...)
+		writer.Write(header)
+
+		for _, node := range kindNodes {
+			propsJSON, _ := json.Marshal(node.Properties)
+			var normalizedProps map[string]any
+			json.Unmarshal(propsJSON, &normalizedProps)
+
+			row := make([]string, len(header))
+			row[0] = node.ID
+			for colIndex, column := range columns {
+				row[colIndex+1] = store.formatCSVValue(kind, column, normalizedProps[column])
+			}
+			writer.Write(row)
+		}
+		writer.Flush()
+		file.Close()
+
+		if err := store.copyFromCSV(kind, csvPath); err != nil {
+			os.Remove(csvPath)
+			return err
+		}
+		os.Remove(csvPath)
+	}
+	return nil
+}
+
+func (store *Store) createNodesLegacy(nodes []model.Node) error {
 	if len(nodes) == 0 {
 		return nil
 	}
@@ -298,12 +322,75 @@ func (store *Store) WriteEdges(_ context.Context, edges []model.Edge) error {
 	return nil
 }
 
-// CreateEdges writes edges in batch using CREATE with prepared statement caching.
+// CreateEdges writes edges in batch using CSV COPY FROM for performance.
 func (store *Store) CreateEdges(_ context.Context, edges []model.Edge) error {
 	if len(edges) == 0 {
 		return nil
 	}
+	if store.dbPath == "" {
+		return store.createEdgesLegacy(edges)
+	}
+	return store.createEdgesCSV(edges)
+}
 
+func (store *Store) createEdgesCSV(edges []model.Edge) error {
+	// Group edges by relTable
+	type edgeGroup struct {
+		relTable string
+		edges    []model.Edge
+	}
+	groups := make(map[string]*edgeGroup)
+
+	for i := range edges {
+		relTable, _, _ := mapRelation(edges[i].Kind, edges[i].SourceKind)
+		if relTable == "" {
+			return fmt.Errorf("ladybug: unknown relation kind: %s", edges[i].Kind)
+		}
+		group, exists := groups[relTable]
+		if !exists {
+			group = &edgeGroup{relTable: relTable}
+			groups[relTable] = group
+		}
+		group.edges = append(group.edges, edges[i])
+	}
+
+	// Write CSV and COPY FROM for each group
+	for _, group := range groups {
+		columns := model.EdgeColumnNames(group.relTable)
+
+		csvPath := filepath.Join(store.csvDir(), fmt.Sprintf("_import_edges_%s.csv", group.relTable))
+		file, err := os.Create(csvPath)
+		if err != nil {
+			return fmt.Errorf("ladybug: create csv %s: %w", csvPath, err)
+		}
+
+		writer := csv.NewWriter(file)
+		header := []string{"from", "to"}
+		header = append(header, columns...)
+		writer.Write(header)
+
+		for _, edge := range group.edges {
+			row := make([]string, len(header))
+			row[0] = edge.SourceID
+			row[1] = edge.TargetID
+			for colIndex, key := range columns {
+				row[colIndex+2] = formatEdgePropertyValue(edge.Properties[key])
+			}
+			writer.Write(row)
+		}
+		writer.Flush()
+		file.Close()
+
+		if err := store.copyFromCSV(group.relTable, csvPath); err != nil {
+			os.Remove(csvPath)
+			return err
+		}
+		os.Remove(csvPath)
+	}
+	return nil
+}
+
+func (store *Store) createEdgesLegacy(edges []model.Edge) error {
 	stmtCache := make(map[string]*lbug.PreparedStatement)
 	defer func() {
 		for _, stmt := range stmtCache {
@@ -362,7 +449,6 @@ func (store *Store) CreateEdges(_ context.Context, edges []model.Edge) error {
 			return fmt.Errorf("ladybug: create edge %s: %w", edge.Kind, err)
 		}
 		result.Close()
-
 	}
 	return nil
 }
@@ -1519,6 +1605,61 @@ func (store *Store) Close() error {
 	store.conn.Close()
 	store.db.Close()
 	return nil
+}
+
+// copyFromCSV executes COPY FROM for a given table and CSV file path.
+func (store *Store) copyFromCSV(tableName, csvPath string) error {
+	absPath, err := filepath.Abs(csvPath)
+	if err != nil {
+		absPath = csvPath
+	}
+	// LadybugDB requires forward slashes in path
+	absPath = filepath.ToSlash(absPath)
+	query := fmt.Sprintf("COPY %s FROM '%s' (HEADER=true)", tableName, absPath)
+	result, err := store.conn.Query(query)
+	if err != nil {
+		return fmt.Errorf("ladybug: COPY %s FROM csv: %w", tableName, err)
+	}
+	result.Close()
+	return nil
+}
+
+// csvDir returns the directory for CSV temporary files (parent of dbPath).
+func (store *Store) csvDir() string {
+	return filepath.Dir(store.dbPath)
+}
+
+// formatCSVValue converts a node property value to its CSV string representation.
+func (store *Store) formatCSVValue(kind, column string, value any) string {
+	if value == nil {
+		return ""
+	}
+	columnType := model.GetColumnType(kind, column)
+	if strings.HasSuffix(columnType, "[]") {
+		// List column: serialize as JSON array
+		jsonBytes, err := json.Marshal(value)
+		if err != nil {
+			return ""
+		}
+		return string(jsonBytes)
+	}
+	return fmt.Sprintf("%v", value)
+}
+
+// formatEdgePropertyValue converts an edge property value to its CSV string representation.
+func formatEdgePropertyValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // mapRelation maps a RelationKind to LadybugDB table name and endpoint labels.

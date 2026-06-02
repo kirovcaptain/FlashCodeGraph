@@ -70,40 +70,14 @@ func (store *Store) Migrate(_ context.Context) error {
 		stmts = append(stmts, fmt.Sprintf("CREATE NODE TABLE IF NOT EXISTS %s (%s, PRIMARY KEY (id))", kind, colDefs))
 	}
 
-	// Relationship tables (not schema-driven — relationships have custom columns)
-	relStmts := []string{
-		`CREATE REL TABLE IF NOT EXISTS CONTAINS (FROM Repository TO File, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS DIR_CONTAINS (FROM Directory TO File, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS (FROM File TO Function, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS_CLASS (FROM File TO Class, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS_IFACE (FROM File TO Interface, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FILE_CONTAINS_VAR (FROM File TO Variable, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_FUNC (FROM Class TO Function, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS IFACE_CONTAINS_FUNC (FROM Interface TO Function, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS CLASS_CONTAINS_VAR (FROM Class TO Variable, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS CALLS (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, line INT32, declared_type STRING, polymorphic BOOLEAN, flow_context STRING, flow_line INT32, via_route STRING, cross_service BOOLEAN, consumer_interface STRING, target_service STRING, target_project STRING, target_branch STRING, target_handler STRING, protocol STRING, chain_id INT32, chain_depth INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS EXTENDS (FROM Class TO Class, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS IMPLEMENTS (FROM Class TO Interface, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, symbol_name STRING, alias STRING, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS OVERRIDES (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS DISPATCHES (FROM Function TO Function, confidence DOUBLE, resolved_by STRING, candidates INT32, flow_context STRING, flow_line INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS MEMBER_OF_FUNC (FROM Function TO Community, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS MEMBER_OF_CLASS (FROM Class TO Community, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS HANDLES (FROM Function TO Route, handler_order INT32 DEFAULT 0, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS INJECTS (FROM Function TO Function, inject_type STRING, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS DEPENDS_ON (FROM Directory TO Directory, call_count INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS REMOTE_CALLS_ROUTE (FROM Function TO Route, protocol STRING, target_url STRING, target_service STRING, confidence DOUBLE, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS REMOTE_CALLS_EXT (FROM Function TO ExternalService, protocol STRING, target_url STRING, target_service STRING, field_name STRING, confidence DOUBLE, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS EXECUTES (FROM Function TO QueryNode, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS FETCHES (FROM Function TO Route, http_method STRING, url_path STRING, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS STEP (FROM Process TO Function, seq INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_FUNC (FROM Function TO Annotation, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_CLASS (FROM Class TO Annotation, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS HAS_ANNOTATION_IFACE (FROM Interface TO Annotation, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS UNRESOLVED_CALL (FROM Function TO Function, hint_type STRING, line INT32, receiver_expr STRING, candidate_count INT32, MANY_MANY)`,
-		`CREATE REL TABLE IF NOT EXISTS USES (FROM Function TO Variable, line INT32, ref_kind STRING, MANY_MANY)`,
+	// Relationship tables — generated from model.EdgeColumns schema
+	for tableName, def := range model.EdgeColumns {
+		colDefs := fmt.Sprintf("FROM %s TO %s", def.FromKind, def.ToKind)
+		for _, col := range def.Columns {
+			colDefs += ", " + col.Name + " " + col.Type
+		}
+		stmts = append(stmts, fmt.Sprintf("CREATE REL TABLE IF NOT EXISTS %s (%s, MANY_MANY)", tableName, colDefs))
 	}
-	stmts = append(stmts, relStmts...)
 
 	for _, stmt := range stmts {
 		if err := store.execNoParams(stmt); err != nil {
@@ -120,21 +94,11 @@ func (store *Store) Migrate(_ context.Context) error {
 		}
 	}
 
-	// Upgrade CALLS rel table with cross-service columns added after initial schema.
-	for _, column := range []struct{ name, colType string }{
-		{"via_route", "STRING"},
-		{"cross_service", "BOOLEAN"},
-		{"consumer_interface", "STRING"},
-		{"target_service", "STRING"},
-		{"target_project", "STRING"},
-		{"target_branch", "STRING"},
-		{"target_handler", "STRING"},
-		{"protocol", "STRING"},
-		{"event_type", "STRING"},
-		{"chain_id", "INT32"},
-		{"chain_depth", "INT32"},
-	} {
-		store.execNoParams(fmt.Sprintf("ALTER TABLE CALLS ADD %s %s", column.name, column.colType))
+	// Upgrade existing edge tables with columns added after initial schema.
+	for tableName, def := range model.EdgeColumns {
+		for _, col := range def.Columns {
+			store.execNoParams(fmt.Sprintf("ALTER TABLE %s ADD %s %s", tableName, col.Name, col.Type))
+		}
 	}
 
 	return nil
