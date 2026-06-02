@@ -168,6 +168,11 @@ func (store *Store) createNodesCSV(nodes []model.Node) error {
 			writer.Write(row)
 		}
 		writer.Flush()
+		if err := writer.Error(); err != nil {
+			file.Close()
+			os.Remove(csvPath)
+			return fmt.Errorf("ladybug: write csv %s: %w", kind, err)
+		}
 		file.Close()
 
 		if err := store.copyFromCSV(kind, csvPath); err != nil {
@@ -379,6 +384,11 @@ func (store *Store) createEdgesCSV(edges []model.Edge) error {
 			writer.Write(row)
 		}
 		writer.Flush()
+		if err := writer.Error(); err != nil {
+			file.Close()
+			os.Remove(csvPath)
+			return fmt.Errorf("ladybug: write csv %s: %w", group.relTable, err)
+		}
 		file.Close()
 
 		if err := store.copyFromCSV(group.relTable, csvPath); err != nil {
@@ -1643,7 +1653,17 @@ func (store *Store) formatCSVValue(kind, column string, value any) string {
 		}
 		return string(jsonBytes)
 	}
-	return fmt.Sprintf("%v", value)
+	// For complex types (slice/map after JSON round-trip), serialize as JSON string
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.Slice, reflect.Map:
+		jsonBytes, err := json.Marshal(value)
+		if err != nil {
+			return ""
+		}
+		return string(jsonBytes)
+	default:
+		return fmt.Sprintf("%v", value)
+	}
 }
 
 // formatEdgePropertyValue converts an edge property value to its CSV string representation.
