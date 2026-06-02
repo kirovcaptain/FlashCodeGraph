@@ -1620,14 +1620,25 @@ func (store *Store) copyFromCSV(tableName, csvPath string) error {
 }
 
 // writeCSVRow writes a single CSV row. All fields are unconditionally quoted
-// with internal double quotes escaped as "" (RFC 4180, same as gitnexus csv-generator).
+// with internal double quotes and backslashes escaped with backslash.
+// LadybugDB default escape char is backslash — this avoids the "" ambiguity
+// that breaks its parser when field values contain quotes adjacent to commas.
 func writeCSVRow(file *os.File, fields []string) {
 	for i, field := range fields {
 		if i > 0 {
 			file.WriteString(",")
 		}
 		file.WriteString("\"")
-		file.WriteString(strings.ReplaceAll(field, "\"", "\"\""))
+		for _, char := range field {
+			switch char {
+			case '"':
+				file.WriteString("\\\"")
+			case '\\':
+				file.WriteString("\\\\")
+			default:
+				file.WriteString(string(char))
+			}
+		}
 		file.WriteString("\"")
 	}
 	file.WriteString("\n")
