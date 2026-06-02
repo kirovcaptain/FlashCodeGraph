@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.0.4] - 2026-06-02
+
+### Feature
+- TS/JS builtin type method resolution — Set/Map/Array/String/Number methods now resolve via globals.json
+- TypeName normalization `T[]` → `Array<T>` at parser source for consistent type matching
+- Primitive type mapping in ExternalMethodManager (`string→String`, `number→Number`, `boolean→Boolean`)
+- Import-based narrowing in resolveCallFallback for no-receiver TS/JS calls
+- Lambda block scope chain fix — correct scope parent tracking for lambdas inside for/if/try blocks
+- Unified edge schema definition (`model.EdgeColumns`) parallel to `NodeColumns`
+
+### Performance
+- LadybugDB CSV COPY FROM for CreateNodes and CreateEdges — 10-50x faster edge writes
+- Original per-row logic preserved as legacy fallback for in-memory mode
+
+### Internal
+- Migrate() in ladybug and kuzu now schema-driven from `model.EdgeColumns`
+- Multi CLI and MCP improvements
+- Fix staleness false positive detection after indexing dirty files
+
 ## [1.0.3] - 2026-05-18
 
 ### Feature
