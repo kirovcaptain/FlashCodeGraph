@@ -3,7 +3,6 @@ package ladybug
 
 import (
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -150,10 +149,9 @@ func (store *Store) createNodesCSV(nodes []model.Node) error {
 			return fmt.Errorf("ladybug: create csv %s: %w", csvPath, err)
 		}
 
-		writer := csv.NewWriter(file)
 		header := []string{"id"}
 		header = append(header, columns...)
-		writer.Write(header)
+		writeCSVRow(file, header)
 
 		for _, node := range kindNodes {
 			propsJSON, _ := json.Marshal(node.Properties)
@@ -165,13 +163,7 @@ func (store *Store) createNodesCSV(nodes []model.Node) error {
 			for colIndex, column := range columns {
 				row[colIndex+1] = store.formatCSVValue(kind, column, normalizedProps[column])
 			}
-			writer.Write(row)
-		}
-		writer.Flush()
-		if err := writer.Error(); err != nil {
-			file.Close()
-			os.Remove(csvPath)
-			return fmt.Errorf("ladybug: write csv %s: %w", kind, err)
+			writeCSVRow(file, row)
 		}
 		file.Close()
 
@@ -369,10 +361,9 @@ func (store *Store) createEdgesCSV(edges []model.Edge) error {
 			return fmt.Errorf("ladybug: create csv %s: %w", csvPath, err)
 		}
 
-		writer := csv.NewWriter(file)
 		header := []string{"from", "to"}
 		header = append(header, columns...)
-		writer.Write(header)
+		writeCSVRow(file, header)
 
 		for _, edge := range group.edges {
 			row := make([]string, len(header))
@@ -381,13 +372,7 @@ func (store *Store) createEdgesCSV(edges []model.Edge) error {
 			for colIndex, key := range columns {
 				row[colIndex+2] = formatEdgePropertyValue(edge.Properties[key])
 			}
-			writer.Write(row)
-		}
-		writer.Flush()
-		if err := writer.Error(); err != nil {
-			file.Close()
-			os.Remove(csvPath)
-			return fmt.Errorf("ladybug: write csv %s: %w", group.relTable, err)
+			writeCSVRow(file, row)
 		}
 		file.Close()
 
@@ -1625,13 +1610,27 @@ func (store *Store) copyFromCSV(tableName, csvPath string) error {
 	}
 	// LadybugDB requires forward slashes in path
 	absPath = filepath.ToSlash(absPath)
-	query := fmt.Sprintf(`COPY %s FROM '%s' (HEADER=true, ESCAPE='"')`, tableName, absPath)
+	query := fmt.Sprintf("COPY %s FROM '%s' (HEADER=true)", tableName, absPath)
 	result, err := store.conn.Query(query)
 	if err != nil {
 		return fmt.Errorf("ladybug: COPY %s FROM csv: %w", tableName, err)
 	}
 	result.Close()
 	return nil
+}
+
+// writeCSVRow writes a single CSV row. All fields are unconditionally quoted
+// with internal double quotes escaped as "" (RFC 4180, same as gitnexus csv-generator).
+func writeCSVRow(file *os.File, fields []string) {
+	for i, field := range fields {
+		if i > 0 {
+			file.WriteString(",")
+		}
+		file.WriteString("\"")
+		file.WriteString(strings.ReplaceAll(field, "\"", "\"\""))
+		file.WriteString("\"")
+	}
+	file.WriteString("\n")
 }
 
 // csvDir returns the directory for CSV temporary files (parent of dbPath).
