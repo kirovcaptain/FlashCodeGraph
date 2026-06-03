@@ -706,8 +706,18 @@ func (store *Store) DeleteAllByKind(_ context.Context, kind string) error {
 }
 
 func (store *Store) ClearAll(_ context.Context) error {
+	// Drop edge tables first (depend on node tables)
+	for relTable := range model.EdgeColumns {
+		query := fmt.Sprintf("DROP TABLE IF EXISTS %s", relTable)
+		result, err := store.conn.Query(query)
+		if err != nil {
+			continue
+		}
+		result.Close()
+	}
+	// Drop node tables
 	for kind := range model.NodeColumns {
-		query := fmt.Sprintf("MATCH (n:%s) DETACH DELETE n", kind)
+		query := fmt.Sprintf("DROP TABLE IF EXISTS %s", kind)
 		result, err := store.conn.Query(query)
 		if err != nil {
 			continue
