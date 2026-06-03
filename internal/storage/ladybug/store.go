@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -173,6 +174,7 @@ func (store *Store) createNodesCSV(nodes []model.Node) error {
 
 		if err := store.copyFromCSV(kind, csvPath); err != nil {
 			os.Remove(csvPath)
+			log.Printf("[ladybug] COPY FROM %s failed: %v, falling back to legacy", kind, err)
 			// Fallback to legacy if COPY fails (e.g. table already has data)
 			if legacyErr := store.createNodesLegacy(kindNodes); legacyErr != nil {
 				return legacyErr
