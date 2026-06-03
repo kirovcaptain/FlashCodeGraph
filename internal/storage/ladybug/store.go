@@ -34,6 +34,11 @@ func New(dbPath string, bufferPoolSize uint64) (*Store, error) {
 	}
 
 	db, err := lbug.OpenDatabase(dbPath, cfg)
+	if err != nil && dbPath != "" {
+		// Retry after removing WAL file (may be stale from previous crash)
+		os.Remove(dbPath + ".wal")
+		db, err = lbug.OpenDatabase(dbPath, cfg)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("ladybug: open database: %w", err)
 	}
@@ -706,45 +711,24 @@ func (store *Store) DeleteAllByKind(_ context.Context, kind string) error {
 }
 
 func (store *Store) ClearAll(_ context.Context) error {
-	if store.dbPath == "" {
-		// In-memory: drop tables
-		for relTable := range model.EdgeColumns {
-			query := fmt.Sprintf("DROP TABLE IF EXISTS %s", relTable)
-			result, err := store.conn.Query(query)
-			if err != nil {
-				continue
-			}
-			result.Close()
+	// Drop edge tables first (depend on node tables)
+	for relTable := range model.EdgeColumns {
+		query := fmt.Sprintf("DROP TABLE IF EXISTS %s", relTable)
+		result, err := store.conn.Query(query)
+		if err != nil {
+			continue
 		}
-		for kind := range model.NodeColumns {
-			query := fmt.Sprintf("DROP TABLE IF EXISTS %s", kind)
-			result, err := store.conn.Query(query)
-			if err != nil {
-				continue
-			}
-			result.Close()
+		result.Close()
+	}
+	// Drop node tables
+	for kind := range model.NodeColumns {
+		query := fmt.Sprintf("DROP TABLE IF EXISTS %s", kind)
+		result, err := store.conn.Query(query)
+		if err != nil {
+			continue
 		}
-		return nil
+		result.Close()
 	}
-	// Disk mode: close connection, delete files, reopen
-	store.conn.Close()
-	store.db.Close()
-	err1 := os.Remove(store.dbPath)
-	err2 := os.Remove(store.dbPath + ".wal")
-	os.Remove(store.dbPath + ".lock")
-	log.Printf("[ladybug] ClearAll: dbPath=%s, remove=%v, removeWal=%v", store.dbPath, err1, err2)
-	cfg := lbug.DefaultSystemConfig()
-	db, err := lbug.OpenDatabase(store.dbPath, cfg)
-	if err != nil {
-		return fmt.Errorf("ladybug: reopen after clear: %w", err)
-	}
-	conn, err := lbug.OpenConnection(db)
-	if err != nil {
-		db.Close()
-		return fmt.Errorf("ladybug: reopen connection after clear: %w", err)
-	}
-	store.db = db
-	store.conn = conn
 	return nil
 }
 
