@@ -706,29 +706,44 @@ func (store *Store) DeleteAllByKind(_ context.Context, kind string) error {
 }
 
 func (store *Store) ClearAll(_ context.Context) error {
-	// Drop edge tables first (depend on node tables)
-	for relTable := range model.EdgeColumns {
-		query := fmt.Sprintf("DROP TABLE IF EXISTS %s", relTable)
-		result, err := store.conn.Query(query)
-		if err != nil {
-			continue
+	if store.dbPath == "" {
+		// In-memory: drop tables
+		for relTable := range model.EdgeColumns {
+			query := fmt.Sprintf("DROP TABLE IF EXISTS %s", relTable)
+			result, err := store.conn.Query(query)
+			if err != nil {
+				continue
+			}
+			result.Close()
 		}
-		result.Close()
-	}
-	// Drop node tables
-	for kind := range model.NodeColumns {
-		query := fmt.Sprintf("DROP TABLE IF EXISTS %s", kind)
-		result, err := store.conn.Query(query)
-		if err != nil {
-			continue
+		for kind := range model.NodeColumns {
+			query := fmt.Sprintf("DROP TABLE IF EXISTS %s", kind)
+			result, err := store.conn.Query(query)
+			if err != nil {
+				continue
+			}
+			result.Close()
 		}
-		result.Close()
+		return nil
 	}
-	// Remove WAL file if present
-	if store.dbPath != "" {
-		walPath := store.dbPath + ".wal"
-		os.Remove(walPath)
+	// Disk mode: close connection, delete files, reopen
+	store.conn.Close()
+	store.db.Close()
+	os.Remove(store.dbPath)
+	os.Remove(store.dbPath + ".wal")
+	os.Remove(store.dbPath + ".lock")
+	cfg := lbug.DefaultSystemConfig()
+	db, err := lbug.OpenDatabase(store.dbPath, cfg)
+	if err != nil {
+		return fmt.Errorf("ladybug: reopen after clear: %w", err)
 	}
+	conn, err := lbug.OpenConnection(db)
+	if err != nil {
+		db.Close()
+		return fmt.Errorf("ladybug: reopen connection after clear: %w", err)
+	}
+	store.db = db
+	store.conn = conn
 	return nil
 }
 
