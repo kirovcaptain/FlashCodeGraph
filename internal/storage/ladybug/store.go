@@ -724,6 +724,11 @@ func (store *Store) ClearAll(_ context.Context) error {
 		}
 		result.Close()
 	}
+	// Remove WAL file if present
+	if store.dbPath != "" {
+		walPath := store.dbPath + ".wal"
+		os.Remove(walPath)
+	}
 	return nil
 }
 
