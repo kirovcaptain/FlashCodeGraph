@@ -244,6 +244,7 @@ func (indexer *Indexer) writeResolvedRelations(
 					TargetID:   candidateSymbols[0].ID,
 					Kind:       model.RelUnresolvedCall,
 					SourceKind: constants.KindFunction,
+					TargetKind: candidateSymbols[0].Kind,
 					Properties: map[string]any{
 						"hint_type":       hint.HintType,
 						"line":            hint.Line,
@@ -254,6 +255,7 @@ func (indexer *Indexer) writeResolvedRelations(
 			}
 		}
 		if len(hintEdges) > 0 {
+			indexer.dump.OnUnresolvedEdges(hintEdges)
 			if err := indexer.graphStore.CreateEdges(ctx, hintEdges); err != nil {
 				return fmt.Errorf("indexer: write unresolved hints: %w", err)
 			}

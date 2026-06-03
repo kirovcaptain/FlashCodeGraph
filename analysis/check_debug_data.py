@@ -13,13 +13,13 @@ from collections import defaultdict
 
 # Edge table schema: edge_type -> (from_kind, to_kind)
 EDGE_SCHEMA = {
-    "CALLS": ("Function", ("Function", "Class", "Interface")),
+    "CALLS": ("Function", ("Function", "Class")),
     "EXTENDS": ("Class", "Class"),
     "IMPLEMENTS": ("Class", "Interface"),
     "IMPORTS": ("File", "File"),
     "OVERRIDES": ("Function", "Function"),
     "DISPATCHES": ("Function", "Function"),
-    "CONTAINS": None,  # Dynamic routing by SourceKind, skip type check
+    "CONTAINS": None,  # Routed by source_kind, checked via CONTAINS_ROUTING below
     "DIR_CONTAINS": ("Directory", "File"),
     "FILE_CONTAINS": ("File", "Function"),
     "FILE_CONTAINS_CLASS": ("File", "Class"),
@@ -28,9 +28,34 @@ EDGE_SCHEMA = {
     "CLASS_CONTAINS_FUNC": ("Class", "Function"),
     "IFACE_CONTAINS_FUNC": ("Interface", "Function"),
     "CLASS_CONTAINS_VAR": ("Class", "Variable"),
+    "MEMBER_OF_FUNC": ("Function", "Community"),
+    "MEMBER_OF_CLASS": ("Class", "Community"),
     "HANDLES": ("Function", "Route"),
-    "UNRESOLVED_CALL": ("Function", "Function"),
+    "INJECTS": ("Function", "Function"),
+    "DEPENDS_ON": ("Directory", "Directory"),
+    "REMOTE_CALLS_ROUTE": ("Function", "Route"),
+    "REMOTE_CALLS_EXT": ("Function", "ExternalService"),
+    "EXECUTES": ("Function", "QueryNode"),
+    "FETCHES": ("Function", "Route"),
+    "STEP": ("Process", "Function"),
+    "HAS_ANNOTATION_FUNC": ("Function", "Annotation"),
+    "HAS_ANNOTATION_CLASS": ("Class", "Annotation"),
+    "HAS_ANNOTATION_IFACE": ("Interface", "Annotation"),
+    "UNRESOLVED_CALL": ("Function", ("Function", "Class")),
     "USES": ("Function", "Variable"),
+}
+
+# Maps CONTAINS + source_kind to the actual edge schema for type checking
+CONTAINS_ROUTING = {
+    "Repository": ("Repository", "File"),
+    "Directory": ("Directory", "File"),
+    "File": ("File", "Function"),
+    "FileClass": ("File", "Class"),
+    "FileInterface": ("File", "Interface"),
+    "FileVar": ("File", "Variable"),
+    "ClassFunc": ("Class", "Function"),
+    "InterfaceFunc": ("Interface", "Function"),
+    "ClassVar": ("Class", "Variable"),
 }
 
 
@@ -92,10 +117,11 @@ def collect_node_ids(debug_dir):
 def check_edges(debug_dir, id_to_kind):
     """Read edge CSVs and check orphan edges + type mismatches."""
     edge_files = [
-        ("structural_edges.csv", 0, 1, 2),  # source col 0, target col 1, kind col 2
+        ("structural_edges.csv", 0, 1, 2, 3),  # source col 0, target col 1, kind col 2, source_kind col 3
         ("heritage.csv", 0, 1, 2),       # source col 0, target col 1, kind col 2
         ("overrides.csv", 0, 1, 2),      # source col 0, target col 1, kind col 2
         ("implements.csv", 0, 1, 2),     # source col 0, target col 1, kind col 2
+        ("unresolved_edges.csv", 0, 1, 2), # source col 0, target col 1, kind col 2
     ]
 
     # calls_*.csv: resolved_by, confidence, candidates, source_id, target_id, ...
@@ -106,7 +132,10 @@ def check_edges(debug_dir, id_to_kind):
     orphans = []
     type_mismatches = []
 
-    for filename, source_column, target_column, kind_column in edge_files:
+    for entry in edge_files:
+        source_column, target_column, kind_column = entry[1], entry[2], entry[3]
+        source_kind_column = entry[4] if len(entry) > 4 else None
+        filename = entry[0]
         filepath = os.path.join(debug_dir, filename)
         if not os.path.exists(filepath):
             continue
@@ -130,6 +159,13 @@ def check_edges(debug_dir, id_to_kind):
                 if kind_column is not None and len(row) > kind_column:
                     edge_type = row[kind_column]
 
+
+                # Route CONTAINS by source_kind to actual schema
+                if edge_type == "CONTAINS" and source_kind_column is not None and len(row) > source_kind_column:
+                    routed = CONTAINS_ROUTING.get(row[source_kind_column])
+                    if routed:
+                        edge_type = "_ROUTED_CONTAINS"
+                        EDGE_SCHEMA["_ROUTED_CONTAINS"] = routed
                 # Check orphans
                 if source_id and source_id not in id_to_kind:
                     orphans.append((filename, line_number, "source", source_id))

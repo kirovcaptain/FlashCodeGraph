@@ -291,7 +291,7 @@ var EdgeColumns = map[string]EdgeTableDef{
 	"HAS_ANNOTATION_FUNC":  {FromKind: "Function", ToKind: "Annotation", Columns: nil},
 	"HAS_ANNOTATION_CLASS": {FromKind: "Class", ToKind: "Annotation", Columns: nil},
 	"HAS_ANNOTATION_IFACE": {FromKind: "Interface", ToKind: "Annotation", Columns: nil},
-	"UNRESOLVED_CALL": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+	"UNRESOLVED_CALL": {FromKind: "Function", ToKind: "Function", ToKinds: []string{"Class"}, Columns: []ColumnDef{
 		{"hint_type", "STRING"},
 		{"line", "INT32"},
 		{"receiver_expr", "STRING"},

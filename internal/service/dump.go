@@ -23,6 +23,7 @@ type DumpManager interface {
 	OnSymbolNodes(nodes []model.Node)
 	OnStructuralNodes(nodes []model.Node, edges []model.Edge)
 	OnExternalNodes(nodes []model.Node)
+	OnUnresolvedEdges(edges []model.Edge)
 }
 
 // NopDumpManager does nothing (debug=false).
@@ -39,6 +40,7 @@ func (NopDumpManager) OnCrossProjectSymbols(int, int)                           
 func (NopDumpManager) OnSymbolNodes([]model.Node)                                 {}
 func (NopDumpManager) OnStructuralNodes([]model.Node, []model.Edge)               {}
 func (NopDumpManager) OnExternalNodes([]model.Node)                               {}
+func (NopDumpManager) OnUnresolvedEdges([]model.Edge)                              {}
 
 // FileDumpManager writes CSV files to .fcg/debug/.
 type FileDumpManager struct {
@@ -356,7 +358,7 @@ func (d *FileDumpManager) OnStructuralNodes(nodes []model.Node, edges []model.Ed
 		}
 	}
 	if len(edges) > 0 {
-		header := []string{"source_id", "target_id", "kind"}
+		header := []string{"source_id", "target_id", "kind", "source_kind"}
 		writer, file := d.createCSV("structural_edges.csv", header)
 		if writer != nil {
 			for _, edge := range edges {
@@ -364,6 +366,7 @@ func (d *FileDumpManager) OnStructuralNodes(nodes []model.Node, edges []model.Ed
 					edge.SourceID,
 					edge.TargetID,
 					string(edge.Kind),
+					edge.SourceKind,
 				})
 			}
 			writer.Flush()
@@ -395,3 +398,21 @@ func (d *FileDumpManager) OnExternalNodes(nodes []model.Node) {
 	file.Close()
 	log.Printf("[debug] dumped %d external nodes to .fcg/debug/external_nodes.csv", len(nodes))
 }
+
+func (d *FileDumpManager) OnUnresolvedEdges(edges []model.Edge) {
+	if len(edges) == 0 {
+		return
+	}
+	header := []string{"source_id", "target_id", "kind"}
+	writer, file := d.createCSV("unresolved_edges.csv", header)
+	if writer == nil {
+		return
+	}
+	for _, edge := range edges {
+		writer.Write([]string{edge.SourceID, edge.TargetID, string(edge.Kind)})
+	}
+	writer.Flush()
+	file.Close()
+	log.Printf("[debug] dumped %d unresolved edges to .fcg/debug/unresolved_edges.csv", len(edges))
+}
+
