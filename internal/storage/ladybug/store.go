@@ -729,9 +729,10 @@ func (store *Store) ClearAll(_ context.Context) error {
 	// Disk mode: close connection, delete files, reopen
 	store.conn.Close()
 	store.db.Close()
-	os.Remove(store.dbPath)
-	os.Remove(store.dbPath + ".wal")
+	err1 := os.Remove(store.dbPath)
+	err2 := os.Remove(store.dbPath + ".wal")
 	os.Remove(store.dbPath + ".lock")
+	log.Printf("[ladybug] ClearAll: dbPath=%s, remove=%v, removeWal=%v", store.dbPath, err1, err2)
 	cfg := lbug.DefaultSystemConfig()
 	db, err := lbug.OpenDatabase(store.dbPath, cfg)
 	if err != nil {
