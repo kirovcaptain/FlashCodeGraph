@@ -15,6 +15,16 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
+// resolvedRelations groups all resolved relation results from the resolve phase.
+type resolvedRelations struct {
+	Calls      []model.ResolvedRelation
+	Heritage   []model.ResolvedRelation
+	Overrides  []model.ResolvedRelation
+	Implements []model.ResolvedRelation
+	Uses       []model.ResolvedRelation
+	Hints      []model.UnresolvedHint
+}
+
 func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, crossProjectNodes map[string]model.Node) ([]model.ResolvedRelation, error) {
 	indexer.progress.Emit(PhaseResolving, 0, 0, "relations")
 
@@ -34,8 +44,8 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	importFileMap := indexer.propagateExports(parseResults, symbolTable, allFilePaths, scanCtx.absPath, scanCtx.projectInfo.Language)
 	resolverInstance.SetImportFileMap(importFileMap)
 
-	// Phase B + C: Type inference, call/heritage/override resolution, cross-file propagation
-	callRelations, heritageRelations, overrideRelations, usesRelations, callHints, err := indexer.resolveCallsAndHeritage(
+	// Phase B + C: Type inference, call/heritage/override/uses resolution, cross-file propagation
+	relations, err := indexer.resolveCallsAndHeritage(
 		ctx, resolverInstance, parseResults, symbolTable, allCalls, allHeritage, importRelations, langHelpers, scanCtx.projectInfo.Language)
 	if err != nil {
 		return nil, err
@@ -44,23 +54,20 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	// Phase D: Write results to graph
 
 	// D-1: Infer implicit interface implementations (e.g. Go structs satisfying interfaces)
-	var implementsRelations []model.ResolvedRelation
 	for _, helper := range langHelpers {
-		implementsRelations = append(implementsRelations, helper.InferImplements()...)
+		relations.Implements = append(relations.Implements, helper.InferImplements()...)
 	}
 
-	// D-2: Write only cross-project nodes that are actually referenced by resolved relations
-	if err := indexer.writeReferencedCrossProjectNodes(ctx, symbolTable, crossProjectNodes,
-		callRelations, heritageRelations, overrideRelations, implementsRelations, callHints); err != nil {
+	// D-2: Write cross-project nodes referenced by call/heritage/override/implements relations
+	if err := indexer.writeReferencedCrossProjectNodes(ctx, symbolTable, crossProjectNodes, &relations); err != nil {
 		return nil, err
 	}
 
-	// D-3: Write external nodes, relation edges, and unresolved hints
-	if err := indexer.writeResolvedRelations(ctx, scanCtx, symbolTable,
-		callRelations, heritageRelations, overrideRelations, implementsRelations, usesRelations, callHints); err != nil {
+	// D-3: Write external nodes, all relation edges (calls/heritage/overrides/implements/uses), and unresolved hints
+	if err := indexer.writeResolvedRelations(ctx, scanCtx, symbolTable, &relations); err != nil {
 		return nil, err
 	}
-	return callRelations, nil
+	return relations.Calls, nil
 }
 
 // resolveImports resolves raw import statements into File→File IMPORTS edges and writes them.
@@ -85,7 +92,7 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 	importRelations []model.ResolvedRelation,
 	langHelpers map[string]resolver.LanguageHelper,
 	language string,
-) ([]model.ResolvedRelation, []model.ResolvedRelation, []model.ResolvedRelation, []model.ResolvedRelation, []model.UnresolvedHint, error) {
+) (resolvedRelations, error) {
 
 	// Step 1: Local type inference — build per-file TypeEnv from constructor calls and type annotations.
 	// Example: "UserService svc = new UserService()" → svc maps to type UserService.
@@ -207,7 +214,13 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 		usesRelations = resolverInstance.ResolveConstRefs(allConstRefs, envs)
 	}
 
-	return callRelations, heritageRelations, overrideRelations, usesRelations, callHints, nil
+	return resolvedRelations{
+		Calls:    callRelations,
+		Heritage: heritageRelations,
+		Overrides: overrideRelations,
+		Uses:     usesRelations,
+		Hints:    callHints,
+	}, nil
 }
 
 // writeResolvedRelations writes external nodes and all relation edges to the graph.

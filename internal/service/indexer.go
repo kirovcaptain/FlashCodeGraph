@@ -239,7 +239,7 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	}
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, fmt.Sprintf("%d files", scanCtx.result.FilesScanned))
 
-	// Step 7.5: Resolve service name placeholders (before writeSemanticNodes so Step 6 uses resolved names)
+	// Resolve service name placeholders (before writeSemanticNodes so Step 6 uses resolved names)
 	indexer.resolveServiceNamePlaceholders(parseResults)
 
 	// Write all other nodes and edges
@@ -287,12 +287,12 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	}
 	clearParseResultsPhase2(parseResults)
 	indexer.dump.OnRemoteCalls(allRemoteCalls, allPendingCalls)
-	// Step 8: Match consumer to provider (cross-service CALLS edges)
+	// Match consumer to provider (cross-service CALLS edges)
 	if err := indexer.matchConsumerToProvider(ctx, scanCtx, allRemoteCalls, allPendingCalls, symbolTable, allRoutes, routeToHandler); err != nil {
 		return nil, fmt.Errorf("indexer: match consumer to provider: %w", err)
 	}
 
-	// Step 9: Write cross-project index
+	//  Write cross-project index
 	if err := indexer.writeCrossProjectIndex(ctx, scanCtx, symbolTable, allRoutes, routeToHandler); err != nil {
 		return nil, fmt.Errorf("indexer: write cross-project index: %w", err)
 	}

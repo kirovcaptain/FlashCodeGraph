@@ -62,9 +62,9 @@ func (indexer *Indexer) parseDefFiles(scanCtx *scanContext, files []scanner.Scan
 
 func filterByCategory(files []scanner.ScannedFile, category string) []scanner.ScannedFile {
 	var filtered []scanner.ScannedFile
-	for _, f := range files {
-		if f.Category == category {
-			filtered = append(filtered, f)
+	for _, file := range files {
+		if file.Category == category {
+			filtered = append(filtered, file)
 		}
 	}
 	return filtered

@@ -126,8 +126,7 @@ func (indexer *Indexer) writeReferencedCrossProjectNodes(
 	ctx context.Context,
 	symbolTable *resolver.SymbolTable,
 	crossProjectNodes map[string]model.Node,
-	callRelations, heritageRelations, overrideRelations, implementsRelations []model.ResolvedRelation,
-	callHints []model.UnresolvedHint,
+	relations *resolvedRelations,
 ) error {
 	if len(crossProjectNodes) == 0 {
 		return nil
@@ -136,11 +135,11 @@ func (indexer *Indexer) writeReferencedCrossProjectNodes(
 	referencedIDs := make(map[string]bool)
 
 	// Collect from all relation types
-	allRelations := make([]model.ResolvedRelation, 0, len(callRelations)+len(heritageRelations)+len(overrideRelations)+len(implementsRelations))
-	allRelations = append(allRelations, callRelations...)
-	allRelations = append(allRelations, heritageRelations...)
-	allRelations = append(allRelations, overrideRelations...)
-	allRelations = append(allRelations, implementsRelations...)
+	allRelations := make([]model.ResolvedRelation, 0, len(relations.Calls)+len(relations.Heritage)+len(relations.Overrides)+len(relations.Implements))
+	allRelations = append(allRelations, relations.Calls...)
+	allRelations = append(allRelations, relations.Heritage...)
+	allRelations = append(allRelations, relations.Overrides...)
+	allRelations = append(allRelations, relations.Implements...)
 	for _, relation := range allRelations {
 		if strings.HasPrefix(relation.SourceID, "cross-project:") {
 			referencedIDs[relation.SourceID] = true
@@ -151,7 +150,7 @@ func (indexer *Indexer) writeReferencedCrossProjectNodes(
 	}
 
 	// Collect from unresolved call hints
-	for _, hint := range callHints {
+	for _, hint := range relations.Hints {
 		for _, candidateQualifiedName := range hint.Candidates {
 			candidateSymbols := symbolTable.FindByQualifiedName(candidateQualifiedName)
 			for _, candidate := range candidateSymbols {
@@ -183,8 +182,7 @@ func (indexer *Indexer) writeResolvedRelations(
 	ctx context.Context,
 	scanCtx *scanContext,
 	symbolTable *resolver.SymbolTable,
-	callRelations, heritageRelations, overrideRelations, implementsRelations, usesRelations []model.ResolvedRelation,
-	callHints []model.UnresolvedHint,
+	relations *resolvedRelations,
 ) error {
 	// Step 1: Write external dependency virtual nodes — creates Function nodes for symbols
 	// referenced but not defined in source (e.g. third-party library calls like "spring.JdbcTemplate.query").
@@ -216,11 +214,11 @@ func (indexer *Indexer) writeResolvedRelations(
 	indexer.progress.EmitSub(PhaseResolving, SubExternalNodes, fmt.Sprintf("%d nodes", len(externalNodes)))
 
 	// Step 2: Write all resolved relation edges (CALLS + EXTENDS + IMPLEMENTS + OVERRIDES + USES).
-	allRelations := append(callRelations, heritageRelations...)
-	allRelations = append(allRelations, overrideRelations...)
-	allRelations = append(allRelations, implementsRelations...)
-	allRelations = append(allRelations, usesRelations...)
-	indexer.dump.OnAllRelations(heritageRelations, overrideRelations, implementsRelations)
+	allRelations := append(relations.Calls, relations.Heritage...)
+	allRelations = append(allRelations, relations.Overrides...)
+	allRelations = append(allRelations, relations.Implements...)
+	allRelations = append(allRelations, relations.Uses...)
+	indexer.dump.OnAllRelations(relations.Heritage, relations.Overrides, relations.Implements)
 
 	indexer.progress.EmitSub(PhaseResolving, SubRelationEdges, "")
 	if err := indexer.writeRelations(ctx, allRelations, scanCtx.result); err != nil {
@@ -230,10 +228,10 @@ func (indexer *Indexer) writeResolvedRelations(
 
 	// Step 3: Write UNRESOLVED_CALL hint edges — preserves candidate information for calls
 	// that could not be confidently resolved, enabling downstream tools to show possible targets.
-	if len(callHints) > 0 {
+	if len(relations.Hints) > 0 {
 		indexer.progress.EmitSub(PhaseResolving, SubUnresolvedHints, "")
 		var hintEdges []model.Edge
-		for _, hint := range callHints {
+		for _, hint := range relations.Hints {
 			for _, candidateQN := range hint.Candidates {
 				candidateSymbols := symbolTable.FindByQualifiedName(candidateQN)
 				if len(candidateSymbols) == 0 {
@@ -261,11 +259,11 @@ func (indexer *Indexer) writeResolvedRelations(
 			}
 		}
 		scanCtx.result.RelationsByKind["UNRESOLVED_CALL"] = len(hintEdges)
-		indexer.progress.EmitSub(PhaseResolving, SubUnresolvedHints, fmt.Sprintf("%d hints → %d edges", len(callHints), len(hintEdges)))
+		indexer.progress.EmitSub(PhaseResolving, SubUnresolvedHints, fmt.Sprintf("%d hints → %d edges", len(relations.Hints), len(hintEdges)))
 	}
 
 	// Count low-confidence calls for reporting
-	for _, relation := range callRelations {
+	for _, relation := range relations.Calls {
 		if relation.Confidence < constants.ConfidenceLowThreshold {
 			scanCtx.result.LowConfidenceCount++
 		}
@@ -550,12 +548,15 @@ func buildStructuralData(repoID, repoName, absPath string, frameworks []string, 
 		}
 		fileID := fmt.Sprintf("file:%s", file.RelPath)
 		nodes = append(nodes, model.Node{
-			ID: fileID, Kind: constants.KindFile,
+			ID:         fileID,
+			Kind:       constants.KindFile,
 			Properties: map[string]any{"path": file.RelPath, "language": file.Language},
 		})
 		edges = append(edges, model.Edge{
-			SourceID: repoID, TargetID: fileID,
-			Kind: model.RelContains, SourceKind: constants.KindRepository,
+			SourceID:   repoID,
+			TargetID:   fileID,
+			Kind:       model.RelContains,
+			SourceKind: constants.KindRepository,
 		})
 		dir := filepath.Dir(file.RelPath)
 		if dir != "." && dir != "" {
@@ -563,21 +564,24 @@ func buildStructuralData(repoID, repoName, absPath string, frameworks []string, 
 			dirFiles[dir] = append(dirFiles[dir], fileID)
 		}
 	}
+
 	for dir := range dirs {
 		dirID := fmt.Sprintf("dir:%s", dir)
 		nodes = append(nodes, model.Node{
-			ID: dirID, Kind: constants.KindDirectory,
+			ID:         dirID,
+			Kind:       constants.KindDirectory,
 			Properties: map[string]any{"path": dir},
 		})
 		for _, fileID := range dirFiles[dir] {
 			edges = append(edges, model.Edge{
-				SourceID: dirID, TargetID: fileID,
-				Kind: model.RelContains, SourceKind: constants.KindDirectory,
+				SourceID: dirID,
+				TargetID: fileID,
+				Kind:     model.RelContains, SourceKind: constants.KindDirectory,
 			})
 		}
 	}
 
-	// File → Symbol CONTAINS edges (returned separately, must be written after symbol nodes exist)
+	// File → Symbol CONTAINS edges + Class → Function CONTAINS edges
 	var symbolEdges []model.Edge
 	for _, parseResult := range parseResults {
 		fileID := fmt.Sprintf("file:%s", parseResult.FilePath)
@@ -590,37 +594,32 @@ func buildStructuralData(repoID, repoName, absPath string, frameworks []string, 
 				sourceKind = constants.SourceKindFileInterface
 			case constants.KindVariable:
 				sourceKind = constants.SourceKindFileVar
-			}
-			symbolEdges = append(symbolEdges, model.Edge{
-				SourceID: fileID, TargetID: symbol.ID,
-				Kind: model.RelContains, SourceKind: sourceKind,
-			})
-		}
-	}
-
-	// Class → Function CONTAINS edges
-	for _, parseResult := range parseResults {
-		for _, symbol := range parseResult.Symbols {
-			if symbol.Kind != constants.KindFunction {
-				continue
-			}
-			lastDot := strings.LastIndex(symbol.QualifiedName, ".")
-			if lastDot <= 0 {
-				continue
-			}
-			classQualifiedName := symbol.QualifiedName[:lastDot]
-			if info, exists := classIDByQualifiedName[classQualifiedName]; exists {
-				sourceKind := constants.SourceKindClassFunc
-				if info.Kind == constants.KindInterface {
-					sourceKind = constants.SourceKindInterfaceFunc
+			case constants.KindFunction:
+				// Class/Interface → Function CONTAINS edge
+				lastDot := strings.LastIndex(symbol.QualifiedName, ".")
+				if lastDot > 0 {
+					ownerQualifiedName := symbol.QualifiedName[:lastDot]
+					if info, exists := classIDByQualifiedName[ownerQualifiedName]; exists {
+						containsSourceKind := constants.SourceKindClassFunc
+						if info.Kind == constants.KindInterface {
+							containsSourceKind = constants.SourceKindInterfaceFunc
+						}
+						symbolEdges = append(symbolEdges, model.Edge{
+							SourceID:   info.ID,
+							TargetID:   symbol.ID,
+							Kind:       model.RelContains,
+							SourceKind: containsSourceKind,
+						})
+					}
 				}
-				symbolEdges = append(symbolEdges, model.Edge{
-					SourceID:   info.ID,
-					TargetID:   symbol.ID,
-					Kind:       model.RelContains,
-					SourceKind: sourceKind,
-				})
 			}
+			// File → Symbol CONTAINS edge
+			symbolEdges = append(symbolEdges, model.Edge{
+				SourceID:   fileID,
+				TargetID:   symbol.ID,
+				Kind:       model.RelContains,
+				SourceKind: sourceKind,
+			})
 		}
 	}
 
@@ -878,38 +877,38 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 	var nodes []model.Node
 	var edges []model.Edge
 
-	for _, pr := range parseResults {
-		for _, symbol := range pr.Symbols {
+	for _, parseResult := range parseResults {
+		for _, symbol := range parseResult.Symbols {
 			if symbol.Annotations == "" || symbol.Annotations == "[]" || symbol.Annotations == "null" {
 				continue
 			}
-			var annList []model.StructuredAnnotation
-			if err := json.Unmarshal([]byte(symbol.Annotations), &annList); err != nil {
+			var annotationList []model.StructuredAnnotation
+			if err := json.Unmarshal([]byte(symbol.Annotations), &annotationList); err != nil {
 				continue
 			}
-			for _, structuredAnnotation := range annList {
-				def, ok := whitelist[structuredAnnotation.Name]
+			for _, structuredAnnotation := range annotationList {
+				annotationDef, ok := whitelist[structuredAnnotation.Name]
 				if !ok {
 					continue
 				}
-				annID := symbol.ID + "::" + structuredAnnotation.Name
+				annotationID := symbol.ID + "::" + structuredAnnotation.Name
 				// Build params string from structured params
-				paramsStr := ""
+				paramsString := ""
 				for paramKey, paramValue := range structuredAnnotation.Params {
-					if paramsStr != "" {
-						paramsStr += ", "
+					if paramsString != "" {
+						paramsString += ", "
 					}
-					paramsStr += paramKey + "=" + paramValue
+					paramsString += paramKey + "=" + paramValue
 				}
 				nodes = append(nodes, model.Node{
-					ID:   annID,
+					ID:   annotationID,
 					Kind: constants.KindAnnotation,
 					Properties: map[string]any{
 						"name":      structuredAnnotation.Name,
-						"category":  def.Category,
-						"layer":     def.Layer,
-						"framework": def.Framework,
-						"params":    paramsStr,
+						"category":  annotationDef.Category,
+						"layer":     annotationDef.Layer,
+						"framework": annotationDef.Framework,
+						"params":    paramsString,
 						"file_path": symbol.FilePath,
 						"line":      symbol.StartLine,
 					},
@@ -923,7 +922,7 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 				}
 				edges = append(edges, model.Edge{
 					SourceID:   symbol.ID,
-					TargetID:   annID,
+					TargetID:   annotationID,
 					Kind:       model.RelHasAnnotation,
 					SourceKind: sourceKind,
 				})
