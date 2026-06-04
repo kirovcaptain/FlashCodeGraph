@@ -288,7 +288,7 @@ func (srv *Server) registerTools() {
 
 	srv.mcpServer.AddTool(mcp.NewTool("query_usages",
 		mcp.WithDescription("Query all references to a static constant (enum constant, interface constant, or class static final field). Returns the functions that reference it, along with line numbers and reference kinds (field_access or switch_case)."),
-		mcp.WithString("symbol", mcp.Required(), mcp.Description("Qualified name of the constant (e.g. 'com.example.Status.ACTIVE')")),
+		mcp.WithString("symbol", mcp.Required(), mcp.Description("Qualified name or partial name of the constant (e.g. 'com.example.Status.ACTIVE' or 'Status.ACTIVE' or 'ACTIVE')")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: no limit)")),
 		mcp.WithNumber("offset", mcp.Description("Skip first N results for pagination (default 0)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),

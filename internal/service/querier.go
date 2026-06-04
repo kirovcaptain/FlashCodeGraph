@@ -1884,21 +1884,37 @@ func (querier *Querier) QueryCrossChain(ctx context.Context, functionName string
 	return result, nil
 }
 
-// QueryUsages returns all references to the given enum constant via USES edges.
-func (querier *Querier) QueryUsages(ctx context.Context, symbolQualifiedName string, limit, offset int) ([]model.UsageResult, int, error) {
-	// Step 1: Find the Variable node by qualified_name
-	variableNode, err := querier.graphStore.QueryNodeByQualifiedName(ctx, symbolQualifiedName)
+// QueryUsages finds a Variable node by fuzzy matching qualified_name (CONTAINS),
+// then returns all references via USES edges.
+// Returns ambiguous error with candidate list if multiple Variable nodes match.
+func (querier *Querier) QueryUsages(ctx context.Context, symbol string, limit, offset int) ([]model.UsageResult, int, error) {
+	if symbol == "" {
+		return nil, 0, fmt.Errorf("symbol name is required")
+	}
+
+	// Fuzzy search Variable nodes by qualified_name CONTAINS
+	candidates, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindVariable, "qualified_name", symbol, storage.MatchContains, 0)
 	if err != nil {
 		return nil, 0, err
 	}
-	if variableNode == nil {
-		return nil, 0, fmt.Errorf("constant not found: %s", symbolQualifiedName)
+	if len(candidates) == 0 {
+		return nil, 0, fmt.Errorf("constant not found: %s", symbol)
 	}
-	if variableNode.Kind != constants.KindVariable {
-		return nil, 0, fmt.Errorf("symbol is not a variable: %s (kind: %s)", symbolQualifiedName, variableNode.Kind)
+	if len(candidates) > 1 {
+		var qualifiedNames []string
+		for _, candidate := range candidates {
+			qualifiedName, _ := candidate.Properties["qualified_name"].(string)
+			qualifiedNames = append(qualifiedNames, qualifiedName)
+		}
+		return nil, 0, fmt.Errorf("ambiguous: %d matches for %q. Candidates:\n%s\nPlease specify the full qualified name", len(candidates), symbol, strings.Join(qualifiedNames, "\n"))
 	}
 
-	// Step 2: Query incoming USES edges from Function nodes
+	return querier.QueryUsagesByNode(ctx, &candidates[0], limit, offset)
+}
+
+// QueryUsagesByNode returns all references to the given Variable node via USES edges.
+func (querier *Querier) QueryUsagesByNode(ctx context.Context, variableNode *model.Node, limit, offset int) ([]model.UsageResult, int, error) {
+	// Query incoming USES edges from Function nodes
 	edges, err := querier.graphStore.QueryEdges(ctx, variableNode.ID, constants.KindFunction, model.RelUses, model.Incoming)
 	if err != nil {
 		return nil, 0, err
@@ -1907,7 +1923,7 @@ func (querier *Querier) QueryUsages(ctx context.Context, symbolQualifiedName str
 		return []model.UsageResult{}, 0, nil
 	}
 
-	// Step 3: Extract source node IDs and query Function nodes
+	// Extract source node IDs and build edge lookup map
 	sourceIDs := make([]string, 0, len(edges))
 	edgeMap := make(map[string]model.Edge)
 	for _, edge := range edges {
@@ -1920,7 +1936,7 @@ func (querier *Querier) QueryUsages(ctx context.Context, symbolQualifiedName str
 		return nil, 0, err
 	}
 
-	// Step 4: Assemble UsageResult with edge properties
+	// Assemble UsageResult with edge properties
 	allResults := make([]model.UsageResult, 0, len(functionNodes))
 	for _, functionNode := range functionNodes {
 		edge, ok := edgeMap[functionNode.ID]
@@ -1936,7 +1952,15 @@ func (querier *Querier) QueryUsages(ctx context.Context, symbolQualifiedName str
 		})
 	}
 
-	// Step 5: In-memory pagination
+	// In-memory pagination
 	page, total := paginate(allResults, offset, limit)
 	return page, total, nil
+}
+
+// SearchVariables returns Variable nodes whose qualified_name contains the given symbol string.
+func (querier *Querier) SearchVariables(ctx context.Context, symbol string) ([]model.Node, error) {
+	if symbol == "" {
+		return nil, fmt.Errorf("symbol name is required")
+	}
+	return querier.graphStore.QueryNodesByProperty(ctx, constants.KindVariable, "qualified_name", symbol, storage.MatchContains, 0)
 }

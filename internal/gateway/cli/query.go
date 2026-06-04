@@ -123,11 +123,11 @@ func init() {
 	searchCmd.Flags().IntVar(&queryLimit, "limit", 0, "Max results (0 = no limit)")
 	rootCmd.AddCommand(searchCmd)
 
-	// fcg usages <constant-qualified-name>
+	// fcg usages <constant-name>
 	usagesCmd := &cobra.Command{
-		Use:     "usages <constant-qualified-name>",
+		Use:     "usages <constant-name>",
 		GroupID: "query",
-		Short:   "Query all references to a static constant (enum/interface/class constant)",
+		Short:   "Query all references to a static constant (enum/interface/class constant), supports fuzzy match",
 		Args:    cobra.ExactArgs(1),
 		RunE:    runUsages,
 	}
@@ -362,7 +362,7 @@ func runCallchain(cmd *cobra.Command, args []string) error {
 
 	// Handle ambiguous matches: interactive selection
 	if node == nil && len(candidates) > 0 {
-		selected := promptSelectFunction(candidates, args[0])
+		selected := promptSelect(candidates, args[0], formatFunctionItem)
 		if selected == nil {
 			return nil
 		}
@@ -449,7 +449,7 @@ func runImpact(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if node == nil && len(candidates) > 0 {
-		selected := promptSelectFunction(candidates, args[0])
+		selected := promptSelect(candidates, args[0], formatFunctionItem)
 		if selected == nil {
 			return nil
 		}
@@ -508,15 +508,14 @@ func runImpact(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
-// promptSelectFunction displays candidates and prompts user to select one.
-// Returns nil if user quits.
-func promptSelectRoute(candidates []model.Node, routePath string) *model.Node {
-	fmt.Printf("Multiple routes match %q:\n\n", routePath)
+// promptSelect displays candidates and prompts user to select one.
+// label is what the user searched for (shown in header).
+// formatItem renders each candidate line (without the [N] prefix).
+// Returns nil if user quits or input is invalid.
+func promptSelect(candidates []model.Node, label string, formatItem func(model.Node) string) *model.Node {
+	fmt.Printf("Multiple matches for %q:\n\n", label)
 	for i, candidate := range candidates {
-		method, _ := candidate.Properties["method"].(string)
-		path, _ := candidate.Properties["path_pattern"].(string)
-		handler, _ := candidate.Properties["handler_method"].(string)
-		fmt.Printf("  [%d] %s %-30s → %s\n", i+1, method, path, handler)
+		fmt.Printf("  [%d] %s\n", i+1, formatItem(candidate))
 	}
 	fmt.Println("  [q] quit")
 	fmt.Print("\nSelect: ")
@@ -537,37 +536,27 @@ func promptSelectRoute(candidates []model.Node, routePath string) *model.Node {
 	return &candidates[index-1]
 }
 
-// promptSelectFunction displays candidates and prompts user to select one.
-// Returns nil if user quits.
-func promptSelectFunction(candidates []model.Node, symbolName string) *model.Node {
-	fmt.Printf("Multiple functions match %q:\n\n", symbolName)
-	for i, candidate := range candidates {
-		qualifiedName, _ := candidate.Properties["qualified_name"].(string)
-		filePath, _ := candidate.Properties["file_path"].(string)
-		params := formatParamsSummary(candidate)
-		if params != "" {
-			fmt.Printf("  [%d] %-40s %-20s %s\n", i+1, qualifiedName, params, filePath)
-		} else {
-			fmt.Printf("  [%d] %-40s %s\n", i+1, qualifiedName, filePath)
-		}
+func formatFunctionItem(node model.Node) string {
+	qualifiedName, _ := node.Properties["qualified_name"].(string)
+	filePath, _ := node.Properties["file_path"].(string)
+	params := formatParamsSummary(node)
+	if params != "" {
+		return fmt.Sprintf("%-40s %-20s %s", qualifiedName, params, filePath)
 	}
-	fmt.Println("  [q] quit")
-	fmt.Print("\nSelect: ")
+	return fmt.Sprintf("%-40s %s", qualifiedName, filePath)
+}
 
-	scanner := bufio.NewScanner(os.Stdin)
-	if !scanner.Scan() {
-		return nil
-	}
-	input := strings.TrimSpace(scanner.Text())
-	if input == "q" || input == "" {
-		return nil
-	}
-	index, err := strconv.Atoi(input)
-	if err != nil || index < 1 || index > len(candidates) {
-		fmt.Println("Invalid selection.")
-		return nil
-	}
-	return &candidates[index-1]
+func formatRouteItem(node model.Node) string {
+	method, _ := node.Properties["method"].(string)
+	pathPattern, _ := node.Properties["path_pattern"].(string)
+	handlerMethod, _ := node.Properties["handler_method"].(string)
+	return fmt.Sprintf("%s %-30s → %s", method, pathPattern, handlerMethod)
+}
+
+func formatVariableItem(node model.Node) string {
+	qualifiedName, _ := node.Properties["qualified_name"].(string)
+	filePath, _ := node.Properties["file_path"].(string)
+	return fmt.Sprintf("%-50s %s", qualifiedName, filePath)
 }
 
 // formatParamsSummary extracts a short param summary from node properties.
@@ -652,7 +641,7 @@ func runTrace(cmd *cobra.Command, args []string) error {
 		// Check if it's a multiple-match error — offer interactive selection
 		candidates := querier.FindMatchingRoutes(ctx, args[0], traceMethod)
 		if len(candidates) > 1 {
-			selected := promptSelectRoute(candidates, args[0])
+			selected := promptSelect(candidates, args[0], formatRouteItem)
 			if selected == nil {
 				return nil
 			}
@@ -755,18 +744,43 @@ func runUsages(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	symbolQualifiedName := args[0]
-	results, _, err := querier.QueryUsages(context.Background(), symbolQualifiedName, usagesLimit, 0)
+	ctx := context.Background()
+	symbol := args[0]
+
+	// Fuzzy search Variable nodes
+	candidates, err := querier.SearchVariables(ctx, symbol)
+	if err != nil {
+		return err
+	}
+	if len(candidates) == 0 {
+		fmt.Printf("No constant found matching: %s\n", symbol)
+		return nil
+	}
+
+	// Handle multiple candidates — interactive selection
+	var selected *model.Node
+	if len(candidates) == 1 {
+		selected = &candidates[0]
+	} else {
+		selected = promptSelect(candidates, symbol, formatVariableItem)
+		if selected == nil {
+			return nil
+		}
+	}
+
+	// Query usages for selected node
+	results, _, err := querier.QueryUsagesByNode(ctx, selected, usagesLimit, 0)
 	if err != nil {
 		return err
 	}
 
+	qualifiedName, _ := selected.Properties["qualified_name"].(string)
 	if len(results) == 0 {
-		fmt.Printf("No usages found for constant: %s\n", symbolQualifiedName)
+		fmt.Printf("No usages found for constant: %s\n", qualifiedName)
 		return nil
 	}
 
-	fmt.Printf("Usages of constant %s:\n\n", symbolQualifiedName)
+	fmt.Printf("Usages of constant %s:\n\n", qualifiedName)
 	for _, usage := range results {
 		functionName, _ := usage.Function.Properties["qualified_name"].(string)
 		if functionName == "" {
