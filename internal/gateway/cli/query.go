@@ -510,6 +510,35 @@ func runImpact(cmd *cobra.Command, args []string) error {
 }
 // promptSelectFunction displays candidates and prompts user to select one.
 // Returns nil if user quits.
+func promptSelectRoute(candidates []model.Node, routePath string) *model.Node {
+	fmt.Printf("Multiple routes match %q:\n\n", routePath)
+	for i, candidate := range candidates {
+		method, _ := candidate.Properties["method"].(string)
+		path, _ := candidate.Properties["path_pattern"].(string)
+		handler, _ := candidate.Properties["handler_method"].(string)
+		fmt.Printf("  [%d] %s %-30s → %s\n", i+1, method, path, handler)
+	}
+	fmt.Println("  [q] quit")
+	fmt.Print("\nSelect: ")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return nil
+	}
+	input := strings.TrimSpace(scanner.Text())
+	if input == "q" || input == "" {
+		return nil
+	}
+	index, err := strconv.Atoi(input)
+	if err != nil || index < 1 || index > len(candidates) {
+		fmt.Println("Invalid selection.")
+		return nil
+	}
+	return &candidates[index-1]
+}
+
+// promptSelectFunction displays candidates and prompts user to select one.
+// Returns nil if user quits.
 func promptSelectFunction(candidates []model.Node, symbolName string) *model.Node {
 	fmt.Printf("Multiple functions match %q:\n\n", symbolName)
 	for i, candidate := range candidates {
@@ -620,7 +649,22 @@ func runTrace(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	chain, err := querier.QueryRouteChain(ctx, args[0], traceMethod, traceDepth)
 	if err != nil {
-		return err
+		// Check if it's a multiple-match error — offer interactive selection
+		candidates := querier.FindMatchingRoutes(ctx, args[0], traceMethod)
+		if len(candidates) > 1 {
+			selected := promptSelectRoute(candidates, args[0])
+			if selected == nil {
+				return nil
+			}
+			selectedPath, _ := selected.Properties["path_pattern"].(string)
+			selectedMethod, _ := selected.Properties["method"].(string)
+			chain, err = querier.QueryRouteChainByNode(ctx, selected, selectedPath, selectedMethod, traceDepth)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
 	}
 
 	subgraph := &model.Subgraph{Nodes: chain.Nodes, Edges: chain.Edges}

@@ -16,54 +16,68 @@ var javaRouteAnnotations = map[string]string{
 }
 
 // ExtractRoutes extracts HTTP route definitions from Spring MVC annotations (@GetMapping, @PostMapping, @RequestMapping, etc.).
-// Currently only supports Spring framework annotations. Framework field is hardcoded to "spring".
-// To support other frameworks (e.g. JAX-RS @Path/@GET), add new route annotation mappings and detect framework dynamically.
+// Supports multiple methods and multiple paths via cartesian product (classRoutes × methods × paths).
 func ExtractRoutes(annotations []model.StructuredAnnotation, classAnnotations []model.StructuredAnnotation, methodName, className, filePath string, startLine int, result *model.ParseResult) {
 	// FeignClient routes are handled by ExtractFeignClient with correct path prefix
 	if HasFeignClient(classAnnotations) {
 		return
 	}
 
-	// Get class-level route prefix from class annotations
-	classRoute := ""
+	// Get class-level route prefixes from class annotations (supports multi-path)
+	classRoutes := []string{""}
 	for _, annotation := range classAnnotations {
 		if annotation.Name == "RequestMapping" {
-			classRoute = annotation.Params["value"]
+			parsed := parseMultiValue(annotation.Params["value"])
+			if len(parsed) > 0 {
+				classRoutes = parsed
+			}
 		}
 	}
 
 	for _, annotation := range annotations {
-		httpMethod, isRoute := javaRouteAnnotations[annotation.Name]
+		defaultMethod, isRoute := javaRouteAnnotations[annotation.Name]
 		if !isRoute {
 			continue
 		}
 
-		// For @RequestMapping, check explicit method param
+		// Determine methods
+		var methods []string
 		if annotation.Name == "RequestMapping" {
 			if methodParam := annotation.Params["method"]; methodParam != "" {
-				if mapped := mapRequestMethod(methodParam); mapped != "" {
-					httpMethod = mapped
+				methods = mapRequestMethods(methodParam)
+			}
+			if len(methods) == 0 {
+				methods = []string{defaultMethod}
+			}
+		} else {
+			methods = []string{defaultMethod}
+		}
+
+		// Determine paths
+		paths := parseMultiValue(annotation.Params["value"])
+
+		// Cartesian product: classRoutes × methods × paths
+		for _, classPrefix := range classRoutes {
+			for _, httpMethod := range methods {
+				for _, pathPattern := range paths {
+					fullPath := classPrefix + pathPattern
+					result.Routes = append(result.Routes, model.RawRoute{
+						Method:      httpMethod,
+						PathPattern: fullPath,
+						Handlers:    []string{className + "." + methodName},
+						Framework:   "spring",
+						FilePath:    filePath,
+						Line:        startLine,
+					})
 				}
 			}
 		}
-
-		pathPattern := annotation.Params["value"]
-		if classRoute != "" {
-			pathPattern = classRoute + pathPattern
-		}
-
-		result.Routes = append(result.Routes, model.RawRoute{
-			Method:      httpMethod,
-			PathPattern: pathPattern,
-			Handlers: []string{className + "." + methodName},
-			Framework:   "spring",
-			FilePath:    filePath,
-			Line:        startLine,
-		})
 	}
 }
 
-func mapRequestMethod(methodParam string) string {
+// mapRequestMethods parses a method annotation value that may contain multiple methods
+// (e.g. "{RequestMethod.GET, RequestMethod.POST}") and returns the corresponding HTTP methods.
+func mapRequestMethods(methodParam string) []string {
 	methodPatterns := map[string]string{
 		"RequestMethod.GET":    "GET",
 		"RequestMethod.POST":   "POST",
@@ -71,12 +85,41 @@ func mapRequestMethod(methodParam string) string {
 		"RequestMethod.DELETE": "DELETE",
 		"RequestMethod.PATCH":  "PATCH",
 	}
-	for pattern, method := range methodPatterns {
-		if strings.Contains(methodParam, pattern) {
-			return method
+	var results []string
+	parts := parseMultiValue(methodParam)
+	for _, part := range parts {
+		for pattern, method := range methodPatterns {
+			if strings.Contains(part, pattern) {
+				results = append(results, method)
+				break
+			}
 		}
 	}
-	return ""
+	return results
+}
+
+// parseMultiValue splits annotation array values like {"/a", "/b"} into individual strings.
+// Single values like "/a" return a one-element slice. Empty input returns [""].
+func parseMultiValue(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []string{""}
+	}
+	// Remove outer braces if present: {"/a", "/b"} → "/a", "/b"
+	if strings.HasPrefix(raw, "{") && strings.HasSuffix(raw, "}") {
+		raw = raw[1 : len(raw)-1]
+	}
+	parts := strings.Split(raw, ",")
+	var results []string
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		trimmed = strings.Trim(trimmed, "\"")
+		results = append(results, trimmed)
+	}
+	if len(results) == 0 {
+		return []string{""}
+	}
+	return results
 }
 
 func extractAnnotationValue(annotation string) string {

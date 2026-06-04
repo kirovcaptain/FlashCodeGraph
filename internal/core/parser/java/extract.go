@@ -1438,6 +1438,9 @@ func parseAnnotationArguments(argList *tree_sitter.Node, content []byte) map[str
 		case "identifier", "field_access", "scoped_identifier":
 			// Single enum/constant value: (RequestMethod.POST)
 			params["value"] = child.Utf8Text(content)
+		case "element_value_array_initializer", "array_initializer":
+			// Array value without key: ({"/a", "/b"})
+			params["value"] = child.Utf8Text(content)
 		}
 	}
 	return params

@@ -650,14 +650,15 @@ func (indexer *Indexer) writeRouteNodes(ctx context.Context, parseResults []mode
 	var edges []model.Edge
 	for _, parseResult := range parseResults {
 		for _, route := range parseResult.Routes {
-			routeID := fmt.Sprintf("route:%s:%s:%s", route.Method, route.PathPattern, route.FilePath)
-
 			handlerMethod := ""
 			var middlewareNames []string
 			if len(route.Handlers) > 0 {
 				handlerMethod = route.Handlers[len(route.Handlers)-1]
 				middlewareNames = route.Handlers[:len(route.Handlers)-1]
 			}
+
+			routeID := fmt.Sprintf("route:%s:%s:%s:%s", route.Method, route.PathPattern, handlerMethod, route.FilePath)
+
 			middlewaresValue := ""
 			if len(middlewareNames) > 0 {
 				middlewaresValue = strings.Join(middlewareNames, ",")

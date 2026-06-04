@@ -234,6 +234,101 @@ public class ApiController {
 	t.Log("✅ Java @RequestMapping with explicit method works")
 }
 
+func TestExtractJavaRoutes_MultiMethod(t *testing.T) {
+	parser := New("")
+	defer parser.Close()
+
+	code := []byte(`package com.example;
+
+@RestController
+@RequestMapping("/api")
+public class ApiController {
+    @RequestMapping(method = {RequestMethod.GET, RequestMethod.POST}, value = "/users")
+    public Object handleUsers() {}
+}
+`)
+	file := scanner.ScannedFile{Path: "/test/ApiController.java", RelPath: "ApiController.java", Language: "java"}
+	result, err := parser.ParseFile(context.Background(), file, code)
+	if err != nil {
+		t.Fatal("parse:", err)
+	}
+
+	if len(result.Routes) != 2 {
+		t.Fatalf("expected 2 routes for multi-method, got %d", len(result.Routes))
+	}
+
+	methodSet := map[string]bool{}
+	for _, route := range result.Routes {
+		methodSet[route.Method] = true
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[0])
+	}
+	if !methodSet["GET"] || !methodSet["POST"] {
+		t.Fatal("expected both GET and POST methods")
+	}
+	t.Log("✅ Java @RequestMapping multi-method works")
+}
+
+func TestExtractJavaRoutes_MultiPath(t *testing.T) {
+	parser := New("")
+	defer parser.Close()
+
+	code := []byte(`package com.example;
+
+@RestController
+public class ApiController {
+    @RequestMapping(value = {"/api/foo", "/api/bar"}, method = RequestMethod.GET)
+    public Object handle() {}
+}
+`)
+	file := scanner.ScannedFile{Path: "/test/ApiController.java", RelPath: "ApiController.java", Language: "java"}
+	result, err := parser.ParseFile(context.Background(), file, code)
+	if err != nil {
+		t.Fatal("parse:", err)
+	}
+
+	if len(result.Routes) != 2 {
+		t.Fatalf("expected 2 routes for multi-path, got %d", len(result.Routes))
+	}
+
+	pathSet := map[string]bool{}
+	for _, route := range result.Routes {
+		pathSet[route.PathPattern] = true
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[0])
+	}
+	if !pathSet["/api/foo"] || !pathSet["/api/bar"] {
+		t.Fatal("expected both /api/foo and /api/bar paths")
+	}
+	t.Log("✅ Java @RequestMapping multi-path works")
+}
+
+func TestExtractJavaRoutes_MultiMethodMultiPath(t *testing.T) {
+	parser := New("")
+	defer parser.Close()
+
+	code := []byte(`package com.example;
+
+@RestController
+public class ApiController {
+    @RequestMapping(method = {RequestMethod.GET, RequestMethod.POST}, value = {"/api/foo", "/api/bar"})
+    public Object handle() {}
+}
+`)
+	file := scanner.ScannedFile{Path: "/test/ApiController.java", RelPath: "ApiController.java", Language: "java"}
+	result, err := parser.ParseFile(context.Background(), file, code)
+	if err != nil {
+		t.Fatal("parse:", err)
+	}
+
+	if len(result.Routes) != 4 {
+		t.Fatalf("expected 4 routes (2 methods × 2 paths), got %d", len(result.Routes))
+	}
+
+	for _, route := range result.Routes {
+		t.Logf("  %s %s → %s", route.Method, route.PathPattern, route.Handlers[0])
+	}
+	t.Log("✅ Java @RequestMapping multi-method × multi-path cartesian product works")
+}
+
 func TestExtractJavaRoutes_ClassPrefixCombination(t *testing.T) {
 	parser := New("")
 	defer parser.Close()

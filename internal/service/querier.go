@@ -1287,8 +1287,17 @@ func (querier *Querier) findRouteNode(ctx context.Context, routePath string, met
 		return nil, err
 	}
 	exactMatches = filterByRouteType(exactMatches, isHTTPRoute)
-	if node := filterByMethod(exactMatches, method); node != nil {
-		return node, nil
+	exactFiltered := filterAllByMethod(exactMatches, method)
+	if len(exactFiltered) == 1 {
+		return &exactFiltered[0], nil
+	}
+	if len(exactFiltered) > 1 {
+		var candidates []string
+		for _, routeNode := range exactFiltered {
+			handlerName := propString(routeNode.Properties, "handler_method")
+			candidates = append(candidates, fmt.Sprintf("  %s %s → %s", propString(routeNode.Properties, "method"), propString(routeNode.Properties, "path_pattern"), handlerName))
+		}
+		return nil, fmt.Errorf("multiple routes match \"%s\":\n%s\nPlease specify the handler name", routePath, strings.Join(candidates, "\n"))
 	}
 
 	// 2. Contains fallback
@@ -1303,13 +1312,86 @@ func (querier *Querier) findRouteNode(ctx context.Context, routePath string, met
 	}
 	if len(filtered) > 1 {
 		var candidates []string
-		for _, r := range filtered {
-			candidates = append(candidates, fmt.Sprintf("  %s %s", propString(r.Properties, "method"), propString(r.Properties, "path_pattern")))
+		for _, routeNode := range filtered {
+			handlerName := propString(routeNode.Properties, "handler_method")
+			candidates = append(candidates, fmt.Sprintf("  %s %s → %s", propString(routeNode.Properties, "method"), propString(routeNode.Properties, "path_pattern"), handlerName))
 		}
 		return nil, fmt.Errorf("multiple routes match \"%s\":\n%s\nPlease specify the full route path", routePath, strings.Join(candidates, "\n"))
 	}
 
 	return nil, fmt.Errorf("route not found: %s %s", method, routePath)
+}
+
+// FindMatchingRoutes returns all route nodes matching a path and method (for interactive selection).
+func (querier *Querier) FindMatchingRoutes(ctx context.Context, routePath string, method string) []model.Node {
+	isHTTPRoute := strings.HasPrefix(routePath, "/")
+
+	exactMatches, err := querier.graphStore.QueryNodesByProperty(ctx, constants.KindRoute, "path_pattern", routePath, storage.MatchExact, 0)
+	if err != nil {
+		return nil
+	}
+	exactMatches = filterByRouteType(exactMatches, isHTTPRoute)
+	filtered := filterAllByMethod(exactMatches, method)
+	if len(filtered) > 1 {
+		return filtered
+	}
+
+	containsMatches, _ := querier.graphStore.QueryNodesByProperty(ctx, constants.KindRoute, "path_pattern", routePath, storage.MatchContains, 0)
+	containsMatches = filterByRouteType(containsMatches, isHTTPRoute)
+	return filterAllByMethod(containsMatches, method)
+}
+
+// QueryRouteChainByNode traces the call chain from a specific route node (used after interactive selection).
+func (querier *Querier) QueryRouteChainByNode(ctx context.Context, routeNode *model.Node, routePath, method string, maxDepth int) (*model.RouteChain, error) {
+	if maxDepth <= 0 {
+		maxDepth = 10
+	}
+
+	result := &model.RouteChain{
+		Route:  routePath,
+		Method: method,
+	}
+
+	handles, err := querier.graphStore.QueryEdges(ctx, routeNode.ID, constants.KindRoute, model.RelHandles, model.Incoming)
+	if err != nil || len(handles) == 0 {
+		return result, nil
+	}
+
+	sort.Slice(handles, func(i, j int) bool {
+		return propInt(handles[i].Properties, "handler_order") < propInt(handles[j].Properties, "handler_order")
+	})
+
+	handlerID := handles[len(handles)-1].SourceID
+
+	for _, handle := range handles[:len(handles)-1] {
+		middlewareNode, _ := querier.graphStore.QueryNodeByID(ctx, handle.SourceID)
+		if middlewareNode != nil {
+			result.Middlewares = append(result.Middlewares, *middlewareNode)
+		}
+	}
+
+	subgraph, _ := querier.graphStore.TraverseCallChain(ctx, handlerID, maxDepth, model.Outgoing, 0)
+
+	handlerInSubgraph := false
+	for _, node := range subgraph.Nodes {
+		if node.ID == handlerID {
+			handlerInSubgraph = true
+			break
+		}
+	}
+	if !handlerInSubgraph {
+		handlerNode, _ := querier.graphStore.QueryNodeByID(ctx, handlerID)
+		if handlerNode != nil {
+			subgraph.Nodes = append([]model.Node{*handlerNode}, subgraph.Nodes...)
+		}
+	}
+
+	result.Nodes = subgraph.Nodes
+	result.Edges = subgraph.Edges
+
+	queries, _ := querier.CollectQueries(ctx, subgraph.Nodes)
+	result.Queries = queries
+	return result, nil
 }
 
 // filterByRouteType filters routes by HTTP vs CLI/MCP based on method field.

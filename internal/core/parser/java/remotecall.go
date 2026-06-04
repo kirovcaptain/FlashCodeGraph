@@ -74,40 +74,50 @@ func ExtractFeignClient(classAnnotations []model.StructuredAnnotation, node *tre
 			if !isRoute {
 				continue
 			}
-			// @RequestMapping(method=RequestMethod.POST) → extract actual method
+
+			// Determine methods
+			var methods []string
 			if annotation.Name == "RequestMapping" {
 				if methodParam := annotation.Params["method"]; methodParam != "" {
-					methodParam = strings.TrimPrefix(methodParam, "RequestMethod.")
-					methodParam = strings.ToUpper(methodParam)
-					if methodParam != "" {
-						httpMethod = methodParam
-					}
+					methods = mapRequestMethods(methodParam)
 				}
+				if len(methods) == 0 {
+					methods = []string{httpMethod}
+				}
+			} else {
+				methods = []string{httpMethod}
 			}
 
-			methodPath := annotation.Params["value"]
-			fullPath := feignPath + methodPath
+			// Determine paths
+			paths := parseMultiValue(annotation.Params["value"])
 
-			result.Routes = append(result.Routes, model.RawRoute{
-				Method:      httpMethod,
-				PathPattern: fullPath,
-				Handlers: []string{className + "." + methodName},
-				Framework:   "feign",
-				FilePath:    filePath,
-				Line:        int(child.StartPosition().Row) + 1,
-			})
+			// Cartesian product: methods × paths
+			for _, resolvedMethod := range methods {
+				for _, methodPath := range paths {
+					fullPath := feignPath + methodPath
 
-			result.RemoteCalls = append(result.RemoteCalls, model.RawRemoteCall{
-				Method:            httpMethod,
-				TargetURL:         fullPath,
-				TargetService:     serviceName,
-				ServiceResolvedBy: resolvedBy,
-				ServiceConfidence: confidence,
-				Protocol:          "http",
-				CallerName:        className + "." + methodName,
-				FilePath:          filePath,
-				Line:              int(child.StartPosition().Row) + 1,
-			})
+					result.Routes = append(result.Routes, model.RawRoute{
+						Method:      resolvedMethod,
+						PathPattern: fullPath,
+						Handlers:    []string{className + "." + methodName},
+						Framework:   "feign",
+						FilePath:    filePath,
+						Line:        int(child.StartPosition().Row) + 1,
+					})
+
+					result.RemoteCalls = append(result.RemoteCalls, model.RawRemoteCall{
+						Method:            resolvedMethod,
+						TargetURL:         fullPath,
+						TargetService:     serviceName,
+						ServiceResolvedBy: resolvedBy,
+						ServiceConfidence: confidence,
+						Protocol:          "http",
+						CallerName:        className + "." + methodName,
+						FilePath:          filePath,
+						Line:              int(child.StartPosition().Row) + 1,
+					})
+				}
+			}
 		}
 		return true
 	})

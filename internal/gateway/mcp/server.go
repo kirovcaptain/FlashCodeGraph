@@ -246,6 +246,7 @@ func (srv *Server) registerTools() {
 		mcp.WithDescription("Trace an HTTP route through its full processing chain — from controller to service to repository. Use this to understand API request handling flow."),
 		mcp.WithString("route", mcp.Required(), mcp.Description("Route path (e.g. /api/users)")),
 		mcp.WithString("method", mcp.Description("HTTP method filter (GET/POST/etc)")),
+		mcp.WithString("handler", mcp.Description("Handler method name to disambiguate when multiple handlers share the same route (e.g. translateJson)")),
 		mcp.WithNumber("max_depth", mcp.Description("Max traversal depth (default 10)")),
 		mcp.WithString("mode", mcp.Description("Display mode: 'dry' (default, core + remove log/exception, trim properties), 'core' (prune DISPATCHES/accessors/externals), 'compact' (dry + merge duplicate edges), 'full' (show all)")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path to the project")),
@@ -935,6 +936,7 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 		return mcp.NewToolResultError("route is required"), nil
 	}
 	method, _ := request.GetArguments()["method"].(string)
+	handler, _ := request.GetArguments()["handler"].(string)
 	maxDepth := intArg(request, "max_depth", 10)
 	mode := stringArg(request, "mode", "dry")
 	path, _ := request.GetArguments()["path"].(string)
@@ -947,8 +949,58 @@ func (srv *Server) handleQueryRouteChain(ctx context.Context, request mcp.CallTo
 	defer store.Close()
 	chain, err := querier.QueryRouteChain(ctx, route, method, maxDepth)
 	if err != nil {
+		// Check if multiple routes match — return candidates for agent to select
+		candidates := querier.FindMatchingRoutes(ctx, route, method)
+		if len(candidates) > 1 {
+			// If handler specified, filter by handler_method
+			if handler != "" {
+				for i := range candidates {
+					handlerMethod, _ := candidates[i].Properties["handler_method"].(string)
+					if handlerMethod == handler || strings.HasSuffix(handlerMethod, "."+handler) {
+						chain, err = querier.QueryRouteChainByNode(ctx, &candidates[i],
+							route, method, maxDepth)
+						if err != nil {
+							return mcp.NewToolResultError(err.Error()), nil
+						}
+						goto resolved
+					}
+				}
+				return mcp.NewToolResultError(fmt.Sprintf("no route with handler %q found", handler)), nil
+			}
+			// No handler specified — return candidate list
+			type routeCandidate struct {
+				Method  string `json:"method"`
+				Path    string `json:"path"`
+				Handler string `json:"handler"`
+			}
+			var candidateList []routeCandidate
+			for _, candidate := range candidates {
+				candidateMethod, _ := candidate.Properties["method"].(string)
+				candidatePath, _ := candidate.Properties["path_pattern"].(string)
+				candidateHandler, _ := candidate.Properties["handler_method"].(string)
+				candidateList = append(candidateList, routeCandidate{
+					Method:  candidateMethod,
+					Path:    candidatePath,
+					Handler: candidateHandler,
+				})
+			}
+			resp := struct {
+				Branch     string           `json:"branch"`
+				Ambiguous  bool             `json:"ambiguous"`
+				Candidates []routeCandidate `json:"candidates"`
+				Hint       string           `json:"hint"`
+			}{
+				Branch:     resolvedBranch,
+				Ambiguous:  true,
+				Candidates: candidateList,
+				Hint:       "Multiple routes match. Retry with 'handler' parameter to select one.",
+			}
+			data, _ := json.Marshal(resp)
+			return mcp.NewToolResultText(string(data)), nil
+		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+resolved:
 
 	// Mode filtering on the subgraph portion (same pipeline as handleQueryCallChain)
 	routeSubgraph := &model.Subgraph{Nodes: chain.Nodes, Edges: chain.Edges}
