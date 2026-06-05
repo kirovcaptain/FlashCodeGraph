@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/storage/branch"
+	"github.com/redis/go-redis/v9"
 )
 
 // allNodeLabels is the ordered list of all node labels, Function first for fast lookup.
@@ -246,7 +246,7 @@ func (store *Store) WriteNodes(ctx context.Context, nodes []model.Node) error {
 }
 
 func (store *Store) CreateNodes(ctx context.Context, nodes []model.Node) error {
-	const batchSize = 200
+	const batchSize = 5000
 	// Group by Kind for UNWIND batch CREATE
 	grouped := make(map[string][]model.Node)
 	for i := range nodes {
@@ -600,6 +600,7 @@ func (store *Store) QueryNodeByQualifiedName(ctx context.Context, qualifiedName 
 	}
 	return nil, nil
 }
+
 // QueryNodesByName returns nodes matching a name.
 func (store *Store) QueryNodesByName(ctx context.Context, name string, opts model.QueryOpts) ([]model.Node, error) {
 
@@ -1248,7 +1249,6 @@ func (store *Store) queryTruncatedNodes(ctx context.Context, boundaryIDs []strin
 	return truncated
 }
 
-
 // BatchUpdateNodeProperties updates properties on multiple nodes using UNWIND.
 func (store *Store) BatchUpdateNodeProperties(ctx context.Context, kind string, updates []storage.PropertyUpdate) error {
 	if len(updates) == 0 {
@@ -1775,8 +1775,6 @@ func parseFullNodeResults(rows []interface{}) []model.Node {
 	}
 	return nodes
 }
-
-
 
 func parseUsesEdgeResults(rows []interface{}) []model.Edge {
 	if len(rows) < 2 {
