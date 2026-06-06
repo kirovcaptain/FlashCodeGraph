@@ -35,6 +35,13 @@ type Resolver struct {
 	chainedReceiverCache map[string]string              // expr:callerName:filePath → resolved type
 	chainedTypeArgs      map[string][]model.TypeArg     // expr → TypeArgs for chained generic resolution
 	importFileMap        map[ImportFileKey]string        // (filePath, symbolName) → resolved target file
+	qualifiedTypeCache   map[qualifiedTypeCacheKey]string // resolveFullQualifiedType lazy cache
+}
+
+// qualifiedTypeCacheKey identifies a unique (typeName, filePath) pair for type resolution caching.
+type qualifiedTypeCacheKey struct {
+	typeName string
+	filePath string
 }
 
 // ImportFileKey identifies an import by its source file and symbol name.
@@ -46,9 +53,10 @@ type ImportFileKey struct {
 // NewResolver creates a Resolver with the given SymbolTable and optional language-specific helpers.
 func NewResolver(symbolTable *SymbolTable, helpers ...map[string]LanguageHelper) *Resolver {
 	r := &Resolver{
-		symbolTable:     symbolTable,
-		langHelpers:     make(map[string]LanguageHelper),
-		chainedTypeArgs: make(map[string][]model.TypeArg),
+		symbolTable:        symbolTable,
+		langHelpers:        make(map[string]LanguageHelper),
+		chainedTypeArgs:    make(map[string][]model.TypeArg),
+		qualifiedTypeCache: make(map[qualifiedTypeCacheKey]string, 256),
 	}
 	if len(helpers) > 0 && helpers[0] != nil {
 		r.langHelpers = helpers[0]
@@ -109,6 +117,7 @@ func (resolver *Resolver) ResolveCalls(calls []model.RawCall, envs map[string]*m
 
 	// Build global bindings index for O(1) field type lookup
 	resolver.globalBindings = make(map[string]string)
+	resolver.qualifiedTypeCache = make(map[qualifiedTypeCacheKey]string, 1024)
 	for _, env := range envs {
 		for key, info := range env.Bindings {
 			resolver.globalBindings[key] = info.TypeName
@@ -357,10 +366,27 @@ func (resolver *Resolver) resolveByReceiverType(
 ) ([]model.ResolvedRelation, *model.UnresolvedHint, bool) {
 
 	// Resolve short type name to fully qualified name before matching and writing declared_type
-	receiverType = resolver.resolveFullQualifiedType(receiverType, envs[call.FilePath])
+	receiverType = resolver.resolveFullQualifiedType(receiverType, envs[call.FilePath], call.FilePath)
 
-	// Filter candidates to those belonging to the receiver's class.
-	matched := filterByOwnerClass(funcCandidates, receiverType)
+	// Strip Go pointer prefix before matching
+	lookupType := strings.TrimPrefix(receiverType, "*")
+
+	// Fast path: FQN receiver → direct index lookup via methodsByClass, fallback to filterByOwnerClass
+	var matched []model.Symbol
+	if strings.Contains(lookupType, ".") {
+		classMethods := resolver.symbolTable.FindMethodsByQualifiedName(lookupType)
+		for _, method := range classMethods {
+			if method.Name == call.CalledName {
+				matched = append(matched, method)
+			}
+		}
+		// methodsByClass miss → fallback to substring match (handles partial FQN like "models.dao")
+		if len(matched) == 0 {
+			matched = filterByOwnerClass(funcCandidates, lookupType)
+		}
+	} else {
+		matched = filterByOwnerClass(funcCandidates, lookupType)
+	}
 
 	if len(matched) == 0 {
 		// No method found in receiverType's class.
@@ -1142,26 +1168,34 @@ func (resolver *Resolver) isProjectClass(typeName string) bool {
 	return sym != nil
 }
 
-// resolveFullQualifiedType resolves a short class name to its fully qualified name
-// using the file's import list and the symbol table for verification.
+// resolveFullQualifiedType resolves a short class name to its fully qualified name.
 // If the name already contains ".", it is returned as-is.
-// Returns the original name if resolution fails.
-func (resolver *Resolver) resolveFullQualifiedType(typeName string, env *model.TypeEnv) string {
+// Uses a lazy cache keyed by (typeName, filePath) to avoid repeated resolution.
+func (resolver *Resolver) resolveFullQualifiedType(typeName string, env *model.TypeEnv, filePath string) string {
 	if env == nil || strings.Contains(typeName, ".") {
 		return typeName
 	}
-	// First: check if typeName exists as a class/interface in SymbolTable directly
-	for _, symbol := range resolver.symbolTable.FindByName(typeName) {
-		if symbol.Kind == constants.KindClass || symbol.Kind == "abstract_class" ||
-			symbol.Kind == constants.KindInterface || symbol.ClassType == "struct" {
-			return symbol.QualifiedName
-		}
+	cacheKey := qualifiedTypeCacheKey{typeName, filePath}
+	if cached, ok := resolver.qualifiedTypeCache[cacheKey]; ok {
+		return cached
 	}
-	for _, imp := range env.Imports {
-		if imp.SymbolName == typeName {
+	result := resolver.resolveFullQualifiedTypeUncached(typeName, env, filePath)
+	resolver.qualifiedTypeCache[cacheKey] = result
+	return result
+}
+
+// resolveFullQualifiedTypeUncached resolves a short class name to its fully qualified name.
+// Three-layer strategy:
+//  1. Import-based: use import info to filter FindByName results (most precise)
+//  2. Same-package priority: prefer class in caller's package
+//  3. Global fallback: take first class/interface found
+func (resolver *Resolver) resolveFullQualifiedTypeUncached(typeName string, env *model.TypeEnv, filePath string) string {
+	// Strategy 1: Import match (precise import or wildcard)
+	for _, importEntry := range env.Imports {
+		if importEntry.SymbolName == typeName {
 			// Check reExportIndex: typeName might be a re-exported alias (e.g. MyComp → DefaultComponent)
 			if resolver.importFileMap != nil {
-				if targetFile, exists := resolver.importFileMap[ImportFileKey{FilePath: imp.FilePath, SymbolName: typeName}]; exists {
+				if targetFile, exists := resolver.importFileMap[ImportFileKey{FilePath: importEntry.FilePath, SymbolName: typeName}]; exists {
 					reExportKey := util.DerivePackage(targetFile) + "." + typeName
 					if targetID, found := resolver.symbolTable.GetReExport(reExportKey); found {
 						if symbol := resolver.symbolTable.FindByID(targetID); symbol != nil {
@@ -1170,18 +1204,67 @@ func (resolver *Resolver) resolveFullQualifiedType(typeName string, env *model.T
 					}
 				}
 			}
-			return imp.ModulePath
+			// Use import to filter FindByName results — pick the one matching this import
+			candidates := resolver.symbolTable.FindByName(typeName)
+			for _, symbol := range candidates {
+				if isClassLike(symbol) && isMatchingImport(symbol.QualifiedName, importEntry.ModulePath) {
+					return symbol.QualifiedName
+				}
+			}
+			// No class in SymbolTable at all → external type, return ModulePath
+			// Class exists but isMatchingImport failed → relative import (TS/Python), fall through
+			hasClassCandidate := false
+			for _, symbol := range candidates {
+				if isClassLike(symbol) {
+					hasClassCandidate = true
+					break
+				}
+			}
+			if !hasClassCandidate {
+				return importEntry.ModulePath
+			}
+			break
 		}
-		// Wildcard import: try ModulePath + "." + typeName and verify in symbolTable
-		candidateQualifiedName := imp.ModulePath + "." + typeName
-		for _, symbol := range resolver.symbolTable.FindByQualifiedName(candidateQualifiedName) {
-			if symbol.Kind == constants.KindClass || symbol.Kind == "abstract_class" ||
-				symbol.Kind == constants.KindInterface || symbol.ClassType == "struct" {
-				return candidateQualifiedName
+		if importEntry.IsWildcard {
+			// Wildcard import: verify ModulePath + "." + typeName exists
+			candidateQualifiedName := importEntry.ModulePath + "." + typeName
+			for _, symbol := range resolver.symbolTable.FindByQualifiedName(candidateQualifiedName) {
+				if isClassLike(symbol) {
+					return candidateQualifiedName
+				}
 			}
 		}
 	}
+
+	// Strategy 2: Same-package priority (Java same-package class, Go same-package struct)
+	callerPackage := util.DerivePackage(filePath)
+	for _, symbol := range resolver.symbolTable.FindByName(typeName) {
+		if isClassLike(symbol) && strings.HasPrefix(symbol.QualifiedName, callerPackage+".") {
+			return symbol.QualifiedName
+		}
+	}
+
+	// Strategy 3: Global fallback (Go with no SymbolName, same-package miss, TS/Python break)
+	for _, symbol := range resolver.symbolTable.FindByName(typeName) {
+		if isClassLike(symbol) {
+			return symbol.QualifiedName
+		}
+	}
+
 	return typeName
+}
+
+// isClassLike returns true if the symbol represents a class, interface, or struct.
+func isClassLike(symbol model.Symbol) bool {
+	return symbol.Kind == constants.KindClass || symbol.Kind == "abstract_class" ||
+		symbol.Kind == constants.KindInterface || symbol.ClassType == "struct"
+}
+
+// isMatchingImport checks if a symbol's qualified name corresponds to the given import module path.
+// Java: QN == ModulePath (e.g. "com.example.UserService" == "com.example.UserService")
+// Python: QN starts with ModulePath + "." (e.g. "models.dao.UserDao" starts with "models.dao.")
+func isMatchingImport(qualifiedName, modulePath string) bool {
+	return qualifiedName == modulePath || strings.HasPrefix(qualifiedName, modulePath+".")
 }
 
 // findClassSymbol returns the class/interface Symbol for a type name, or nil if not found.

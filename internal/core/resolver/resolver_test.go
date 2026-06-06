@@ -2055,7 +2055,7 @@ func TestResolveFullQualifiedType_ExplicitImport(t *testing.T) {
 			{ModulePath: "com.example.dao.CoinFlowDao", SymbolName: "CoinFlowDao"},
 		},
 	}
-	result := resolver.resolveFullQualifiedType("CoinFlowDao", env)
+	result := resolver.resolveFullQualifiedType("CoinFlowDao", env, "test.java")
 	if result != "com.example.dao.CoinFlowDao" {
 		t.Fatalf("expected 'com.example.dao.CoinFlowDao', got %q", result)
 	}
@@ -2074,7 +2074,7 @@ func TestResolveFullQualifiedType_WildcardImport(t *testing.T) {
 			{ModulePath: "com.example.dao", SymbolName: "dao"},
 		},
 	}
-	result := resolver.resolveFullQualifiedType("CoinFlowDao", env)
+	result := resolver.resolveFullQualifiedType("CoinFlowDao", env, "test.java")
 	if result != "com.example.dao.CoinFlowDao" {
 		t.Fatalf("expected 'com.example.dao.CoinFlowDao', got %q", result)
 	}
@@ -2084,7 +2084,7 @@ func TestResolveFullQualifiedType_WildcardImport(t *testing.T) {
 func TestResolveFullQualifiedType_AlreadyQualified(t *testing.T) {
 	table := NewSymbolTable()
 	resolver := newTestResolver(table)
-	result := resolver.resolveFullQualifiedType("com.example.dao.CoinFlowDao", nil)
+	result := resolver.resolveFullQualifiedType("com.example.dao.CoinFlowDao", nil, "")
 	if result != "com.example.dao.CoinFlowDao" {
 		t.Fatalf("expected unchanged, got %q", result)
 	}
@@ -2094,7 +2094,7 @@ func TestResolveFullQualifiedType_AlreadyQualified(t *testing.T) {
 func TestResolveFullQualifiedType_NilEnv(t *testing.T) {
 	table := NewSymbolTable()
 	resolver := newTestResolver(table)
-	result := resolver.resolveFullQualifiedType("CoinFlowDao", nil)
+	result := resolver.resolveFullQualifiedType("CoinFlowDao", nil, "")
 	if result != "CoinFlowDao" {
 		t.Fatalf("expected original name, got %q", result)
 	}
@@ -2113,7 +2113,7 @@ func TestResolveFullQualifiedType_MultipleWildcardImports(t *testing.T) {
 			{ModulePath: "com.example.dao", SymbolName: "dao"},
 		},
 	}
-	result := resolver.resolveFullQualifiedType("CoinFlowDao", env)
+	result := resolver.resolveFullQualifiedType("CoinFlowDao", env, "test.java")
 	if result != "com.example.dao.CoinFlowDao" {
 		t.Fatalf("expected 'com.example.dao.CoinFlowDao', got %q", result)
 	}

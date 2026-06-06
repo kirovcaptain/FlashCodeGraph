@@ -84,10 +84,14 @@ func extractPackageName(node *tree_sitter.Node, content []byte) string {
 // extractJavaImport extracts an import declaration.
 func extractImport(node *tree_sitter.Node, content []byte, filePath string, result *model.ParseResult) {
 	importPath := ""
+	isWildcard := false
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "scoped_identifier" || child.Kind() == "identifier" {
 			importPath = child.Utf8Text(content)
+		}
+		if child.Kind() == "asterisk" {
+			isWildcard = true
 		}
 	}
 	if importPath == "" {
@@ -103,6 +107,7 @@ func extractImport(node *tree_sitter.Node, content []byte, filePath string, resu
 		SymbolName: symbolName,
 		FilePath:   filePath,
 		Line:       int(node.StartPosition().Row) + 1,
+		IsWildcard: isWildcard,
 	})
 }
 
