@@ -302,20 +302,6 @@ func (resolver *Resolver) resolveCallWithReceiver(
 	if langHelper != nil && langHelper.IsExternalPackage(call.ReceiverExpr) {
 		return nil, nil, false
 	}
-	// Early exit: receiver's inferred type belongs to an external package.
-	if langHelper != nil {
-		if env := envs[call.FilePath]; env != nil {
-			receiverType := typeinfer.LookupInEnv(env, call.CallerName, call.ReceiverExpr)
-			if receiverType != "" {
-				if dotIndex := strings.Index(receiverType, "."); dotIndex > 0 {
-					typePrefix := receiverType[:dotIndex]
-					if langHelper.IsExternalPackage(typePrefix) {
-						return nil, nil, false
-					}
-				}
-			}
-		}
-	}
 
 	// Strategy 1: super.method() — delegate to language helper for parent class resolution.
 	if relations, handled := langHelper.ResolveSuperCall(call, funcCandidates, resolver.heritage, envs, callerID); handled {
@@ -342,6 +328,14 @@ func (resolver *Resolver) resolveCallWithReceiver(
 	// Strategy 3: Lookup receiver type from TypeEnv and match against candidates.
 	receiverType := resolver.lookupReceiverType(call, envs, langHelper)
 	if receiverType != "" {
+		// External package check: if inferred type belongs to an external package, skip resolution.
+		// Reuses the already-inferred receiverType — no redundant LookupInEnv call.
+		if dotIndex := strings.Index(receiverType, "."); dotIndex > 0 {
+			typePrefix := receiverType[:dotIndex]
+			if langHelper.IsExternalPackage(typePrefix) {
+				return nil, nil, false
+			}
+		}
 		if relations, hint, done := resolver.resolveByReceiverType(call, envs, funcCandidates, callerID, langHelper, receiverType); done {
 			return relations, hint, false
 		}
