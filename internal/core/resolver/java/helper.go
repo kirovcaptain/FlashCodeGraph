@@ -13,11 +13,12 @@ type Helper struct {
 	symbolTable     *resolver.SymbolTable
 	heritage        []model.RawHeritage
 	externalMethods *ExternalMethodManager
+	packageCache    map[string]string // filePath → package name cache
 }
 
 // NewHelper creates a Java language helper.
 func NewHelper(symbolTable *resolver.SymbolTable, externalMethods *ExternalMethodManager) *Helper {
-	return &Helper{symbolTable: symbolTable, externalMethods: externalMethods}
+	return &Helper{symbolTable: symbolTable, externalMethods: externalMethods, packageCache: make(map[string]string)}
 }
 
 // SetHeritage implements resolver.HeritageAware.
@@ -250,14 +251,20 @@ func (javaHelper *Helper) LookupClassTypeParams(typeName string) []string {
 func (javaHelper *Helper) IsExternalPackage(_ string) bool { return false }
 
 func (javaHelper *Helper) extractPackage(filePath string) string {
-	for _, sym := range javaHelper.symbolTable.FindByFile(filePath) {
-		if sym.Kind != constants.KindClass && sym.Kind != constants.KindInterface && sym.Kind != "abstract_class" {
+	if cached, ok := javaHelper.packageCache[filePath]; ok {
+		return cached
+	}
+	for _, symbol := range javaHelper.symbolTable.FindByFile(filePath) {
+		if symbol.Kind != constants.KindClass && symbol.Kind != constants.KindInterface && symbol.Kind != "abstract_class" {
 			continue
 		}
-		if idx := strings.LastIndex(sym.QualifiedName, "."+sym.Name); idx > 0 {
-			return sym.QualifiedName[:idx]
+		if separatorIndex := strings.LastIndex(symbol.QualifiedName, "."+symbol.Name); separatorIndex > 0 {
+			packageName := symbol.QualifiedName[:separatorIndex]
+			javaHelper.packageCache[filePath] = packageName
+			return packageName
 		}
 	}
+	javaHelper.packageCache[filePath] = ""
 	return ""
 }
 

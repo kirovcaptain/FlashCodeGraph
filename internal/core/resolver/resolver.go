@@ -2,6 +2,8 @@ package resolver
 
 
 import (
+	"os"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 
@@ -112,8 +114,18 @@ func (resolver *Resolver) SetHeritage(heritage []model.RawHeritage) {
 
 // ResolveCalls resolves raw function calls into CALLS relationships with confidence.
 func (resolver *Resolver) ResolveCalls(calls []model.RawCall, envs map[string]*model.TypeEnv) ([]model.ResolvedRelation, []model.UnresolvedHint) {
-	var relations []model.ResolvedRelation
+	relations := make([]model.ResolvedRelation, 0, len(calls))
 	var hints []model.UnresolvedHint
+
+	// CPU profiling for performance analysis
+	profileFile, _ := os.Create("/tmp/resolve_cpu.prof")
+	if profileFile != nil {
+		pprof.StartCPUProfile(profileFile)
+		defer func() {
+			pprof.StopCPUProfile()
+			profileFile.Close()
+		}()
+	}
 
 	// Build global bindings index for O(1) field type lookup
 	resolver.globalBindings = make(map[string]string)
@@ -175,7 +187,7 @@ func (resolver *Resolver) resolveCall(call model.RawCall, envs map[string]*model
 	candidates := resolver.symbolTable.FindByName(call.CalledName)
 
 	// Step 2: Filter to functions and classes only (exclude variables, interfaces, etc.)
-	var funcCandidates []model.Symbol
+	funcCandidates := make([]model.Symbol, 0, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.Kind == constants.KindFunction || candidate.Kind == constants.KindClass {
 			funcCandidates = append(funcCandidates, candidate)
@@ -1410,10 +1422,11 @@ func (resolver *Resolver) ResolveImports(imports []model.RawImport, allFiles []s
 func filterByOwnerClass(candidates []model.Symbol, className string) []model.Symbol {
 	className = strings.TrimPrefix(className, "*")
 	target := "." + className + "."
+	prefix := className + "."
 	var matched []model.Symbol
 	for _, candidate := range candidates {
-		qn := "." + candidate.QualifiedName
-		if strings.Contains(qn, target) {
+		if strings.Contains(candidate.QualifiedName, target) ||
+			strings.HasPrefix(candidate.QualifiedName, prefix) {
 			matched = append(matched, candidate)
 		}
 	}
