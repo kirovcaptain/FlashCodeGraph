@@ -99,6 +99,7 @@ func (scanner *Scanner) DetectProject() (*ProjectInfo, error) {
 		{"settings.gradle.kts", "gradle"},
 		{"package.json", "npm"},
 		{"go.mod", "go"},
+		{"go.work", "go"},
 		{"pyproject.toml", "python"},
 		{"setup.py", "python"},
 		{"requirements.txt", "python"},

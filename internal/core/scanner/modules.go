@@ -153,13 +153,13 @@ func (scanner *Scanner) detectNpmWorkspaces(root string, info *ProjectInfo) {
 	}
 }
 
-// detectGoModules detects Go workspace modules (go.work).
+// detectGoModules detects Go workspace modules from go.work, or falls back to scanning subdirectories for go.mod.
 func (scanner *Scanner) detectGoModules(root string, info *ProjectInfo) {
-	workPath := filepath.Join(root, "go.work")
-	data, err := os.ReadFile(workPath)
+	workFilePath := filepath.Join(root, "go.work")
+	data, err := os.ReadFile(workFilePath)
 	if err != nil {
-		// Single module project
-		info.SourceDirs["default"] = "."
+		// No go.work — fallback to scanning subdirectories for multiple go.mod files
+		scanner.detectGoModulesByScanning(root, info)
 		return
 	}
 
@@ -175,19 +175,59 @@ func (scanner *Scanner) detectGoModules(root string, info *ProjectInfo) {
 			inUseBlock = false
 			continue
 		}
+		// Block form: lines inside use ( ... )
 		if inUseBlock && line != "" {
 			modulePath := strings.Trim(line, " \t\"")
-			if modulePath != "" && modulePath != "." {
-				info.SubModules = append(info.SubModules, SubModule{
-					Name:    filepath.Base(modulePath),
-					RootDir: filepath.Join(root, modulePath),
-					SrcDir:  modulePath,
-				})
-				info.SourceDirs[filepath.Base(modulePath)] = modulePath
-			}
+			scanner.addGoSubModule(root, modulePath, info)
+			continue
+		}
+		// Single-line form: use ./service-a
+		if strings.HasPrefix(line, "use ") {
+			modulePath := strings.TrimSpace(strings.TrimPrefix(line, "use"))
+			modulePath = strings.Trim(modulePath, "\"")
+			scanner.addGoSubModule(root, modulePath, info)
 		}
 	}
 
+	if len(info.SubModules) == 0 {
+		info.SourceDirs["default"] = "."
+	}
+}
+
+// addGoSubModule registers a Go sub-module path into ProjectInfo.
+func (scanner *Scanner) addGoSubModule(root, modulePath string, info *ProjectInfo) {
+	if modulePath == "" || modulePath == "." {
+		return
+	}
+	info.SubModules = append(info.SubModules, SubModule{
+		Name:    filepath.Base(modulePath),
+		RootDir: filepath.Join(root, modulePath),
+		SrcDir:  modulePath,
+	})
+	info.SourceDirs[filepath.Base(modulePath)] = modulePath
+}
+
+// detectGoModulesByScanning scans immediate subdirectories for go.mod files when no go.work exists.
+func (scanner *Scanner) detectGoModulesByScanning(root string, info *ProjectInfo) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		info.SourceDirs["default"] = "."
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		goModPath := filepath.Join(root, entry.Name(), "go.mod")
+		if _, err := os.Stat(goModPath); err == nil {
+			info.SubModules = append(info.SubModules, SubModule{
+				Name:    entry.Name(),
+				RootDir: filepath.Join(root, entry.Name()),
+				SrcDir:  entry.Name(),
+			})
+			info.SourceDirs[entry.Name()] = entry.Name()
+		}
+	}
 	if len(info.SubModules) == 0 {
 		info.SourceDirs["default"] = "."
 	}
