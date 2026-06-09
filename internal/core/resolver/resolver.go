@@ -2,8 +2,6 @@ package resolver
 
 
 import (
-	"os"
-	"runtime/pprof"
 	"strconv"
 	"strings"
 
@@ -116,16 +114,6 @@ func (resolver *Resolver) SetHeritage(heritage []model.RawHeritage) {
 func (resolver *Resolver) ResolveCalls(calls []model.RawCall, envs map[string]*model.TypeEnv) ([]model.ResolvedRelation, []model.UnresolvedHint) {
 	relations := make([]model.ResolvedRelation, 0, len(calls))
 	var hints []model.UnresolvedHint
-
-	// CPU profiling for performance analysis
-	profileFile, _ := os.Create("/tmp/resolve_cpu.prof")
-	if profileFile != nil {
-		pprof.StartCPUProfile(profileFile)
-		defer func() {
-			pprof.StopCPUProfile()
-			profileFile.Close()
-		}()
-	}
 
 	// Build global bindings index for O(1) field type lookup
 	resolver.globalBindings = make(map[string]string)
