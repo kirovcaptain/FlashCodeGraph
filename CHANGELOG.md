@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.5] - 2026-06-10
+
+### Feature
+- Go `go.work` multi-module project parsing support
+- Java `@RequestMapping` multi-method/path support + route ID dedup + trace interactive selection
+- Usages fuzzy search by qualified_name CONTAINS
+- `--profile` toolchain — CPU profile + memory trace + phase timeline to `.fcg/profile/`
+- `analysis/perf_report.py` — one-command performance analysis report
+- Configurable `gc_percent` in `[system]` config (default 300)
+
+### Performance
+- SymbolTable memory optimization — store symbols once with int32 index references
+- GOGC=300 default reduces GC frequency during indexing
+- Reduce GC pressure in ResolveCalls + resolveCallWithReceiver earlyExit
+- Refactor resolveFullQualifiedType three-layer strategy + FQN fast path
+- FalkorDB createNode batch size increase
+
+### Fix
+- Heritage import disambiguation + external node Kind fix
+- UNRESOLVED_CALL multi-target + debug dump enhancement
+- LadybugDB stability fixes
+
 ## [1.0.4] - 2026-06-02
 
 ### Feature
