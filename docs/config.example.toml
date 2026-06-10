@@ -23,6 +23,7 @@ exclude_tests = true
 [system]
 # goroutines = 0
 # memory_limit = "4GB"
+# gc_percent = 300          # GOGC value, 0 = use default (300)
 # log_level = "info"
 
 # ── Global only (~/.fcg/config.toml) ──

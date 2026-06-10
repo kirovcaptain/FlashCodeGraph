@@ -26,7 +26,7 @@ type resolvedRelations struct {
 }
 
 func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *scanContext, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, crossProjectNodes map[string]model.Node) ([]model.ResolvedRelation, error) {
-	indexer.progress.Emit(PhaseResolving, 0, 0, "relations")
+	indexer.progress.Emit(PhaseResolving, 0, 0, "")
 
 	// Build language helper for the project's primary language only
 	langHelpers := buildLanguageHelpers(scanCtx.projectInfo.Language, symbolTable, scanCtx.projectInfo.Frameworks, scanCtx.absPath)
@@ -67,6 +67,7 @@ func (indexer *Indexer) resolveAndWriteRelations(ctx context.Context, scanCtx *s
 	if err := indexer.writeResolvedRelations(ctx, scanCtx, symbolTable, &relations); err != nil {
 		return nil, err
 	}
+	indexer.progress.Emit(PhaseResolving, 0, 0, "relations")
 	return relations.Calls, nil
 }
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"time"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/config"
@@ -19,9 +21,10 @@ import (
 )
 
 var (
-	indexForce  bool
-	indexBranch string
-	indexDebug  bool
+	indexForce   bool
+	indexBranch  string
+	indexDebug   bool
+	indexProfile bool
 )
 
 func init() {
@@ -35,6 +38,7 @@ func init() {
 	indexCmd.Flags().BoolVar(&indexForce, "force", false, "Force full re-index")
 	indexCmd.Flags().StringVar(&indexBranch, "branch", "", "Branch name (auto-detected if not set)")
 	indexCmd.Flags().BoolVar(&indexDebug, "debug", false, "Dump debug data to .fcg/debug/")
+	indexCmd.Flags().BoolVar(&indexProfile, "profile", false, "Write CPU profile to .fcg/cpu.prof")
 	rootCmd.AddCommand(indexCmd)
 }
 
@@ -44,6 +48,70 @@ func runIndex(cmd *cobra.Command, args []string) error {
 		repoPath = args[0]
 	}
 	repoPath, _ = filepath.Abs(repoPath)
+
+	// CPU profiling — output to .fcg/profile/ directory
+	var profileStartTime time.Time
+	var phaseTimelineFile *os.File
+	if indexProfile {
+		profileDir := filepath.Join(repoPath, ".fcg", "profile")
+		os.MkdirAll(profileDir, 0o755)
+
+		// CPU profile
+		cpuProfilePath := filepath.Join(profileDir, "cpu.prof")
+		cpuProfileFile, err := os.Create(cpuProfilePath)
+		if err != nil {
+			return fmt.Errorf("create profile file: %w", err)
+		}
+		defer cpuProfileFile.Close()
+		if err := pprof.StartCPUProfile(cpuProfileFile); err != nil {
+			return fmt.Errorf("start cpu profile: %w", err)
+		}
+		defer pprof.StopCPUProfile()
+
+		profileStartTime = time.Now()
+
+		// Memory trace — sample heap stats every second to CSV
+		memTracePath := filepath.Join(profileDir, "mem_trace.csv")
+		memTraceFile, err := os.Create(memTracePath)
+		if err != nil {
+			return fmt.Errorf("create mem trace file: %w", err)
+		}
+		fmt.Fprintln(memTraceFile, "elapsed_sec,heap_inuse_mb,heap_sys_mb,num_gc")
+		traceStopChannel := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					var memStats runtime.MemStats
+					runtime.ReadMemStats(&memStats)
+					fmt.Fprintf(memTraceFile, "%d,%d,%d,%d\n",
+						int(time.Since(profileStartTime).Seconds()),
+						memStats.HeapInuse/1024/1024,
+						memStats.HeapSys/1024/1024,
+						memStats.NumGC)
+				case <-traceStopChannel:
+					return
+				}
+			}
+		}()
+		defer func() {
+			close(traceStopChannel)
+			memTraceFile.Close()
+		}()
+
+		// Phase timeline
+		phaseTimelinePath := filepath.Join(profileDir, "phase_timeline.csv")
+		phaseTimelineFile, err = os.Create(phaseTimelinePath)
+		if err != nil {
+			return fmt.Errorf("create phase timeline file: %w", err)
+		}
+		fmt.Fprintln(phaseTimelineFile, "elapsed_sec,event,name,detail")
+		defer phaseTimelineFile.Close()
+
+		fmt.Printf("Profile output: %s\n", profileDir)
+	}
 
 	// Auto-init if needed
 	if err := service.AutoInit(repoPath); err != nil {
@@ -113,9 +181,25 @@ func runIndex(cmd *cobra.Command, args []string) error {
 		if event.SubStep != "" {
 			if event.Message == "" {
 				subStepStart = time.Now()
+				if phaseTimelineFile != nil {
+					elapsed := int(time.Since(profileStartTime).Seconds())
+					fmt.Fprintf(phaseTimelineFile, "%d,substep_start,%s,\n", elapsed, event.SubStep)
+				}
 			} else {
-				dur := time.Since(subStepStart).Round(time.Millisecond)
-				fmt.Printf("  ├─ %-22s %s (%s)\n", event.SubStep, event.Message, dur)
+				duration := time.Since(subStepStart).Round(time.Millisecond)
+				if indexProfile {
+					var memStats runtime.MemStats
+					runtime.ReadMemStats(&memStats)
+					fmt.Printf("  ├─ %-22s %s (%s) [Heap: %dMB, GC: %d]\n",
+						event.SubStep, event.Message, duration,
+						memStats.HeapInuse/1024/1024, memStats.NumGC)
+					if phaseTimelineFile != nil {
+						elapsed := int(time.Since(profileStartTime).Seconds())
+						fmt.Fprintf(phaseTimelineFile, "%d,substep_end,%s,%s\n", elapsed, event.SubStep, event.Message)
+					}
+				} else {
+					fmt.Printf("  ├─ %-22s %s (%s)\n", event.SubStep, event.Message, duration)
+				}
 			}
 		} else if event.Message != "" {
 			// Main phase complete — show duration for phases without sub-steps
@@ -125,10 +209,18 @@ func runIndex(cmd *cobra.Command, args []string) error {
 				dur = fmt.Sprintf(" (%s)", elapsed)
 			}
 			fmt.Printf("[%d/%d] %-20s %s%s\n", event.PhaseIndex, event.PhaseTotal, event.Phase, event.Message, dur)
+			if phaseTimelineFile != nil {
+				elapsed := int(time.Since(profileStartTime).Seconds())
+				fmt.Fprintf(phaseTimelineFile, "%d,phase_end,%s,%s\n", elapsed, event.Phase, event.Message)
+			}
 		} else {
 			// Phase start — record time, don't print (completion line will show)
 			phaseStart = time.Now()
 			lastPhaseIndex = event.PhaseIndex
+			if phaseTimelineFile != nil {
+				elapsed := int(time.Since(profileStartTime).Seconds())
+				fmt.Fprintf(phaseTimelineFile, "%d,phase_start,%s,\n", elapsed, event.Phase)
+			}
 		}
 	}
 

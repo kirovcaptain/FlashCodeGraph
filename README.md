@@ -108,6 +108,7 @@ Rust, C, C++, C#, Ruby, PHP
 | `--force` | false | Force full re-index, ignore incremental cache |
 | `--branch` | auto-detect | Git branch name to index |
 | `--debug` | false | Dump debug CSV files to `.fcg/debug/` |
+| `--profile` | false | Write CPU profile + memory trace + phase timeline to `.fcg/profile/` |
 
 ```bash
 fcg index                          # index current directory
@@ -115,6 +116,7 @@ fcg index /path/to/project         # index a specific project
 fcg index --force                  # full re-index
 fcg index --branch feature/login   # index specific branch
 fcg index --debug                  # with debug output
+fcg index --profile                # with performance profiling
 ```
 
 ### Querying Symbols
@@ -346,6 +348,7 @@ database = "falkordb"   # falkordb | kuzu | ladybug
 
 [system]
 memory_limit = "4GB"    # peak memory limit during indexing
+# gc_percent = 300      # GOGC value, 0 = use default (300)
 # goroutines = 0        # parallel goroutines, 0 = auto
 # log_level = "info"    # debug | info | warn | error
 

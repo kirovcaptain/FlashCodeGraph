@@ -14,37 +14,39 @@ const ShardCount = 64
 
 // SymbolTable provides concurrent-safe symbol lookup by name, qualified name, file, and ID.
 type SymbolTable struct {
-	shards          [ShardCount]shard
-	methodsByClass  map[string][]model.Symbol    // classQN → methods
-	fieldsByOwner   map[string][]model.FieldInfo // classQN → fields
-	methodsMutex    sync.RWMutex
-	fieldsMutex     sync.RWMutex
+	shards         [ShardCount]shard
+	methodsByClass map[string][]int // classQualifiedName → encoded global indices (shardIndex<<24 | localIndex)
+	fieldsByOwner  map[string][]model.FieldInfo
+	methodsMutex   sync.RWMutex
+	fieldsMutex    sync.RWMutex
 	// reExportIndex maps a re-export qualified name to the target symbol ID.
 	// Written during propagateExports (serial), read-only during ResolveCalls.
-	reExportIndex   map[string]string
+	reExportIndex map[string]string
 }
 
 type shard struct {
 	mutex           sync.RWMutex
-	byName          map[string][]model.Symbol
-	byQualifiedName map[string][]model.Symbol
-	byFile          map[string][]model.Symbol
-	byID            map[string]*model.Symbol
+	symbols         []model.Symbol
+	byName          map[string][]int32
+	byQualifiedName map[string][]int32
+	byFile          map[string][]int32
+	byID            map[string]int32
 }
 
 // NewSymbolTable creates an empty SymbolTable.
 func NewSymbolTable() *SymbolTable {
 	table := &SymbolTable{
-		methodsByClass: make(map[string][]model.Symbol),
+		methodsByClass: make(map[string][]int),
 		fieldsByOwner:  make(map[string][]model.FieldInfo),
 		reExportIndex:  make(map[string]string),
 	}
 	for i := range table.shards {
 		table.shards[i] = shard{
-			byName:          make(map[string][]model.Symbol),
-			byQualifiedName: make(map[string][]model.Symbol),
-			byFile:          make(map[string][]model.Symbol),
-			byID:            make(map[string]*model.Symbol),
+			symbols:         make([]model.Symbol, 0, 256),
+			byName:          make(map[string][]int32),
+			byQualifiedName: make(map[string][]int32),
+			byFile:          make(map[string][]int32),
+			byID:            make(map[string]int32),
 		}
 	}
 	return table
@@ -53,69 +55,90 @@ func NewSymbolTable() *SymbolTable {
 // Add inserts a symbol into the table (concurrent-safe).
 func (table *SymbolTable) Add(symbol model.Symbol) {
 	shardIndex := shardFor(symbol.Name)
-	shard := &table.shards[shardIndex]
-	shard.mutex.Lock()
-	defer shard.mutex.Unlock()
+	targetShard := &table.shards[shardIndex]
+	targetShard.mutex.Lock()
 
-	shard.byName[symbol.Name] = append(shard.byName[symbol.Name], symbol)
+	localIndex := int32(len(targetShard.symbols))
+	targetShard.symbols = append(targetShard.symbols, symbol)
+
+	targetShard.byName[symbol.Name] = append(targetShard.byName[symbol.Name], localIndex)
 	if symbol.QualifiedName != "" {
-		shard.byQualifiedName[symbol.QualifiedName] = append(shard.byQualifiedName[symbol.QualifiedName], symbol)
+		targetShard.byQualifiedName[symbol.QualifiedName] = append(targetShard.byQualifiedName[symbol.QualifiedName], localIndex)
 	}
-	shard.byFile[symbol.FilePath] = append(shard.byFile[symbol.FilePath], symbol)
-	symbolCopy := symbol
-	shard.byID[symbol.ID] = &symbolCopy
+	targetShard.byFile[symbol.FilePath] = append(targetShard.byFile[symbol.FilePath], localIndex)
+	targetShard.byID[symbol.ID] = localIndex
+
+	targetShard.mutex.Unlock()
 
 	// Index methods by owner class for FindMethodsByQualifiedName
 	if symbol.Kind == constants.KindFunction && strings.Contains(symbol.QualifiedName, ".") {
-		ownerClassQN := symbol.QualifiedName[:strings.LastIndex(symbol.QualifiedName, ".")]
+		ownerClassQualifiedName := symbol.QualifiedName[:strings.LastIndex(symbol.QualifiedName, ".")]
+		globalIndex := int(shardIndex)<<24 | int(localIndex)
 		table.methodsMutex.Lock()
-		table.methodsByClass[ownerClassQN] = append(table.methodsByClass[ownerClassQN], symbol)
+		table.methodsByClass[ownerClassQualifiedName] = append(table.methodsByClass[ownerClassQualifiedName], globalIndex)
 		table.methodsMutex.Unlock()
 	}
 }
 
 // AddBatch inserts multiple symbols (concurrent-safe).
 func (table *SymbolTable) AddBatch(symbols []model.Symbol) {
-	for _, symbol := range symbols {
-		table.Add(symbol)
+	for i := range symbols {
+		table.Add(symbols[i])
 	}
 }
 
 // FindByName returns all symbols with the given name.
 func (table *SymbolTable) FindByName(name string) []model.Symbol {
 	shardIndex := shardFor(name)
-	shard := &table.shards[shardIndex]
-	shard.mutex.RLock()
-	defer shard.mutex.RUnlock()
-	return shard.byName[name]
+	targetShard := &table.shards[shardIndex]
+	targetShard.mutex.RLock()
+	indices := targetShard.byName[name]
+	if len(indices) == 0 {
+		targetShard.mutex.RUnlock()
+		return nil
+	}
+	result := make([]model.Symbol, len(indices))
+	for i, localIndex := range indices {
+		result[i] = targetShard.symbols[localIndex]
+	}
+	targetShard.mutex.RUnlock()
+	return result
 }
 
 // FindByQualifiedName returns symbols matching the qualified name.
 // The qualified name is stored in the same shard as symbol.Name (which is the
 // shard key used by Add), so we use lastSegment to derive the same shard index.
-// This works because lastSegment("com.example.UserService") = "UserService" = symbol.Name.
 // For correctness, we also fall back to scanning all shards if the primary lookup misses.
 func (table *SymbolTable) FindByQualifiedName(qualifiedName string) []model.Symbol {
 	// Primary lookup: use lastSegment as shard key (matches symbol.Name in most cases)
 	name := lastSegment(qualifiedName)
 	shardIndex := shardFor(name)
-	shard := &table.shards[shardIndex]
-	shard.mutex.RLock()
-	result := shard.byQualifiedName[qualifiedName]
-	shard.mutex.RUnlock()
-	if len(result) > 0 {
+	targetShard := &table.shards[shardIndex]
+	targetShard.mutex.RLock()
+	indices := targetShard.byQualifiedName[qualifiedName]
+	if len(indices) > 0 {
+		result := make([]model.Symbol, len(indices))
+		for i, localIndex := range indices {
+			result[i] = targetShard.symbols[localIndex]
+		}
+		targetShard.mutex.RUnlock()
 		return result
 	}
+	targetShard.mutex.RUnlock()
 
 	// Fallback: scan all shards in case shard key doesn't match symbol.Name
 	for i := range table.shards {
-		s := &table.shards[i]
-		s.mutex.RLock()
-		if found := s.byQualifiedName[qualifiedName]; len(found) > 0 {
-			s.mutex.RUnlock()
-			return found
+		currentShard := &table.shards[i]
+		currentShard.mutex.RLock()
+		if foundIndices := currentShard.byQualifiedName[qualifiedName]; len(foundIndices) > 0 {
+			result := make([]model.Symbol, len(foundIndices))
+			for j, localIndex := range foundIndices {
+				result[j] = currentShard.symbols[localIndex]
+			}
+			currentShard.mutex.RUnlock()
+			return result
 		}
-		s.mutex.RUnlock()
+		currentShard.mutex.RUnlock()
 	}
 	return nil
 }
@@ -124,37 +147,40 @@ func (table *SymbolTable) FindByQualifiedName(qualifiedName string) []model.Symb
 func (table *SymbolTable) FindByFile(filePath string) []model.Symbol {
 	var result []model.Symbol
 	for i := range table.shards {
-		shard := &table.shards[i]
-		shard.mutex.RLock()
-		result = append(result, shard.byFile[filePath]...)
-		shard.mutex.RUnlock()
+		currentShard := &table.shards[i]
+		currentShard.mutex.RLock()
+		indices := currentShard.byFile[filePath]
+		for _, localIndex := range indices {
+			result = append(result, currentShard.symbols[localIndex])
+		}
+		currentShard.mutex.RUnlock()
 	}
 	return result
 }
 
-// FindByID returns a symbol by ID.
 // All returns all symbols in the table.
 func (table *SymbolTable) All() []model.Symbol {
 	var all []model.Symbol
 	for i := range table.shards {
 		table.shards[i].mutex.RLock()
-		for _, syms := range table.shards[i].byName {
-			all = append(all, syms...)
-		}
+		all = append(all, table.shards[i].symbols...)
 		table.shards[i].mutex.RUnlock()
 	}
 	return all
 }
 
+// FindByID returns a symbol by ID.
 func (table *SymbolTable) FindByID(id string) *model.Symbol {
 	for i := range table.shards {
-		shard := &table.shards[i]
-		shard.mutex.RLock()
-		symbol := shard.byID[id]
-		shard.mutex.RUnlock()
-		if symbol != nil {
+		currentShard := &table.shards[i]
+		currentShard.mutex.RLock()
+		localIndex, exists := currentShard.byID[id]
+		if exists {
+			symbol := &currentShard.symbols[localIndex]
+			currentShard.mutex.RUnlock()
 			return symbol
 		}
+		currentShard.mutex.RUnlock()
 	}
 	return nil
 }
@@ -181,11 +207,31 @@ func lastSegment(qualifiedName string) string {
 	return qualifiedName
 }
 
-// FindMethodsByQualifiedName returns all functions whose QualifiedName starts with classQN + ".".
-func (table *SymbolTable) FindMethodsByQualifiedName(classQN string) []model.Symbol {
+// FindMethodsByQualifiedName returns all functions whose owner class matches classQualifiedName.
+func (table *SymbolTable) FindMethodsByQualifiedName(classQualifiedName string) []model.Symbol {
 	table.methodsMutex.RLock()
-	defer table.methodsMutex.RUnlock()
-	return table.methodsByClass[classQN]
+	globalIndices := table.methodsByClass[classQualifiedName]
+	if len(globalIndices) == 0 {
+		table.methodsMutex.RUnlock()
+		return nil
+	}
+	// Copy indices under lock to avoid holding methodsMutex while acquiring shard locks
+	indicesCopy := make([]int, len(globalIndices))
+	copy(indicesCopy, globalIndices)
+	table.methodsMutex.RUnlock()
+
+	result := make([]model.Symbol, 0, len(indicesCopy))
+	for _, globalIndex := range indicesCopy {
+		shardIndex := globalIndex >> 24
+		localIndex := int32(globalIndex & 0xFFFFFF)
+		currentShard := &table.shards[shardIndex]
+		currentShard.mutex.RLock()
+		if int(localIndex) < len(currentShard.symbols) {
+			result = append(result, currentShard.symbols[localIndex])
+		}
+		currentShard.mutex.RUnlock()
+	}
+	return result
 }
 
 // AddField registers a field for a class/struct.
@@ -199,9 +245,9 @@ func (table *SymbolTable) AddField(ownerQualifiedName string, field model.FieldI
 func (table *SymbolTable) FindFieldByOwner(ownerQualifiedName, fieldName string) *model.FieldInfo {
 	table.fieldsMutex.RLock()
 	defer table.fieldsMutex.RUnlock()
-	for _, field := range table.fieldsByOwner[ownerQualifiedName] {
-		if field.Name == fieldName {
-			return &field
+	for i := range table.fieldsByOwner[ownerQualifiedName] {
+		if table.fieldsByOwner[ownerQualifiedName][i].Name == fieldName {
+			return &table.fieldsByOwner[ownerQualifiedName][i]
 		}
 	}
 	return nil

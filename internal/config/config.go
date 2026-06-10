@@ -72,6 +72,7 @@ type StorageConfig struct {
 type SystemConfig struct {
 	Goroutines  int    `toml:"goroutines"`   // 0 = auto
 	MemoryLimit string `toml:"memory_limit"` // e.g. "1GB"
+	GCPercent   int    `toml:"gc_percent"`   // GOGC value, 0 = use default (300)
 	LogLevel    string `toml:"log_level"`    // debug, info, warn, error
 }
 

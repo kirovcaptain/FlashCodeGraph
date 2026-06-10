@@ -80,6 +80,13 @@ func (indexer *Indexer) Index(ctx context.Context, repoPath string, branch strin
 		defer debug.SetMemoryLimit(math.MaxInt64)
 	}
 
+	gcPercent := indexer.config.System.GCPercent
+	if gcPercent == 0 {
+		gcPercent = 300
+	}
+	previousGCPercent := debug.SetGCPercent(gcPercent)
+	defer debug.SetGCPercent(previousGCPercent)
+
 	indexer.progress = NewProgressManager(onProgress)
 
 	fullMode := indexer.shouldFullIndex(ctx, branch, forceFullIndex)
@@ -231,7 +238,7 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	parseResults, symbolTable := indexer.parseAllFiles(ctx, scanCtx, scanCtx.files)
 
 	// Write structural nodes: full rebuild from scratch (all CREATE)
-	indexer.progress.Emit(PhaseWriting, 0, 0, "nodes and edges")
+	indexer.progress.Emit(PhaseWriting, 0, 0, "")
 	indexer.progress.EmitSub(PhaseWriting, SubStructuralNodes, "")
 	symbolEdges, err := indexer.writeFileSystemNodes(ctx, scanCtx.absPath, scanCtx.projectInfo.Frameworks, scanCtx.files, parseResults, scanCtx.result)
 	if err != nil {
@@ -253,6 +260,8 @@ func (indexer *Indexer) fullIndex(ctx context.Context, scanCtx *scanContext) (*m
 	}
 
 	clearParseResultsPhase1(parseResults)
+
+	indexer.progress.Emit(PhaseWriting, 0, 0, "nodes and edges")
 
 	// Inject cross-project symbols into symbolTable for resolver
 	crossProjectNodes, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable)
@@ -316,6 +325,7 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	indexer.progress.Emit(PhaseIncremental, len(changedFiles), len(changedFiles), fmt.Sprintf("%d changed files", len(changedFiles)))
 
 	// Find affected importers BEFORE cleanup (DETACH DELETE removes IMPORTS edges)
+	indexer.progress.Emit(PhaseWriting, 0, 0, "")
 	indexer.progress.EmitSub(PhaseWriting, SubFindAffected, "")
 	affectedFiles := indexer.findImporters(ctx, scanCtx.files, changedFiles, deletedFiles)
 	indexer.progress.EmitSub(PhaseWriting, SubFindAffected, fmt.Sprintf("%d importers", len(affectedFiles)))
@@ -394,6 +404,8 @@ func (indexer *Indexer) incrementalIndex(ctx context.Context, scanCtx *scanConte
 	}
 
 	clearParseResultsPhase1(parseResults)
+
+	indexer.progress.Emit(PhaseWriting, 0, 0, "nodes and edges")
 
 	// Inject cross-project symbols into symbolTable for resolver (clean old nodes first for incremental)
 	crossProjectNodes, err := indexer.injectCrossProjectSymbols(ctx, scanCtx, symbolTable)

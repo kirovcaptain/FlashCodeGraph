@@ -55,6 +55,7 @@ FCG uses TOML configuration files at two levels:
 |-----|------|---------|-------------|
 | goroutines | int | 0 (auto) | Number of parallel workers |
 | memory_limit | string | "4GB" | Memory limit |
+| gc_percent | int | 300 | GOGC value (0 = use default 300) |
 | log_level | string | "info" | Log level: debug, info, warn, error |
 
 ### [cross_project_index]
