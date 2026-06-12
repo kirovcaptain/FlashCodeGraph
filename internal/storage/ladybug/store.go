@@ -35,7 +35,8 @@ func New(dbPath string, bufferPoolSize uint64) (*Store, error) {
 
 	db, err := lbug.OpenDatabase(dbPath, cfg)
 	if err != nil && dbPath != "" {
-		// Retry after removing WAL file (may be stale from previous crash)
+		// Retry after removing WAL file and DB file (may be stale from previous crash)
+		os.Remove(dbPath)
 		os.Remove(dbPath + ".wal")
 		db, err = lbug.OpenDatabase(dbPath, cfg)
 	}
