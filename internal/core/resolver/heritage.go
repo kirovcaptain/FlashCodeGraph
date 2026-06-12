@@ -93,6 +93,7 @@ func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage, envs map
 			TargetID:   parent.ID,
 			Kind:       kind,
 			SourceKind: child.Kind,
+			TargetKind: parent.Kind,
 			Confidence: confidence,
 			ResolvedBy: "heritage_" + entry.Kind,
 			Candidates: len(classParents),

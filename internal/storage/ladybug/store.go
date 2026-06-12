@@ -85,14 +85,15 @@ func (store *Store) Migrate(_ context.Context) error {
 
 	// Relationship tables — generated from model.EdgeColumns schema
 	for tableName, def := range model.EdgeColumns {
-		colDefs := fmt.Sprintf("FROM %s TO %s", def.FromKind, def.ToKind)
-		for _, extraToKind := range def.ToKinds {
-			colDefs += fmt.Sprintf(", FROM %s TO %s", def.FromKind, extraToKind)
+		var relationshipParts []string
+		for _, pair := range def.EdgePairs {
+			relationshipParts = append(relationshipParts, fmt.Sprintf("FROM %s TO %s", pair.FromKind, pair.ToKind))
 		}
+		tableDefinition := strings.Join(relationshipParts, ", ")
 		for _, col := range def.Columns {
-			colDefs += ", " + col.Name + " " + col.Type
+			tableDefinition += ", " + col.Name + " " + col.Type
 		}
-		stmts = append(stmts, fmt.Sprintf("CREATE REL TABLE IF NOT EXISTS %s (%s, MANY_MANY)", tableName, colDefs))
+		stmts = append(stmts, fmt.Sprintf("CREATE REL TABLE IF NOT EXISTS %s (%s, MANY_MANY)", tableName, tableDefinition))
 	}
 
 	for _, stmt := range stmts {
@@ -372,24 +373,28 @@ func (store *Store) createEdgesCSV(edges []model.Edge) error {
 		columns := model.EdgeColumnNames(group.relTable)
 		def := model.EdgeColumns[group.relTable]
 
-		// Check if this is a multi-target table
-		if len(def.ToKinds) > 0 {
-			// Split edges by TargetKind
-			edgesByTargetKind := make(map[string][]model.Edge)
+		if len(def.EdgePairs) > 1 {
+			// Multi-pair table: split edges by (SourceKind, TargetKind)
+			edgesByEndpointPair := make(map[[2]string][]model.Edge)
 			for _, edge := range group.edges {
+				sourceKind := edge.SourceKind
+				if sourceKind == "" {
+					sourceKind = def.EdgePairs[0].FromKind
+				}
 				targetKind := edge.TargetKind
 				if targetKind == "" {
-					targetKind = def.ToKind // default
+					targetKind = def.EdgePairs[0].ToKind
 				}
-				edgesByTargetKind[targetKind] = append(edgesByTargetKind[targetKind], edge)
+				endpointPair := [2]string{sourceKind, targetKind}
+				edgesByEndpointPair[endpointPair] = append(edgesByEndpointPair[endpointPair], edge)
 			}
-			for targetKind, kindEdges := range edgesByTargetKind {
-				if err := store.writeEdgeCSVWithFromTo(group.relTable, def.FromKind, targetKind, columns, kindEdges); err != nil {
+			for endpointPair, pairEdges := range edgesByEndpointPair {
+				if err := store.writeEdgeCSVWithFromTo(group.relTable, endpointPair[0], endpointPair[1], columns, pairEdges); err != nil {
 					return err
 				}
 			}
 		} else {
-			// Single target — write as before
+			// Single pair — write as before
 			if err := store.writeEdgeCSV(group.relTable, columns, group.edges); err != nil {
 				return err
 			}

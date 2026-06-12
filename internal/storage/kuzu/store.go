@@ -72,14 +72,15 @@ func (store *Store) Migrate(_ context.Context) error {
 
 	// Relationship tables — generated from model.EdgeColumns schema
 	for tableName, def := range model.EdgeColumns {
-		colDefs := fmt.Sprintf("FROM %s TO %s", def.FromKind, def.ToKind)
-		for _, extraToKind := range def.ToKinds {
-			colDefs += fmt.Sprintf(", FROM %s TO %s", def.FromKind, extraToKind)
+		var relationshipParts []string
+		for _, pair := range def.EdgePairs {
+			relationshipParts = append(relationshipParts, fmt.Sprintf("FROM %s TO %s", pair.FromKind, pair.ToKind))
 		}
+		tableDefinition := strings.Join(relationshipParts, ", ")
 		for _, col := range def.Columns {
-			colDefs += ", " + col.Name + " " + col.Type
+			tableDefinition += ", " + col.Name + " " + col.Type
 		}
-		stmts = append(stmts, fmt.Sprintf("CREATE REL TABLE IF NOT EXISTS %s (%s, MANY_MANY)", tableName, colDefs))
+		stmts = append(stmts, fmt.Sprintf("CREATE REL TABLE IF NOT EXISTS %s (%s, MANY_MANY)", tableName, tableDefinition))
 	}
 
 	for _, stmt := range stmts {

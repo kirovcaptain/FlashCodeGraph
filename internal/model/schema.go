@@ -189,18 +189,22 @@ func QueryReturnClause(kind string) string {
 	return strings.Join(parts, ", ")
 }
 
+// EdgePair defines a source-target node table pair for a relationship.
+type EdgePair struct {
+	FromKind string // Source node table (e.g. "Function")
+	ToKind   string // Target node table (e.g. "Function")
+}
+
 // EdgeTableDef defines the schema for a relationship table.
 type EdgeTableDef struct {
-	FromKind string      // Source node table (e.g. "Function")
-	ToKind   string      // Primary target node table (e.g. "Function")
-	ToKinds  []string    // Additional target node tables (e.g. ["Class"] for multi-target)
-	Columns  []ColumnDef // Property columns (excluding from/to)
+	EdgePairs []EdgePair  // All supported (from, to) node table combinations
+	Columns   []ColumnDef // Property columns (excluding from/to)
 }
 
 // EdgeColumns defines the columns for each edge table.
 // Used by: Migrate (CREATE REL TABLE), CSV COPY FROM column generation.
 var EdgeColumns = map[string]EdgeTableDef{
-	"CALLS": {FromKind: "Function", ToKind: "Function", ToKinds: []string{"Class"}, Columns: []ColumnDef{
+	"CALLS": {EdgePairs: []EdgePair{{"Function", "Function"}, {"Function", "Class"}}, Columns: []ColumnDef{
 		{"confidence", "DOUBLE"},
 		{"resolved_by", "STRING"},
 		{"candidates", "INT32"},
@@ -221,83 +225,83 @@ var EdgeColumns = map[string]EdgeTableDef{
 		{"chain_id", "INT32"},
 		{"chain_depth", "INT32"},
 	}},
-	"EXTENDS": {FromKind: "Class", ToKind: "Class", Columns: []ColumnDef{
+	"EXTENDS": {EdgePairs: []EdgePair{{"Class", "Class"}, {"Interface", "Interface"}}, Columns: []ColumnDef{
 		{"confidence", "DOUBLE"},
 		{"resolved_by", "STRING"},
 		{"candidates", "INT32"},
 	}},
-	"IMPLEMENTS": {FromKind: "Class", ToKind: "Interface", Columns: []ColumnDef{
+	"IMPLEMENTS": {EdgePairs: []EdgePair{{"Class", "Interface"}}, Columns: []ColumnDef{
 		{"confidence", "DOUBLE"},
 		{"resolved_by", "STRING"},
 		{"candidates", "INT32"},
 	}},
-	"IMPORTS": {FromKind: "File", ToKind: "File", Columns: []ColumnDef{
+	"IMPORTS": {EdgePairs: []EdgePair{{"File", "File"}}, Columns: []ColumnDef{
 		{"symbol_name", "STRING"},
 		{"alias", "STRING"},
 	}},
-	"OVERRIDES": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+	"OVERRIDES": {EdgePairs: []EdgePair{{"Function", "Function"}}, Columns: []ColumnDef{
 		{"confidence", "DOUBLE"},
 		{"resolved_by", "STRING"},
 		{"candidates", "INT32"},
 	}},
-	"DISPATCHES": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+	"DISPATCHES": {EdgePairs: []EdgePair{{"Function", "Function"}}, Columns: []ColumnDef{
 		{"confidence", "DOUBLE"},
 		{"resolved_by", "STRING"},
 		{"candidates", "INT32"},
 		{"flow_context", "STRING"},
 		{"flow_line", "INT32"},
 	}},
-	"CONTAINS":           {FromKind: "Repository", ToKind: "File", Columns: nil},
-	"DIR_CONTAINS":       {FromKind: "Directory", ToKind: "File", Columns: nil},
-	"FILE_CONTAINS":      {FromKind: "File", ToKind: "Function", Columns: nil},
-	"FILE_CONTAINS_CLASS": {FromKind: "File", ToKind: "Class", Columns: nil},
-	"FILE_CONTAINS_IFACE": {FromKind: "File", ToKind: "Interface", Columns: nil},
-	"FILE_CONTAINS_VAR":  {FromKind: "File", ToKind: "Variable", Columns: nil},
-	"CLASS_CONTAINS_FUNC": {FromKind: "Class", ToKind: "Function", Columns: nil},
-	"IFACE_CONTAINS_FUNC": {FromKind: "Interface", ToKind: "Function", Columns: nil},
-	"CLASS_CONTAINS_VAR": {FromKind: "Class", ToKind: "Variable", Columns: nil},
-	"MEMBER_OF_FUNC":     {FromKind: "Function", ToKind: "Community", Columns: nil},
-	"MEMBER_OF_CLASS":    {FromKind: "Class", ToKind: "Community", Columns: nil},
-	"HANDLES": {FromKind: "Function", ToKind: "Route", Columns: []ColumnDef{
+	"CONTAINS":            {EdgePairs: []EdgePair{{"Repository", "File"}}, Columns: nil},
+	"DIR_CONTAINS":        {EdgePairs: []EdgePair{{"Directory", "File"}}, Columns: nil},
+	"FILE_CONTAINS":       {EdgePairs: []EdgePair{{"File", "Function"}}, Columns: nil},
+	"FILE_CONTAINS_CLASS": {EdgePairs: []EdgePair{{"File", "Class"}}, Columns: nil},
+	"FILE_CONTAINS_IFACE": {EdgePairs: []EdgePair{{"File", "Interface"}}, Columns: nil},
+	"FILE_CONTAINS_VAR":   {EdgePairs: []EdgePair{{"File", "Variable"}}, Columns: nil},
+	"CLASS_CONTAINS_FUNC": {EdgePairs: []EdgePair{{"Class", "Function"}}, Columns: nil},
+	"IFACE_CONTAINS_FUNC": {EdgePairs: []EdgePair{{"Interface", "Function"}}, Columns: nil},
+	"CLASS_CONTAINS_VAR":  {EdgePairs: []EdgePair{{"Class", "Variable"}}, Columns: nil},
+	"MEMBER_OF_FUNC":      {EdgePairs: []EdgePair{{"Function", "Community"}}, Columns: nil},
+	"MEMBER_OF_CLASS":     {EdgePairs: []EdgePair{{"Class", "Community"}}, Columns: nil},
+	"HANDLES": {EdgePairs: []EdgePair{{"Function", "Route"}}, Columns: []ColumnDef{
 		{"handler_order", "INT32"},
 	}},
-	"INJECTS": {FromKind: "Function", ToKind: "Function", Columns: []ColumnDef{
+	"INJECTS": {EdgePairs: []EdgePair{{"Function", "Function"}}, Columns: []ColumnDef{
 		{"inject_type", "STRING"},
 	}},
-	"DEPENDS_ON": {FromKind: "Directory", ToKind: "Directory", Columns: []ColumnDef{
+	"DEPENDS_ON": {EdgePairs: []EdgePair{{"Directory", "Directory"}}, Columns: []ColumnDef{
 		{"call_count", "INT32"},
 	}},
-	"REMOTE_CALLS_ROUTE": {FromKind: "Function", ToKind: "Route", Columns: []ColumnDef{
+	"REMOTE_CALLS_ROUTE": {EdgePairs: []EdgePair{{"Function", "Route"}}, Columns: []ColumnDef{
 		{"protocol", "STRING"},
 		{"target_url", "STRING"},
 		{"target_service", "STRING"},
 		{"confidence", "DOUBLE"},
 	}},
-	"REMOTE_CALLS_EXT": {FromKind: "Function", ToKind: "ExternalService", Columns: []ColumnDef{
+	"REMOTE_CALLS_EXT": {EdgePairs: []EdgePair{{"Function", "ExternalService"}}, Columns: []ColumnDef{
 		{"protocol", "STRING"},
 		{"target_url", "STRING"},
 		{"target_service", "STRING"},
 		{"field_name", "STRING"},
 		{"confidence", "DOUBLE"},
 	}},
-	"EXECUTES":           {FromKind: "Function", ToKind: "QueryNode", Columns: nil},
-	"FETCHES": {FromKind: "Function", ToKind: "Route", Columns: []ColumnDef{
+	"EXECUTES":              {EdgePairs: []EdgePair{{"Function", "QueryNode"}}, Columns: nil},
+	"FETCHES": {EdgePairs: []EdgePair{{"Function", "Route"}}, Columns: []ColumnDef{
 		{"http_method", "STRING"},
 		{"url_path", "STRING"},
 	}},
-	"STEP": {FromKind: "Process", ToKind: "Function", Columns: []ColumnDef{
+	"STEP": {EdgePairs: []EdgePair{{"Process", "Function"}}, Columns: []ColumnDef{
 		{"seq", "INT32"},
 	}},
-	"HAS_ANNOTATION_FUNC":  {FromKind: "Function", ToKind: "Annotation", Columns: nil},
-	"HAS_ANNOTATION_CLASS": {FromKind: "Class", ToKind: "Annotation", Columns: nil},
-	"HAS_ANNOTATION_IFACE": {FromKind: "Interface", ToKind: "Annotation", Columns: nil},
-	"UNRESOLVED_CALL": {FromKind: "Function", ToKind: "Function", ToKinds: []string{"Class"}, Columns: []ColumnDef{
+	"HAS_ANNOTATION_FUNC":  {EdgePairs: []EdgePair{{"Function", "Annotation"}}, Columns: nil},
+	"HAS_ANNOTATION_CLASS": {EdgePairs: []EdgePair{{"Class", "Annotation"}}, Columns: nil},
+	"HAS_ANNOTATION_IFACE": {EdgePairs: []EdgePair{{"Interface", "Annotation"}}, Columns: nil},
+	"UNRESOLVED_CALL": {EdgePairs: []EdgePair{{"Function", "Function"}, {"Function", "Class"}}, Columns: []ColumnDef{
 		{"hint_type", "STRING"},
 		{"line", "INT32"},
 		{"receiver_expr", "STRING"},
 		{"candidate_count", "INT32"},
 	}},
-	"USES": {FromKind: "Function", ToKind: "Variable", Columns: []ColumnDef{
+	"USES": {EdgePairs: []EdgePair{{"Function", "Variable"}}, Columns: []ColumnDef{
 		{"line", "INT32"},
 		{"ref_kind", "STRING"},
 	}},

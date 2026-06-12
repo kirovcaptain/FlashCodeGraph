@@ -14,7 +14,7 @@ from collections import defaultdict
 # Edge table schema: edge_type -> (from_kind, to_kind)
 EDGE_SCHEMA = {
     "CALLS": ("Function", ("Function", "Class")),
-    "EXTENDS": ("Class", "Class"),
+    "EXTENDS": (("Class", "Interface"), ("Class", "Interface")),
     "IMPLEMENTS": ("Class", "Interface"),
     "IMPORTS": ("File", "File"),
     "OVERRIDES": ("Function", "Function"),
