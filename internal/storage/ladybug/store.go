@@ -166,17 +166,13 @@ func (store *Store) createNodesCSV(nodes []model.Node) error {
 		csvWriter := NewLadybugCSVWriter(file)
 		csvWriter.WriteRow(header)
 
+		fields := make([]string, len(header))
 		for _, node := range kindNodes {
-			propsJSON, _ := json.Marshal(node.Properties)
-			var normalizedProps map[string]any
-			json.Unmarshal(propsJSON, &normalizedProps)
-
-			row := make([]string, len(header))
-			row[0] = node.ID
+			fields[0] = node.ID
 			for colIndex, column := range columns {
-				row[colIndex+1] = store.formatCSVValue(kind, column, normalizedProps[column])
+				fields[colIndex+1] = store.formatCSVValue(kind, column, node.Properties[column])
 			}
-			csvWriter.WriteRow(row)
+			csvWriter.WriteRow(fields)
 		}
 		csvWriter.Flush()
 		file.Close()
