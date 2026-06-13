@@ -60,7 +60,7 @@ func TestResolveEventDispatches_EventListenerAnnotation(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "createOrder", QualifiedName: "com.example.OrderService.createOrder", Kind: "Function", FilePath: "OrderService.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handleOrderEvent", QualifiedName: "com.example.EventHandler.handleOrderEvent", Kind: "Function", FilePath: "EventHandler.java",
-			Annotations: `[{"name":"EventListener"}]`, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "EventListener"}}, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 
@@ -86,7 +86,7 @@ func TestResolveEventDispatches_TransactionalEventListener(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "createOrder", QualifiedName: "com.example.OrderService.createOrder", Kind: "Function", FilePath: "OrderService.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "afterCommit", QualifiedName: "com.example.EventHandler.afterCommit", Kind: "Function", FilePath: "EventHandler.java",
-			Annotations: `[{"name":"TransactionalEventListener"}]`, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "TransactionalEventListener"}}, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 
@@ -109,7 +109,7 @@ func TestResolveEventDispatches_VariableArg(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "createOrder", QualifiedName: "com.example.OrderService.createOrder", Kind: "Function", FilePath: "OrderService.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handleOrderEvent", QualifiedName: "com.example.EventHandler.handleOrderEvent", Kind: "Function", FilePath: "EventHandler.java",
-			Annotations: `[{"name":"EventListener"}]`, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "EventListener"}}, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 
@@ -136,9 +136,9 @@ func TestResolveEventDispatches_MultipleListeners(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "createOrder", QualifiedName: "com.example.OrderService.createOrder", Kind: "Function", FilePath: "OrderService.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handleA", QualifiedName: "com.example.HandlerA.handleA", Kind: "Function", FilePath: "HandlerA.java",
-			Annotations: `[{"name":"EventListener"}]`, Params: []model.ParamInfo{{Name: "e", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "EventListener"}}, Params: []model.ParamInfo{{Name: "e", Type: "OrderEvent"}}},
 		{ID: "handler2", Name: "handleB", QualifiedName: "com.example.HandlerB.handleB", Kind: "Function", FilePath: "HandlerB.java",
-			Annotations: `[{"name":"EventListener"}]`, Params: []model.ParamInfo{{Name: "e", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "EventListener"}}, Params: []model.ParamInfo{{Name: "e", Type: "OrderEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 
@@ -158,7 +158,7 @@ func TestResolveEventDispatches_EventInheritance(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "createOrder", QualifiedName: "com.example.OrderService.createOrder", Kind: "Function", FilePath: "OrderService.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handleParent", QualifiedName: "com.example.Handler.handleParent", Kind: "Function", FilePath: "Handler.java",
-			Annotations: `[{"name":"EventListener"}]`, Params: []model.ParamInfo{{Name: "e", Type: "ParentEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "EventListener"}}, Params: []model.ParamInfo{{Name: "e", Type: "ParentEvent"}}},
 	}
 	heritage := []model.RawHeritage{
 		{ChildName: "ChildEvent", ParentName: "ParentEvent", Kind: "extends"},
@@ -184,7 +184,7 @@ func TestResolveEventDispatches_GuavaPost(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "process", QualifiedName: "com.example.Service.process", Kind: "Function", FilePath: "Service.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handle", QualifiedName: "com.example.Subscriber.handle", Kind: "Function", FilePath: "Subscriber.java",
-			Annotations: `[{"name":"Subscribe"}]`, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "Subscribe"}}, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 
@@ -341,7 +341,7 @@ func TestResolveEventDispatches_PostNonEventBus(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "process", QualifiedName: "com.example.Service.process", Kind: "Function", FilePath: "Service.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handle", QualifiedName: "com.example.Subscriber.handle", Kind: "Function", FilePath: "Subscriber.java",
-			Annotations: `[{"name":"Subscribe"}]`, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "Subscribe"}}, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 
@@ -365,7 +365,7 @@ func TestResolveEventDispatches_EmptyArgType(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "createOrder", QualifiedName: "com.example.OrderService.createOrder", Kind: "Function", FilePath: "OrderService.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handleOrderEvent", QualifiedName: "com.example.EventHandler.handleOrderEvent", Kind: "Function", FilePath: "EventHandler.java",
-			Annotations: `[{"name":"EventListener"}]`, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "EventListener"}}, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 
@@ -470,7 +470,7 @@ func TestResolveEventDispatches_PostEventBusPositive(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "process", QualifiedName: "com.example.Service.process", Kind: "Function", FilePath: "Service.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handle", QualifiedName: "com.example.Subscriber.handle", Kind: "Function", FilePath: "Subscriber.java",
-			Annotations: `[{"name":"Subscribe"}]`, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "Subscribe"}}, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 
@@ -542,7 +542,7 @@ func TestResolveEventDispatches_PublishEventNonSpringReceiver(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "createOrder", QualifiedName: "com.example.OrderService.createOrder", Kind: "Function", FilePath: "OrderService.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handleOrderEvent", QualifiedName: "com.example.EventHandler.handleOrderEvent", Kind: "Function", FilePath: "EventHandler.java",
-			Annotations: `[{"name":"EventListener"}]`, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "EventListener"}}, Params: []model.ParamInfo{{Name: "event", Type: "OrderEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 
@@ -566,7 +566,7 @@ func TestResolveEventDispatches_EventTypeMetadata(t *testing.T) {
 	symbols := []model.Symbol{
 		{ID: "publisher1", Name: "createOrder", QualifiedName: "com.example.OrderService.createOrder", Kind: "Function", FilePath: "OrderService.java", StartLine: 10, EndLine: 20},
 		{ID: "handler1", Name: "handleOrderEvent", QualifiedName: "com.example.EventHandler.handleOrderEvent", Kind: "Function", FilePath: "EventHandler.java",
-			Annotations: `[{"name":"EventListener"}]`, Params: []model.ParamInfo{{Name: "event", Type: "OrderCreatedEvent"}}},
+			Annotations: []model.StructuredAnnotation{{Name: "EventListener"}}, Params: []model.ParamInfo{{Name: "event", Type: "OrderCreatedEvent"}}},
 	}
 	resolver := newEventDispatchResolver(symbols, nil)
 

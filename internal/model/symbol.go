@@ -28,7 +28,7 @@ type Symbol struct {
 	Visibility      string `json:"visibility,omitempty"`
 	ClassType       string   `json:"class_type,omitempty"`      // class/abstract_class/interface/enum/struct
 	TypeParams      []string `json:"type_params,omitempty"`     // generic type parameters: ["T", "U"]
-	Annotations     string `json:"annotations,omitempty"`     // JSON
+	Annotations     []StructuredAnnotation `json:"annotations,omitempty"`
 	Docstring       string `json:"docstring,omitempty"`
 	IsExported      bool   `json:"is_exported,omitempty"`
 	IsAbstract      bool   `json:"is_abstract,omitempty"`

@@ -1,7 +1,6 @@
 package resolver
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
@@ -83,14 +82,10 @@ func (resolver *Resolver) collectJavaEventListeners() []eventListener {
 
 	// 2. @EventListener / @TransactionalEventListener / @Subscribe annotated methods
 	for _, symbol := range resolver.symbolTable.All() {
-		if symbol.Kind != constants.KindFunction || symbol.Annotations == "" || symbol.Annotations == "null" {
+		if symbol.Kind != constants.KindFunction || len(symbol.Annotations) == 0 {
 			continue
 		}
-		var annotations []model.StructuredAnnotation
-		if err := json.Unmarshal([]byte(symbol.Annotations), &annotations); err != nil {
-			continue
-		}
-		for _, annotation := range annotations {
+		for _, annotation := range symbol.Annotations {
 			if annotation.Name != "EventListener" && annotation.Name != "TransactionalEventListener" && annotation.Name != "Subscribe" {
 				continue
 			}

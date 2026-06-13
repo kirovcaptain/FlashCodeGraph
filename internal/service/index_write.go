@@ -298,7 +298,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"params":         marshalParams(symbol.Params),
 					"return_types":   model.FormatReturnTypes(symbol.ReturnTypes),
 					"type_params":    symbol.TypeParams,
-					"annotations":    symbol.Annotations,
+					"annotations":    marshalAnnotations(symbol.Annotations),
 					"is_exported":    symbol.IsExported,
 					"is_abstract":    symbol.IsAbstract,
 					"is_static":      symbol.IsStatic,
@@ -320,7 +320,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"class_type":     symbol.ClassType,
 					"is_abstract":    symbol.IsAbstract,
 					"is_exported":    symbol.IsExported,
-					"annotations":    symbol.Annotations,
+					"annotations":    marshalAnnotations(symbol.Annotations),
 					"complexity":     symbol.Complexity,
 					"params":         marshalParams(symbol.Params),
 					"type_params":    symbol.TypeParams,
@@ -336,7 +336,7 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"end_line":       symbol.EndLine,
 					"is_exported":    symbol.IsExported,
 					"class_type":     symbol.ClassType,
-					"annotations":    symbol.Annotations,
+					"annotations":    marshalAnnotations(symbol.Annotations),
 					"fields":         string(fieldsJSON),
 				}
 			case constants.KindVariable:
@@ -758,7 +758,7 @@ func propagateFeignRoutes(parseResults []model.ParseResult, symbolTable *resolve
 			}
 			hasRestController := false
 			for _, symbol := range parseResult.Symbols {
-				if symbol.Name == heritage.ChildName && strings.Contains(symbol.Annotations, "RestController") {
+				if symbol.Name == heritage.ChildName && hasAnnotationNamed(symbol.Annotations, "RestController") {
 					hasRestController = true
 					break
 				}
@@ -880,14 +880,10 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 
 	for _, parseResult := range parseResults {
 		for _, symbol := range parseResult.Symbols {
-			if symbol.Annotations == "" || symbol.Annotations == "[]" || symbol.Annotations == "null" {
+			if len(symbol.Annotations) == 0 {
 				continue
 			}
-			var annotationList []model.StructuredAnnotation
-			if err := json.Unmarshal([]byte(symbol.Annotations), &annotationList); err != nil {
-				continue
-			}
-			for _, structuredAnnotation := range annotationList {
+			for _, structuredAnnotation := range symbol.Annotations {
 				annotationDef, ok := whitelist[structuredAnnotation.Name]
 				if !ok {
 					continue

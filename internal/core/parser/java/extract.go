@@ -1,7 +1,6 @@
 package java
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -232,8 +231,6 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 		}
 	}
 
-	annotationsJSON, _ := json.Marshal(annotations)
-
 	// Extract generic type parameters: class Foo<T, U extends Bar> → ["T", "U"]
 	typeParams := extractTypeParams(node, content)
 
@@ -255,7 +252,7 @@ func extractClass(node *tree_sitter.Node, content []byte, filePath, packageName 
 		TypeParams:    typeParams,
 		IsAbstract:    isAbstract,
 		IsExported:    isExported,
-		Annotations:   string(annotationsJSON),
+		Annotations:   annotations,
 	})
 }
 
@@ -464,8 +461,6 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 			annotations = ExtractAnnotations(child, content)
 		}
 	}
-	annotationsJSON, _ := json.Marshal(annotations)
-
 	// Complexity (count branches)
 	complexity := 1
 	bodyNode := node.ChildByFieldName("body")
@@ -501,7 +496,7 @@ func extractMethod(node *tree_sitter.Node, content []byte, filePath, packageName
 		IsAbstract:    isAbstract,
 		IsGetter:      isAccessorGetter(methodName, isStatic, len(paramTypes), returnTypes, complexity, node),
 		IsSetter:      isAccessorSetter(methodName, isStatic, len(paramTypes), returnTypes, complexity, node),
-		Annotations:   string(annotationsJSON),
+		Annotations:   annotations,
 		Complexity:    complexity,
 	})
 

@@ -1,10 +1,7 @@
 package java
 
 import (
-	"encoding/json"
 	"testing"
-
-	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 )
 
 func TestExtractAnnotations_Structured(t *testing.T) {
@@ -22,10 +19,7 @@ public class UserController {
 		if symbol.Name != "UserController" {
 			continue
 		}
-		var annotations []model.StructuredAnnotation
-		if err := json.Unmarshal([]byte(symbol.Annotations), &annotations); err != nil {
-			t.Fatalf("failed to parse annotations: %v", err)
-		}
+		annotations := symbol.Annotations
 
 		if len(annotations) < 3 {
 			t.Fatalf("expected at least 3 annotations, got %d: %v", len(annotations), annotations)

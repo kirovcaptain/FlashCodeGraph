@@ -121,10 +121,14 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 			paramsStr, _ := node.Properties["params"].(string)
 			isExported, _ := node.Properties["is_exported"].(bool)
 			classType, _ := node.Properties["class_type"].(string)
-			annotations, _ := node.Properties["annotations"].(string)
+			annotationsStr, _ := node.Properties["annotations"].(string)
 			isGetter, _ := node.Properties["is_getter"].(bool)
 			isSetter, _ := node.Properties["is_setter"].(bool)
 			returnTypes := toStringSlice(node.Properties["return_types"])
+			var parsedAnnotations []model.StructuredAnnotation
+			if annotationsStr != "" && annotationsStr != "[]" {
+				json.Unmarshal([]byte(annotationsStr), &parsedAnnotations)
+			}
 			symbolTable.Add(model.Symbol{
 				ID:            node.ID,
 				Name:          name,
@@ -134,7 +138,7 @@ func (indexer *Indexer) loadAllSymbols(ctx context.Context, filesToParse []scann
 				Params:        unmarshalParams(paramsStr),
 				IsExported:    isExported,
 				ClassType:     classType,
-				Annotations:   annotations,
+				Annotations:   parsedAnnotations,
 				IsGetter:      isGetter,
 				IsSetter:      isSetter,
 				ReturnTypes:   model.StringsToReturnTypes(returnTypes),
@@ -213,13 +217,9 @@ func isTestFilePath(filePath string) bool {
 		strings.Contains(lower, "_test.") || strings.Contains(lower, ".test.")
 }
 
-// parseAnnotationNames extracts annotation names from JSON structured annotation array.
-func parseAnnotationNames(annotationsJSON string) []string {
-	if annotationsJSON == "" || annotationsJSON == "null" {
-		return nil
-	}
-	var annotations []model.StructuredAnnotation
-	if err := json.Unmarshal([]byte(annotationsJSON), &annotations); err != nil {
+// parseAnnotationNames extracts annotation names from structured annotation slice.
+func parseAnnotationNames(annotations []model.StructuredAnnotation) []string {
+	if len(annotations) == 0 {
 		return nil
 	}
 	names := make([]string, 0, len(annotations))
@@ -253,6 +253,25 @@ func marshalParams(params []model.ParamInfo) string {
 	}
 	data, _ := json.Marshal(params)
 	return string(data)
+}
+
+// marshalAnnotations serializes structured annotations to JSON string for storage.
+func marshalAnnotations(annotations []model.StructuredAnnotation) string {
+	if len(annotations) == 0 {
+		return "[]"
+	}
+	data, _ := json.Marshal(annotations)
+	return string(data)
+}
+
+// hasAnnotationNamed checks if annotations slice contains an annotation with the given name.
+func hasAnnotationNamed(annotations []model.StructuredAnnotation, name string) bool {
+	for _, annotation := range annotations {
+		if annotation.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // unmarshalParams deserializes a JSON params string to ParamInfo slice.
@@ -304,13 +323,9 @@ func toStringSlice(value interface{}) []string {
 	return result
 }
 
-// extractRouteFromAnnotations parses route method and path from structured annotation JSON.
-func extractRouteFromAnnotations(annotationsJSON string) (string, string) {
-	if annotationsJSON == "" || annotationsJSON == "null" {
-		return "", ""
-	}
-	var annotations []model.StructuredAnnotation
-	if err := json.Unmarshal([]byte(annotationsJSON), &annotations); err != nil {
+// extractRouteFromAnnotations parses route method and path from structured annotations.
+func extractRouteFromAnnotations(annotations []model.StructuredAnnotation) (string, string) {
+	if len(annotations) == 0 {
 		return "", ""
 	}
 	routeAnnotations := map[string]string{
