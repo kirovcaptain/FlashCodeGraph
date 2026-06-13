@@ -163,7 +163,8 @@ func (store *Store) createNodesCSV(nodes []model.Node) error {
 
 		header := []string{"id"}
 		header = append(header, columns...)
-		writeCSVRow(file, header)
+		csvWriter := NewLadybugCSVWriter(file)
+		csvWriter.WriteRow(header)
 
 		for _, node := range kindNodes {
 			propsJSON, _ := json.Marshal(node.Properties)
@@ -175,8 +176,9 @@ func (store *Store) createNodesCSV(nodes []model.Node) error {
 			for colIndex, column := range columns {
 				row[colIndex+1] = store.formatCSVValue(kind, column, normalizedProps[column])
 			}
-			writeCSVRow(file, row)
+			csvWriter.WriteRow(row)
 		}
+		csvWriter.Flush()
 		file.Close()
 
 		if err := store.copyFromCSV(kind, csvPath); err != nil {
@@ -412,7 +414,8 @@ func (store *Store) writeEdgeCSV(relTable string, columns []string, edges []mode
 
 	header := []string{"from", "to"}
 	header = append(header, columns...)
-	writeCSVRow(file, header)
+	csvWriter := NewLadybugCSVWriter(file)
+	csvWriter.WriteRow(header)
 
 	for _, edge := range edges {
 		row := make([]string, len(header))
@@ -421,8 +424,9 @@ func (store *Store) writeEdgeCSV(relTable string, columns []string, edges []mode
 		for colIndex, key := range columns {
 			row[colIndex+2] = formatEdgePropertyValue(edge.Properties[key])
 		}
-		writeCSVRow(file, row)
+		csvWriter.WriteRow(row)
 	}
+	csvWriter.Flush()
 	file.Close()
 
 	if err := store.copyFromCSV(relTable, csvPath); err != nil {
@@ -442,7 +446,8 @@ func (store *Store) writeEdgeCSVWithFromTo(relTable, fromKind, toKind string, co
 
 	header := []string{"from", "to"}
 	header = append(header, columns...)
-	writeCSVRow(file, header)
+	csvWriter := NewLadybugCSVWriter(file)
+	csvWriter.WriteRow(header)
 
 	for _, edge := range edges {
 		row := make([]string, len(header))
@@ -451,8 +456,9 @@ func (store *Store) writeEdgeCSVWithFromTo(relTable, fromKind, toKind string, co
 		for colIndex, key := range columns {
 			row[colIndex+2] = formatEdgePropertyValue(edge.Properties[key])
 		}
-		writeCSVRow(file, row)
+		csvWriter.WriteRow(row)
 	}
+	csvWriter.Flush()
 	file.Close()
 
 	if err := store.copyFromCSVWithFromTo(relTable, csvPath, fromKind, toKind); err != nil {
@@ -1722,9 +1728,8 @@ func (store *Store) copyFromCSV(tableName, csvPath string) error {
 	return nil
 }
 
-// writeCSVRow writes a single CSV row. All fields are unconditionally quoted.
-// Escape style depends on platform: Linux uses backslash (\"), Windows uses doubled quote ("").
-func writeCSVRow(file *os.File, fields []string) {
+// writeCSVRowBackup is the original implementation with full escape logic (kept for rollback).
+func writeCSVRowBackup(file *os.File, fields []string) {
 	var builder strings.Builder
 	useBackslashEscape := runtime.GOOS != "windows"
 	for i, field := range fields {
@@ -1770,17 +1775,7 @@ func (store *Store) formatCSVValue(kind, column string, value any) string {
 		}
 		return string(jsonBytes)
 	}
-	// For complex types (slice/map after JSON round-trip), serialize as JSON string
-	switch reflect.TypeOf(value).Kind() {
-	case reflect.Slice, reflect.Map:
-		jsonBytes, err := json.Marshal(value)
-		if err != nil {
-			return ""
-		}
-		return string(jsonBytes)
-	default:
-		return fmt.Sprintf("%v", value)
-	}
+	return fmt.Sprintf("%v", value)
 }
 
 // formatEdgePropertyValue converts an edge property value to its CSV string representation.
