@@ -5,6 +5,7 @@
 ### Feature
 - FeignClient multi-path support — interfaces with multiple class-level `@RequestMapping` paths now correctly generate all route combinations
 - Interface-extends-Interface indexing — inheritance chains between interfaces are now tracked and traversable
+- upgrade go-ladybug version to v0.17.0
 
 ### Performance
 - Faster LadybugDB CSV writes — buffered I/O with streaming escape replaces per-row syscalls
