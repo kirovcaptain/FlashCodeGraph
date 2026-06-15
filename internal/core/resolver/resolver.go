@@ -1327,6 +1327,26 @@ func (resolver *Resolver) ensureExternalClassSymbol(typeName string, langHelper 
 }
 
 func (resolver *Resolver) findCallerID(call model.RawCall) string {
+	candidates := resolver.symbolTable.FindByQualifiedName(call.CallerName)
+	if len(candidates) == 1 {
+		return candidates[0].ID
+	}
+	if len(candidates) > 1 {
+		// Multiple matches: narrow by file + line range
+		for _, candidate := range candidates {
+			if candidate.FilePath == call.FilePath && candidate.Kind == constants.KindFunction {
+				if call.Line >= candidate.StartLine && call.Line <= candidate.EndLine {
+					return candidate.ID
+				}
+			}
+		}
+		return candidates[0].ID
+	}
+	return resolver.findCallerIDByName(call)
+}
+
+// findCallerIDByName is the fallback when QualifiedName lookup fails.
+func (resolver *Resolver) findCallerIDByName(call model.RawCall) string {
 	candidates := resolver.symbolTable.FindByName(lastSegment(call.CallerName))
 	var fallback string
 	for _, candidate := range candidates {

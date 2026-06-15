@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.6] - 2026-06-15
+
+### Feature
+- FeignClient multi-path support — interfaces with multiple class-level `@RequestMapping` paths now correctly generate all route combinations
+- Interface-extends-Interface indexing — inheritance chains between interfaces are now tracked and traversable
+
+### Performance
+- Faster LadybugDB CSV writes — buffered I/O with streaming escape replaces per-row syscalls
+- Eliminated redundant JSON serialization during node export — direct property access with slice reuse
+- Annotation data stored as structured types internally — removes repeated JSON parse/serialize cycles during indexing
+
+### Fix
+- LadybugDB recovery now removes corrupted database files on open failure (previously only cleared WAL, leaving unrecoverable state)
+
 ## [1.0.5] - 2026-06-10
 
 ### Feature
