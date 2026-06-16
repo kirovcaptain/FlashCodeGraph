@@ -14,7 +14,6 @@ import (
 // extractJava extracts symbols from Java/Kotlin AST.
 func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFile, result *model.ParseResult) {
 	packageName := ""
-	var currentClass string
 
 	astutil.WalkNamedChildren(rootNode, func(node *tree_sitter.Node) bool {
 		switch node.Kind() {
@@ -29,7 +28,6 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 		case "class_declaration", "interface_declaration", "enum_declaration":
 			extractClass(node, content, file.RelPath, packageName, result)
 			className := astutil.NodeFieldText(node, "name", content)
-			currentClass = className
 			var classType string
 			switch node.Kind() {
 			case "interface_declaration":
@@ -55,7 +53,6 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 				ExtractFeignClient(classAnnotations, node, content, className, file.RelPath, result)
 			}
 
-			currentClass = ""
 			return false
 
 		case "method_declaration", "constructor_declaration":
@@ -65,8 +62,6 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 		}
 		return true
 	})
-
-	_ = currentClass
 }
 
 // extractPackageName extracts the package name from a package_declaration.
