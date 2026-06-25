@@ -96,6 +96,47 @@ var DefaultAnnotations = map[string][]AnnotationDef{
 	"_always": {
 		{Name: "Deprecated", Category: "lifecycle", Framework: "_common"},
 	},
+	"android": {
+		// Dependency Injection (Hilt/Dagger)
+		{Name: "HiltViewModel", Category: "layer", Layer: "controller", Framework: "android"},
+		{Name: "HiltAndroidApp", Category: "lifecycle", Framework: "android"},
+		{Name: "AndroidEntryPoint", Category: "lifecycle", Framework: "android"},
+		{Name: "Inject", Category: "config", Framework: "android"},
+		{Name: "Module", Category: "config", Framework: "android"},
+		{Name: "InstallIn", Category: "config", Framework: "android"},
+		{Name: "Provides", Category: "config", Framework: "android"},
+		{Name: "Binds", Category: "config", Framework: "android"},
+		{Name: "Singleton", Category: "config", Framework: "android"},
+		{Name: "ViewModelScoped", Category: "config", Framework: "android"},
+		// Network (Retrofit)
+		{Name: "GET", Category: "route", Framework: "android"},
+		{Name: "POST", Category: "route", Framework: "android"},
+		{Name: "PUT", Category: "route", Framework: "android"},
+		{Name: "DELETE", Category: "route", Framework: "android"},
+		{Name: "PATCH", Category: "route", Framework: "android"},
+		{Name: "Path", Category: "route", Framework: "android"},
+		{Name: "Query", Category: "query", Framework: "android"},
+		{Name: "Body", Category: "route", Framework: "android"},
+		{Name: "Header", Category: "route", Framework: "android"},
+		// Database (Room)
+		{Name: "Entity", Category: "layer", Layer: "model", Framework: "android"},
+		{Name: "Dao", Category: "layer", Layer: "repository", Framework: "android"},
+		{Name: "Database", Category: "layer", Layer: "repository", Framework: "android"},
+		{Name: "PrimaryKey", Category: "query", Framework: "android"},
+		{Name: "ColumnInfo", Category: "query", Framework: "android"},
+		{Name: "Insert", Category: "query", Framework: "android"},
+		{Name: "Update", Category: "query", Framework: "android"},
+		{Name: "Delete", Category: "query", Framework: "android"},
+		{Name: "Transaction", Category: "transaction", Framework: "android"},
+		// UI (Compose)
+		{Name: "Composable", Category: "layer", Layer: "controller", Framework: "android"},
+		{Name: "Preview", Category: "test", Framework: "android"},
+		// Serialization
+		{Name: "Serializable", Category: "config", Framework: "android"},
+		{Name: "SerialName", Category: "config", Framework: "android"},
+		// Background
+		{Name: "HiltWorker", Category: "scheduled", EntryType: "scheduled_task", Framework: "android"},
+	},
 }
 
 // entryTypeByName maps annotation name → EntryType for quick lookup.

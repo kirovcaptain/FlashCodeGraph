@@ -44,6 +44,9 @@ func (scanner *Scanner) detectMavenModules(root string, info *ProjectInfo) {
 	// Default source directory for single-module Maven project
 	if len(info.SubModules) == 0 {
 		info.SourceDirs["default"] = "src/main/java"
+		if _, err := os.Stat(filepath.Join(root, "src", "main", "kotlin")); err == nil {
+			info.SourceDirs["default-kotlin"] = "src/main/kotlin"
+		}
 	}
 }
 
@@ -69,6 +72,7 @@ func (scanner *Scanner) detectGradleModules(root string, info *ProjectInfo) {
 				part = strings.TrimPrefix(part, "(")
 				part = strings.TrimSuffix(part, ")")
 				part = strings.Trim(part, " '\":")
+				part = strings.ReplaceAll(part, ":", string(filepath.Separator))
 				if part != "" && !strings.ContainsAny(part, "{}()") {
 					moduleRoot := filepath.Join(root, part)
 					sourceDirectory := filepath.Join(part, "src", "main", "java")
@@ -78,6 +82,11 @@ func (scanner *Scanner) detectGradleModules(root string, info *ProjectInfo) {
 						SrcDir:  sourceDirectory,
 					})
 					info.SourceDirs[part] = sourceDirectory
+					// Also register src/main/kotlin if it exists
+					kotlinSourceDirectory := filepath.Join(part, "src", "main", "kotlin")
+					if _, err := os.Stat(filepath.Join(root, kotlinSourceDirectory)); err == nil {
+						info.SourceDirs[part+"-kotlin"] = kotlinSourceDirectory
+					}
 					// Add sub-module build file for framework detection
 					for _, bf := range []string{"build.gradle", "build.gradle.kts"} {
 						subBuild := filepath.Join(part, bf)
@@ -93,6 +102,9 @@ func (scanner *Scanner) detectGradleModules(root string, info *ProjectInfo) {
 
 	if len(info.SubModules) == 0 {
 		info.SourceDirs["default"] = "src/main/java"
+		if _, err := os.Stat(filepath.Join(root, "src", "main", "kotlin")); err == nil {
+			info.SourceDirs["default-kotlin"] = "src/main/kotlin"
+		}
 	}
 }
 

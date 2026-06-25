@@ -13,6 +13,7 @@ import (
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
 	tree_sitter_javascript "github.com/tree-sitter/tree-sitter-javascript/bindings/go"
+	tree_sitter_kotlin "github.com/tree-sitter-grammars/tree-sitter-kotlin/bindings/go"
 	tree_sitter_python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/astutil"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/java"
+	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/kotlin"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/python"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/golang"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/parser/typescript"
@@ -38,6 +40,7 @@ var languages = map[string]*tree_sitter.Language{
 	"go":         newLanguage(tree_sitter_go.Language()),
 	"javascript": newLanguage(tree_sitter_javascript.Language()),
 	"typescript": newLanguage(unsafe.Pointer(tree_sitter_typescript.LanguageTypescript())),
+	"kotlin":     newLanguage(tree_sitter_kotlin.Language()),
 }
 
 // Parser parses source files into ParseResult using tree-sitter.
@@ -131,6 +134,8 @@ func extractFromAST(rootNode *tree_sitter.Node, content []byte, file scanner.Sca
 		golang.Extract(rootNode, content, file, result)
 	case "typescript", "javascript":
 		typescript.Extract(rootNode, content, file, result)
+	case "kotlin":
+		kotlin.Extract(rootNode, content, file, result)
 	}
 }
 

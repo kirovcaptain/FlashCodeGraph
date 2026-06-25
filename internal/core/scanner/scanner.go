@@ -233,6 +233,7 @@ var extensionToLanguage = map[string]string{
 	".jsx":    "javascript",
 	".mjs":    "javascript",
 	".cjs":    "javascript",
+	".kt":     "kotlin",
 }
 
 func detectLanguage(path string) string {
@@ -284,6 +285,9 @@ func isTestFile(fileName, language string) bool {
 		return strings.HasSuffix(fileName, "_test.go")
 	case "java":
 		base := strings.TrimSuffix(fileName, ".java")
+		return strings.HasSuffix(base, "Test") || strings.HasSuffix(base, "Tests") || strings.HasSuffix(base, "Spec")
+	case "kotlin":
+		base := strings.TrimSuffix(fileName, ".kt")
 		return strings.HasSuffix(base, "Test") || strings.HasSuffix(base, "Tests") || strings.HasSuffix(base, "Spec")
 	case "python":
 		return strings.HasPrefix(fileName, "test_") || strings.HasSuffix(strings.TrimSuffix(fileName, ".py"), "_test")

@@ -7,4 +7,5 @@ const (
 	LangGo         = "go"
 	LangTypeScript = "typescript"
 	LangJavaScript = "javascript"
+	LangKotlin     = "kotlin"
 )

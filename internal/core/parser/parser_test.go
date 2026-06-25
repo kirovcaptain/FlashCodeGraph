@@ -172,7 +172,7 @@ func TestSupportedLanguage(t *testing.T) {
 			t.Errorf("expected %s to be supported", language)
 		}
 	}
-	if SupportedLanguage("kotlin") {
-		t.Error("kotlin not supported yet (no official Go binding)")
+	if !SupportedLanguage("kotlin") {
+		t.Error("kotlin should be supported")
 	}
 }

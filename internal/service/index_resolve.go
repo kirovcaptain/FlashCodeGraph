@@ -9,6 +9,7 @@ import (
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver"
 	resolvergo "github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver/golang"
 	resolverjava "github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver/java"
+	resolverkotlin "github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver/kotlin"
 	resolverpy "github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver/python"
 	resolverts "github.com/kirovcaptain/FlashCodeGraph/internal/core/resolver/typescript"
 	"github.com/kirovcaptain/FlashCodeGraph/internal/core/typeinfer"
@@ -296,6 +297,8 @@ func buildLanguageHelpers(language string, symbolTable *resolver.SymbolTable, fr
 		tsExternalMethods := resolverts.NewExternalMethodManager(frameworks, projectRoot)
 		helpers[constants.LangTypeScript] = resolverts.NewHelper(tsExternalMethods)
 		helpers[constants.LangJavaScript] = resolverts.NewHelper(tsExternalMethods)
+	case constants.LangKotlin:
+		helpers[constants.LangKotlin] = resolverkotlin.NewHelper()
 	}
 	return helpers
 }

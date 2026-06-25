@@ -87,6 +87,8 @@ func (resolver *Resolver) helperFor(call model.RawCall) LanguageHelper {
 			lang = "typescript"
 		case strings.HasSuffix(call.FilePath, ".js"), strings.HasSuffix(call.FilePath, ".jsx"):
 			lang = "javascript"
+		case strings.HasSuffix(call.FilePath, ".kt"):
+			lang = "kotlin"
 		}
 	}
 	if helper, ok := resolver.langHelpers[lang]; ok {
