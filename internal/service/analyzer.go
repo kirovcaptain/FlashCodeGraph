@@ -564,8 +564,10 @@ func hasAnnotation(annotations []string, names ...string) bool {
 func hasAnnotationEntryType(annotationIDs []string) string {
 	for _, id := range annotationIDs {
 		name := id
-		if idx := strings.LastIndex(id, "::"); idx >= 0 {
-			name = id[idx+2:]
+		// Annotation ID format: symbolID::annotationName::line
+		parts := strings.Split(id, "::")
+		if len(parts) >= 2 {
+			name = parts[1]
 		}
 		if et := annotation.LookupEntryType(name); et != "" {
 			return et

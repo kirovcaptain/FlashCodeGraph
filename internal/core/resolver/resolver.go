@@ -1750,12 +1750,15 @@ func lookupBindingWithScopeChain(env *model.TypeEnv, callerScope, varName string
 
 // isSingleLetterGeneric returns true if the type name is a single uppercase letter (generic type parameter).
 func makeRelation(sourceID, targetID string, call model.RawCall, confidence float64, resolvedBy string, candidates int, targetKind string) model.ResolvedRelation {
+	sourceKind := call.CallerKind
+	if sourceKind == "" {
+		sourceKind = constants.KindFunction
+	}
 	return model.ResolvedRelation{
 		SourceID:    sourceID,
 		TargetID:    targetID,
 		Kind:        model.RelCalls,
-// makeRelation constructs a ResolvedRelation with standard metadata (line, flow_context, declared_type).
-		SourceKind:  "Function",
+		SourceKind:  sourceKind,
 		TargetKind:  targetKind,
 		Confidence:  confidence,
 		ResolvedBy:  resolvedBy,
@@ -1772,12 +1775,16 @@ func makeRelation(sourceID, targetID string, call model.RawCall, confidence floa
 func makeMultiRelations(sourceID string, candidates []model.Symbol, call model.RawCall, baseConfidence float64, resolvedBy string) []model.ResolvedRelation {
 	var relations []model.ResolvedRelation
 	confidence := baseConfidence / float64(len(candidates))
+	sourceKind := call.CallerKind
+	if sourceKind == "" {
+		sourceKind = constants.KindFunction
+	}
 	for _, candidate := range candidates {
 		relations = append(relations, model.ResolvedRelation{
 			SourceID:    sourceID,
 			TargetID:    candidate.ID,
 			Kind:        model.RelCalls,
-			SourceKind:  "Function",
+			SourceKind:  sourceKind,
 			TargetKind:  candidate.Kind,
 // makeMultiRelations creates a ResolvedRelation for each candidate when multiple matches exist.
 // Uses best_guess confidence since the resolver cannot determine which is correct.

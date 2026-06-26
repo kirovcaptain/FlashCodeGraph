@@ -486,7 +486,7 @@ interface CrudRepository<T> : ReadRepository<T>, WriteRepository<T>
 
 	// UserRepositoryImpl extends BaseRepository
 	extendsFound := false
-	for _, parent := range heritageMap["EXTENDS"] {
+	for _, parent := range heritageMap["extends"] {
 		if parent == "BaseRepository" {
 			extendsFound = true
 		}
@@ -497,7 +497,7 @@ interface CrudRepository<T> : ReadRepository<T>, WriteRepository<T>
 
 	// UserRepositoryImpl implements UserRepository, Closeable
 	implementsCount := 0
-	for _, parent := range heritageMap["IMPLEMENTS"] {
+	for _, parent := range heritageMap["implements"] {
 		if parent == "UserRepository" || parent == "Closeable" || parent == "ReadRepository" || parent == "WriteRepository" {
 			implementsCount++
 		}
@@ -545,8 +545,8 @@ data class UserEntity(
 	for _, annotation := range entity.Annotations {
 		if annotation.Name == "Entity" {
 			entityFound = true
-			if annotation.Params["value"] == "" {
-				t.Error("@Entity params should contain tableName")
+			if annotation.Params["tableName"] != "users" {
+				t.Errorf("@Entity tableName = %q, want \"users\"", annotation.Params["tableName"])
 			}
 		}
 	}

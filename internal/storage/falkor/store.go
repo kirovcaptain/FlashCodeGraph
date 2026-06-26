@@ -307,7 +307,7 @@ func (store *Store) WriteEdges(ctx context.Context, edges []model.Edge) error {
 	pipe := store.client.Pipeline()
 	for i, edge := range edges {
 		relType := mapRelationType(edge.Kind)
-		sourceLabel, targetLabel := edgeLabels(edge.Kind, edge.SourceKind)
+		sourceLabel, targetLabel := edgeLabels(edge.Kind, edge.SourceKind, edge.TargetKind)
 
 		params := []cypherParam{{"sourceID", edge.SourceID}, {"targetID", edge.TargetID}}
 		paramSetClause := buildEdgeSetClause(edge.Properties, &params)
@@ -336,7 +336,7 @@ func (store *Store) CreateEdges(ctx context.Context, edges []model.Edge) error {
 	const batchSize = 5000
 	pipe := store.client.Pipeline()
 	for i, edge := range edges {
-		sourceLabel, targetLabel := edgeLabels(edge.Kind, edge.SourceKind)
+		sourceLabel, targetLabel := edgeLabels(edge.Kind, edge.SourceKind, edge.TargetKind)
 		relType := mapRelationType(edge.Kind)
 
 		params := []cypherParam{{"sourceID", edge.SourceID}, {"targetID", edge.TargetID}}
@@ -400,10 +400,18 @@ func sortedKeys(m map[string]any) []string {
 }
 
 // edgeLabels returns source and target node labels for a relation kind.
-func edgeLabels(kind model.RelationKind, sourceKind string) (string, string) {
+func edgeLabels(kind model.RelationKind, sourceKind, targetKind string) (string, string) {
 	switch kind {
 	case model.RelCalls:
-		return constants.KindFunction, constants.KindFunction
+		sourceLabel := sourceKind
+		targetLabel := targetKind
+		if sourceLabel == "" {
+			sourceLabel = constants.KindFunction
+		}
+		if targetLabel == "" {
+			targetLabel = constants.KindFunction
+		}
+		return sourceLabel, targetLabel
 	case model.RelExtends:
 		return constants.KindClass, constants.KindClass
 	case model.RelImplements:
@@ -428,6 +436,8 @@ func edgeLabels(kind model.RelationKind, sourceKind string) (string, string) {
 			return constants.KindClass, constants.KindAnnotation
 		case constants.KindInterface:
 			return constants.KindInterface, constants.KindAnnotation
+		case constants.KindVariable:
+			return constants.KindVariable, constants.KindAnnotation
 		default:
 			return constants.KindFunction, constants.KindAnnotation
 		}

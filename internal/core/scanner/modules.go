@@ -106,6 +106,12 @@ func (scanner *Scanner) detectGradleModules(root string, info *ProjectInfo) {
 			info.SourceDirs["default-kotlin"] = "src/main/kotlin"
 		}
 	}
+
+	// Version Catalog: gradle/libs.versions.toml contains dependency declarations
+	versionCatalogPath := filepath.Join("gradle", "libs.versions.toml")
+	if _, err := os.Stat(filepath.Join(root, versionCatalogPath)); err == nil {
+		info.BuildFiles = append(info.BuildFiles, versionCatalogPath)
+	}
 }
 
 // detectNpmWorkspaces reads package.json for workspaces field.

@@ -47,6 +47,8 @@ func detectFromFile(fileName, content string) []Framework {
 		return detectJavaFrameworks(content)
 	case strings.HasPrefix(base, "build.gradle"):
 		return detectJavaFrameworks(content)
+	case base == "libs.versions.toml":
+		return detectJavaFrameworks(content)
 	case base == "package.json":
 		return detectNpmFrameworks(content)
 	case base == "go.mod":
@@ -82,6 +84,13 @@ var javaPatterns = []struct {
 	{"micronaut", "micronaut", "route"},
 	{"io.micronaut", "micronaut", "route"},
 	{"com.android", "android", ""},
+	{"retrofit2", "retrofit", "http_client"},
+	{"com.squareup.retrofit2", "retrofit", "http_client"},
+	{"androidx.room", "room", "orm"},
+	{"dagger.hilt", "hilt", ""},
+	{"com.google.dagger", "hilt", ""},
+	{"androidx.compose", "compose", ""},
+	{"kotlinx.serialization", "kotlinx-serialization", ""},
 	{"openfeign", "feign", "http_client"},
 	{"grpc-java", "grpc", "rpc"},
 	{"io.grpc", "grpc", "rpc"},

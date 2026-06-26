@@ -204,7 +204,7 @@ type EdgeTableDef struct {
 // EdgeColumns defines the columns for each edge table.
 // Used by: Migrate (CREATE REL TABLE), CSV COPY FROM column generation.
 var EdgeColumns = map[string]EdgeTableDef{
-	"CALLS": {EdgePairs: []EdgePair{{"Function", "Function"}, {"Function", "Class"}}, Columns: []ColumnDef{
+	"CALLS": {EdgePairs: []EdgePair{{"Function", "Function"}, {"Function", "Class"}, {"Class", "Function"}, {"Class", "Class"}, {"Variable", "Function"}, {"Variable", "Class"}}, Columns: []ColumnDef{
 		{"confidence", "DOUBLE"},
 		{"resolved_by", "STRING"},
 		{"candidates", "INT32"},
@@ -295,6 +295,7 @@ var EdgeColumns = map[string]EdgeTableDef{
 	"HAS_ANNOTATION_FUNC":  {EdgePairs: []EdgePair{{"Function", "Annotation"}}, Columns: nil},
 	"HAS_ANNOTATION_CLASS": {EdgePairs: []EdgePair{{"Class", "Annotation"}}, Columns: nil},
 	"HAS_ANNOTATION_IFACE": {EdgePairs: []EdgePair{{"Interface", "Annotation"}}, Columns: nil},
+	"HAS_ANNOTATION_VAR":   {EdgePairs: []EdgePair{{"Variable", "Annotation"}}, Columns: nil},
 	"UNRESOLVED_CALL": {EdgePairs: []EdgePair{{"Function", "Function"}, {"Function", "Class"}}, Columns: []ColumnDef{
 		{"hint_type", "STRING"},
 		{"line", "INT32"},

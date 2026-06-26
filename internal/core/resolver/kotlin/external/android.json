@@ -1,0 +1,63 @@
+{
+  "androidx.lifecycle.ViewModel": "",
+  "androidx.lifecycle.SavedStateHandle": "",
+  "androidx.lifecycle.LiveData": "T",
+  "androidx.lifecycle.MutableLiveData": "T",
+
+  "androidx.lifecycle.LiveData.value()": "T",
+  "androidx.lifecycle.LiveData.observe(LifecycleOwner,Observer)": "void",
+  "androidx.lifecycle.MutableLiveData.value()": "T",
+  "androidx.lifecycle.MutableLiveData.setValue(T)": "void",
+  "androidx.lifecycle.MutableLiveData.postValue(T)": "void",
+
+  "androidx.lifecycle.SavedStateHandle.get(String)": "T",
+  "androidx.lifecycle.SavedStateHandle.set(String,T)": "void",
+  "androidx.lifecycle.SavedStateHandle.getStateFlow(String,T)": "StateFlow<T>",
+
+  "android.content.Context.getSystemService(Class)": "T",
+  "android.content.Context.startActivity(Intent)": "void",
+  "android.content.Context.getString(int)": "String",
+  "android.content.Context.getSharedPreferences(String,int)": "SharedPreferences",
+
+  "android.view.View.setOnClickListener(Function)": "void",
+  "android.view.View.setVisibility(int)": "void",
+  "android.view.View.findViewById(int)": "View",
+  "android.view.View.getContext()": "Context",
+
+  "android.os.Bundle.getString(String)": "String",
+  "android.os.Bundle.getInt(String)": "Int",
+  "android.os.Bundle.getLong(String)": "Long",
+  "android.os.Bundle.getBoolean(String)": "Boolean",
+  "android.os.Bundle.putString(String,String)": "void",
+  "android.os.Bundle.putInt(String,int)": "void",
+
+  "android.content.Intent.getStringExtra(String)": "String",
+  "android.content.Intent.getIntExtra(String,int)": "Int",
+  "android.content.Intent.getLongExtra(String,long)": "Long",
+  "android.content.Intent.putExtra(String,String)": "Intent",
+
+  "android.content.SharedPreferences.getString(String,String)": "String",
+  "android.content.SharedPreferences.getInt(String,int)": "Int",
+  "android.content.SharedPreferences.getBoolean(String,boolean)": "Boolean",
+  "android.content.SharedPreferences.edit()": "SharedPreferences.Editor",
+  "android.content.SharedPreferences.Editor.putString(String,String)": "SharedPreferences.Editor",
+  "android.content.SharedPreferences.Editor.putInt(String,int)": "SharedPreferences.Editor",
+  "android.content.SharedPreferences.Editor.apply()": "void",
+  "android.content.SharedPreferences.Editor.commit()": "Boolean",
+
+  "android.util.Log.d(String,String)": "Int",
+  "android.util.Log.e(String,String)": "Int",
+  "android.util.Log.i(String,String)": "Int",
+  "android.util.Log.w(String,String)": "Int",
+  "android.util.Log.v(String,String)": "Int",
+
+  "androidx.navigation.NavController.navigate(NavDirections)": "void",
+  "androidx.navigation.NavController.navigate(String)": "void",
+  "androidx.navigation.NavController.popBackStack()": "Boolean",
+  "androidx.navigation.NavController.navigateUp()": "Boolean",
+
+  "androidx.recyclerview.widget.RecyclerView.setAdapter(Adapter)": "void",
+  "androidx.recyclerview.widget.RecyclerView.setLayoutManager(LayoutManager)": "void",
+  "androidx.recyclerview.widget.RecyclerView.Adapter.notifyDataSetChanged()": "void",
+  "androidx.recyclerview.widget.RecyclerView.Adapter.notifyItemInserted(int)": "void"
+}

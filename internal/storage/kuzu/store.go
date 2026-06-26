@@ -237,7 +237,7 @@ func (store *Store) CreateEdges(_ context.Context, edges []model.Edge) error {
 }
 
 func (store *Store) createEdge(edge model.Edge) error {
-	relTable, sourceLabel, targetLabel := mapRelation(edge.Kind, edge.SourceKind)
+	relTable, sourceLabel, targetLabel := mapRelation(edge.Kind, edge.SourceKind, edge.TargetKind)
 	if relTable == "" {
 		return fmt.Errorf("kuzu: unknown relation kind: %s", edge.Kind)
 	}
@@ -269,7 +269,7 @@ func (store *Store) createEdge(edge model.Edge) error {
 }
 
 func (store *Store) writeEdge(edge model.Edge) error {
-	relTable, sourceLabel, targetLabel := mapRelation(edge.Kind, edge.SourceKind)
+	relTable, sourceLabel, targetLabel := mapRelation(edge.Kind, edge.SourceKind, edge.TargetKind)
 	if relTable == "" {
 		return fmt.Errorf("kuzu: unknown relation kind: %s", edge.Kind)
 	}
@@ -535,7 +535,7 @@ func (store *Store) QueryNodesByName(_ context.Context, name string, opts model.
 
 // QueryEdges returns edges connected to a node.
 func (store *Store) QueryEdges(_ context.Context, nodeID string, nodeKind string, kind model.RelationKind, direction model.Direction) ([]model.Edge, error) {
-	relTable, sourceLabel, targetLabel := mapRelation(kind, nodeKind)
+	relTable, sourceLabel, targetLabel := mapRelation(kind, nodeKind, "")
 	if relTable == "" {
 		return nil, fmt.Errorf("kuzu: unknown relation kind: %s", kind)
 	}
@@ -606,6 +606,7 @@ func (store *Store) QueryAllEdges(_ context.Context, relKind model.RelationKind,
 			{"HAS_ANNOTATION_FUNC", constants.KindFunction, constants.KindAnnotation},
 			{"HAS_ANNOTATION_CLASS", constants.KindClass, constants.KindAnnotation},
 			{"HAS_ANNOTATION_IFACE", constants.KindInterface, constants.KindAnnotation},
+			{"HAS_ANNOTATION_VAR", constants.KindVariable, constants.KindAnnotation},
 		},
 		model.RelContains: {
 			{"CONTAINS", constants.KindRepository, constants.KindFile},
@@ -694,7 +695,7 @@ func (store *Store) QueryEdgesByNodeIDs(_ context.Context, nodeIDs []string, rel
 	if len(nodeIDs) == 0 {
 		return nil, nil
 	}
-	relTable, sourceLabel, targetLabel := mapRelation(relKind, "")
+	relTable, sourceLabel, targetLabel := mapRelation(relKind, "", "")
 	if relTable == "" {
 		return nil, fmt.Errorf("kuzu: unknown relation kind: %s", relKind)
 	}
@@ -1391,10 +1392,18 @@ func (store *Store) Close() error {
 }
 
 // mapRelation maps a RelationKind to KùzuDB table name and endpoint labels.
-func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLabel, targetLabel string) {
+func mapRelation(kind model.RelationKind, sourceKind, targetKind string) (relTable, sourceLabel, targetLabel string) {
 	switch kind {
 	case model.RelCalls:
-		return "CALLS", constants.KindFunction, constants.KindFunction
+		sourceLabel = sourceKind
+		targetLabel = targetKind
+		if sourceLabel == "" {
+			sourceLabel = constants.KindFunction
+		}
+		if targetLabel == "" {
+			targetLabel = constants.KindFunction
+		}
+		return "CALLS", sourceLabel, targetLabel
 	case model.RelExtends:
 		return "EXTENDS", constants.KindClass, constants.KindClass
 	case model.RelImplements:
@@ -1457,6 +1466,8 @@ func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLa
 			return "HAS_ANNOTATION_CLASS", constants.KindClass, constants.KindAnnotation
 		case constants.KindInterface:
 			return "HAS_ANNOTATION_IFACE", constants.KindInterface, constants.KindAnnotation
+		case constants.KindVariable:
+			return "HAS_ANNOTATION_VAR", constants.KindVariable, constants.KindAnnotation
 		default:
 			return "HAS_ANNOTATION_FUNC", constants.KindFunction, constants.KindAnnotation
 		}

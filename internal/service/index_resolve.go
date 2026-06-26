@@ -298,7 +298,7 @@ func buildLanguageHelpers(language string, symbolTable *resolver.SymbolTable, fr
 		helpers[constants.LangTypeScript] = resolverts.NewHelper(tsExternalMethods)
 		helpers[constants.LangJavaScript] = resolverts.NewHelper(tsExternalMethods)
 	case constants.LangKotlin:
-		helpers[constants.LangKotlin] = resolverkotlin.NewHelper()
+		helpers[constants.LangKotlin] = resolverkotlin.NewHelper(symbolTable, resolverkotlin.NewExternalMethodManager(frameworks, projectRoot))
 	}
 	return helpers
 }

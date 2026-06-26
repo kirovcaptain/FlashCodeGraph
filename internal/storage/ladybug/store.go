@@ -921,6 +921,7 @@ func (store *Store) QueryAllEdges(_ context.Context, relKind model.RelationKind,
 			{"HAS_ANNOTATION_FUNC", constants.KindFunction, constants.KindAnnotation},
 			{"HAS_ANNOTATION_CLASS", constants.KindClass, constants.KindAnnotation},
 			{"HAS_ANNOTATION_IFACE", constants.KindInterface, constants.KindAnnotation},
+			{"HAS_ANNOTATION_VAR", constants.KindVariable, constants.KindAnnotation},
 		},
 		model.RelContains: {
 			{"CONTAINS", constants.KindRepository, constants.KindFile},
@@ -1857,6 +1858,8 @@ func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLa
 			return "HAS_ANNOTATION_CLASS", constants.KindClass, constants.KindAnnotation
 		case constants.KindInterface:
 			return "HAS_ANNOTATION_IFACE", constants.KindInterface, constants.KindAnnotation
+		case constants.KindVariable:
+			return "HAS_ANNOTATION_VAR", constants.KindVariable, constants.KindAnnotation
 		default:
 			return "HAS_ANNOTATION_FUNC", constants.KindFunction, constants.KindAnnotation
 		}

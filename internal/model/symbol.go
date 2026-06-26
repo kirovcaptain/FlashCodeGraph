@@ -52,6 +52,7 @@ type Symbol struct {
 type StructuredAnnotation struct {
 	Name   string            `json:"name"`             // e.g. "RestController", "DubboReference"
 	Params map[string]string `json:"params,omitempty"` // e.g. {"version": "1.0.0", "group": "payment"}
+	Line   int              `json:"line,omitempty"`   // Source line number of the annotation
 }
 
 // FieldInfo represents a class/struct field declaration.

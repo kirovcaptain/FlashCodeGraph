@@ -84,7 +84,7 @@ func (resolver *Resolver) ResolveHeritage(heritage []model.RawHeritage, envs map
 		}
 
 		kind := model.RelExtends
-		if entry.Kind == "implements" {
+		if child.Kind == constants.KindClass && parent.Kind == constants.KindInterface {
 			kind = model.RelImplements
 		}
 

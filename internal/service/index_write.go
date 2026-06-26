@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -888,7 +889,7 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 				if !ok {
 					continue
 				}
-				annotationID := symbol.ID + "::" + structuredAnnotation.Name
+				annotationID := symbol.ID + "::" + structuredAnnotation.Name + "::" + strconv.Itoa(structuredAnnotation.Line)
 				// Build params string from structured params
 				paramsString := ""
 				for paramKey, paramValue := range structuredAnnotation.Params {
@@ -916,6 +917,8 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 					sourceKind = constants.KindClass
 				case constants.KindInterface:
 					sourceKind = constants.KindInterface
+				case constants.KindVariable:
+					sourceKind = constants.KindVariable
 				}
 				edges = append(edges, model.Edge{
 					SourceID:   symbol.ID,

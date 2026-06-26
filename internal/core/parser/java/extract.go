@@ -1403,6 +1403,7 @@ func ExtractAnnotations(modifiers *tree_sitter.Node, content []byte) []model.Str
 				annotations = append(annotations, model.StructuredAnnotation{
 					Name:   name,
 					Params: params,
+					Line:   int(child.StartPosition().Row) + 1,
 				})
 			}
 		}

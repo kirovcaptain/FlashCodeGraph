@@ -13,7 +13,7 @@ from collections import defaultdict
 
 # Edge table schema: edge_type -> (from_kind, to_kind)
 EDGE_SCHEMA = {
-    "CALLS": ("Function", ("Function", "Class")),
+    "CALLS": (("Function", "Class", "Variable"), ("Function", "Class")),
     "EXTENDS": (("Class", "Interface"), ("Class", "Interface")),
     "IMPLEMENTS": ("Class", "Interface"),
     "IMPORTS": ("File", "File"),
@@ -41,7 +41,7 @@ EDGE_SCHEMA = {
     "HAS_ANNOTATION_FUNC": ("Function", "Annotation"),
     "HAS_ANNOTATION_CLASS": ("Class", "Annotation"),
     "HAS_ANNOTATION_IFACE": ("Interface", "Annotation"),
-    "UNRESOLVED_CALL": ("Function", ("Function", "Class")),
+    "UNRESOLVED_CALL": (("Function", "Class", "Variable"), ("Function", "Class")),
     "USES": ("Function", "Variable"),
 }
 
@@ -75,11 +75,13 @@ def collect_node_ids(debug_dir):
         ("routes.csv", 0, None),         # id col 0, kind is always "Route"
         ("structural_nodes.csv", 0, 1),  # id col 0, kind col 1
         ("external_nodes.csv", 0, 1),   # id col 0, kind col 1
+        ("annotations.csv", 0, None),   # id col 0, kind is always "Annotation"
     ]
 
     # Fixed kinds for files without kind column
     fixed_kinds = {
         "routes.csv": "Route",
+        "annotations.csv": "Annotation",
     }
 
     id_to_kind = {}  # id -> kind

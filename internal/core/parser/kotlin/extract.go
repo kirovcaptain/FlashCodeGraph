@@ -171,6 +171,7 @@ func extractModifierInfo(node *tree_sitter.Node, content []byte) modifierInfo {
 func extractSingleAnnotation(node *tree_sitter.Node, content []byte) model.StructuredAnnotation {
 	annotation := model.StructuredAnnotation{
 		Params: make(map[string]string),
+		Line:   int(node.StartPosition().Row) + 1,
 	}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -178,30 +179,94 @@ func extractSingleAnnotation(node *tree_sitter.Node, content []byte) model.Struc
 		case "user_type":
 			annotation.Name = extractUserTypeName(child, content)
 		case "constructor_invocation":
-			// @Entity(tableName = "users") — annotation with params uses constructor_invocation
 			for j := uint(0); j < child.ChildCount(); j++ {
 				grandchild := child.Child(j)
 				switch grandchild.Kind() {
 				case "user_type":
 					annotation.Name = extractUserTypeName(grandchild, content)
 				case "value_arguments":
-					annotation.Params["value"] = extractAnnotationArguments(grandchild, content)
+					annotation.Params = extractAnnotationParams(grandchild, content)
 				}
 			}
 		case "value_arguments":
-			annotation.Params["value"] = extractAnnotationArguments(child, content)
+			annotation.Params = extractAnnotationParams(child, content)
 		}
 	}
 	return annotation
 }
 
-// extractAnnotationArguments extracts annotation parameters as raw text.
-func extractAnnotationArguments(node *tree_sitter.Node, content []byte) string {
-	// Extract the text between ( and )
+// extractAnnotationParams extracts annotation parameters as structured key-value pairs from AST.
+func extractAnnotationParams(node *tree_sitter.Node, content []byte) map[string]string {
+	params := make(map[string]string)
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() != "value_argument" {
+			continue
+		}
+
+		paramName := ""
+		paramValue := ""
+
+		for j := uint(0); j < child.ChildCount(); j++ {
+			argumentChild := child.Child(j)
+			switch argumentChild.Kind() {
+			case "identifier":
+				if paramName == "" {
+					paramName = argumentChild.Utf8Text(content)
+				}
+			case "string_literal":
+				paramValue = extractStringContent(argumentChild, content)
+			case "multiline_string_literal":
+				paramValue = extractMultilineStringContent(argumentChild, content)
+			case "collection_literal", "navigation_expression", "call_expression":
+				paramValue = argumentChild.Utf8Text(content)
+			}
+		}
+
+		if paramName == "" {
+			paramName = "value"
+		}
+		if paramValue != "" {
+			params[paramName] = paramValue
+		}
+	}
+
+	return params
+}
+
+// extractStringContent extracts the text content from a string_literal node.
+func extractStringContent(node *tree_sitter.Node, content []byte) string {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "string_content" {
+			return child.Utf8Text(content)
+		}
+	}
+	// Fallback: strip quotes from full text
 	text := node.Utf8Text(content)
-	text = strings.TrimPrefix(text, "(")
-	text = strings.TrimSuffix(text, ")")
-	return strings.TrimSpace(text)
+	text = strings.Trim(text, "\"")
+	return text
+}
+
+// extractMultilineStringContent extracts and normalizes text from a multiline_string_literal node.
+func extractMultilineStringContent(node *tree_sitter.Node, content []byte) string {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "string_content" {
+			rawText := child.Utf8Text(content)
+			lines := strings.Split(rawText, "\n")
+			var trimmedLines []string
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if trimmed != "" {
+					trimmedLines = append(trimmedLines, trimmed)
+				}
+			}
+			return strings.Join(trimmedLines, " ")
+		}
+	}
+	return ""
 }
 
 // extractUserTypeName extracts the simple name from a user_type node.
@@ -288,7 +353,7 @@ func extractClassDeclaration(node *tree_sitter.Node, content []byte, filePath st
 
 	// Extract heritage from delegation_specifiers
 	if delegationSpecifiers != nil {
-		extractHeritage(delegationSpecifiers, content, qualifiedName, result)
+		extractHeritage(delegationSpecifiers, content, className, qualifiedName, kind, filePath, result)
 	}
 
 	// Extract primary constructor fields and generate <init> symbol
@@ -341,7 +406,7 @@ func extractObjectDeclaration(node *tree_sitter.Node, content []byte, filePath s
 	result.Symbols = append(result.Symbols, symbol)
 
 	if delegationSpecifiers != nil {
-		extractHeritage(delegationSpecifiers, content, qualifiedName, result)
+		extractHeritage(delegationSpecifiers, content, objectName, qualifiedName, constants.KindClass, filePath, result)
 	}
 
 	newClassStack := append(append([]string{}, classStack...), objectName)
@@ -511,6 +576,16 @@ func extractFunctionDeclaration(node *tree_sitter.Node, content []byte, filePath
 	}
 	result.Symbols = append(result.Symbols, symbol)
 
+	// Extract Retrofit routes from annotations
+	currentClassName := ""
+	if len(classStack) > 0 {
+		currentClassName = strings.Join(classStack, ".")
+	}
+	if len(modifiers.Annotations) > 0 {
+		ExtractRetrofitRoutes(modifiers.Annotations, functionName, currentClassName, filePath, int(node.StartPosition().Row)+1, result)
+		ExtractRoomQueries(modifiers.Annotations, functionName, currentClassName, filePath, int(node.StartPosition().Row)+1, result)
+	}
+
 	// Generate type hints for parameters
 	scope := qualifiedName
 	for _, param := range params {
@@ -528,7 +603,7 @@ func extractFunctionDeclaration(node *tree_sitter.Node, content []byte, filePath
 	// Extract calls from function body
 	if functionBody != nil {
 		callerName := qualifiedName
-		extractCalls(functionBody, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
+		extractCalls(functionBody, content, filePath, callerName, constants.KindFunction, classStack, packageName, lambdaCounter, result)
 	}
 }
 
@@ -569,7 +644,7 @@ func extractSecondaryConstructor(node *tree_sitter.Node, content []byte, filePat
 	})
 
 	if body != nil {
-		extractCalls(body, content, filePath, qualifiedName, classStack, packageName, lambdaCounter, result)
+		extractCalls(body, content, filePath, qualifiedName, constants.KindFunction, classStack, packageName, lambdaCounter, result)
 	}
 }
 
@@ -699,10 +774,15 @@ func extractPropertyDeclaration(node *tree_sitter.Node, content []byte, filePath
 			hasDelegate = true
 			// Extract calls inside delegate (e.g. lazy { createDB() })
 			callerName := buildQualifiedName(packageName, classStack, "")
+			propertyCallerKind := constants.KindClass
 			if propertyName != "" {
 				callerName = buildQualifiedName(packageName, classStack, propertyName)
+				propertyCallerKind = constants.KindVariable
 			}
-			extractCalls(child, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
+			if len(classStack) == 0 {
+				propertyCallerKind = constants.KindVariable
+			}
+			extractCalls(child, content, filePath, callerName, propertyCallerKind, classStack, packageName, lambdaCounter, result)
 		case "call_expression", "navigation_expression", "identifier":
 			// Initialization expression — could be a call
 			if propertyName != "" {
@@ -753,17 +833,21 @@ func extractPropertyDeclaration(node *tree_sitter.Node, content []byte, filePath
 		if len(classStack) == 0 {
 			callerName = buildQualifiedName(packageName, classStack, propertyName)
 		}
-		extractCalls(initExpression, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
+		propertyCallerKind := constants.KindClass
+		if len(classStack) == 0 {
+			propertyCallerKind = constants.KindVariable
+		}
+		extractCalls(initExpression, content, filePath, callerName, propertyCallerKind, classStack, packageName, lambdaCounter, result)
 	}
 
 	// Extract calls from custom getter/setter
 	if getterNode != nil {
 		callerName := qualifiedName
-		extractCalls(getterNode, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
+		extractCalls(getterNode, content, filePath, callerName, constants.KindVariable, classStack, packageName, lambdaCounter, result)
 	}
 	if setterNode != nil {
 		callerName := qualifiedName
-		extractCalls(setterNode, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
+		extractCalls(setterNode, content, filePath, callerName, constants.KindVariable, classStack, packageName, lambdaCounter, result)
 	}
 }
 
@@ -795,7 +879,7 @@ func extractParameters(node *tree_sitter.Node, content []byte) []model.ParamInfo
 }
 
 // extractHeritage extracts EXTENDS/IMPLEMENTS from delegation_specifiers.
-func extractHeritage(node *tree_sitter.Node, content []byte, childQualifiedName string, result *model.ParseResult) {
+func extractHeritage(node *tree_sitter.Node, content []byte, className string, childQualifiedName string, childKind string, filePath string, result *model.ParseResult) {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() != "delegation_specifier" {
@@ -805,7 +889,6 @@ func extractHeritage(node *tree_sitter.Node, content []byte, childQualifiedName 
 			specifier := child.Child(j)
 			switch specifier.Kind() {
 			case "constructor_invocation":
-				// Has () → EXTENDS (class inheritance)
 				parentName := ""
 				for k := uint(0); k < specifier.ChildCount(); k++ {
 					if specifier.Child(k).Kind() == "user_type" {
@@ -815,19 +898,28 @@ func extractHeritage(node *tree_sitter.Node, content []byte, childQualifiedName 
 				}
 				if parentName != "" {
 					result.Heritage = append(result.Heritage, model.RawHeritage{
-						ChildName:  childQualifiedName,
-						ParentName: parentName,
-						Kind:       "EXTENDS",
+						ChildName:      className,
+						ChildQualified: childQualifiedName,
+						ParentName:     parentName,
+						Kind:           "extends",
+						FilePath:       filePath,
+						Language:       "kotlin",
 					})
 				}
 			case "user_type":
-				// No () → IMPLEMENTS (interface)
 				parentName := extractUserTypeName(specifier, content)
 				if parentName != "" {
+					heritageKind := "implements"
+					if childKind == constants.KindInterface {
+						heritageKind = "extends"
+					}
 					result.Heritage = append(result.Heritage, model.RawHeritage{
-						ChildName:  childQualifiedName,
-						ParentName: parentName,
-						Kind:       "IMPLEMENTS",
+						ChildName:      className,
+						ChildQualified: childQualifiedName,
+						ParentName:     parentName,
+						Kind:           heritageKind,
+						FilePath:       filePath,
+						Language:       "kotlin",
 					})
 				}
 			}
@@ -860,11 +952,11 @@ func parseTypeParams(text string) []string {
 }
 
 // extractCalls recursively extracts call expressions from an AST subtree.
-func extractCalls(node *tree_sitter.Node, content []byte, filePath string, callerName string, classStack []string, packageName string, lambdaCounter *int, result *model.ParseResult) {
+func extractCalls(node *tree_sitter.Node, content []byte, filePath string, callerName string, callerKind string, classStack []string, packageName string, lambdaCounter *int, result *model.ParseResult) {
 	astutil.WalkNamedChildren(node, func(child *tree_sitter.Node) bool {
 		switch child.Kind() {
 		case "call_expression":
-			extractSingleCall(child, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
+			extractSingleCall(child, content, filePath, callerName, callerKind, classStack, packageName, lambdaCounter, result)
 			return false // don't recurse into call_expression children (handled inside)
 		case "navigation_expression":
 			// A navigation_expression without call (e.g. user?.name) — skip
@@ -875,7 +967,7 @@ func extractCalls(node *tree_sitter.Node, content []byte, filePath string, calle
 }
 
 // extractSingleCall extracts one call_expression into a RawCall + handles trailing lambda.
-func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, callerName string, classStack []string, packageName string, lambdaCounter *int, result *model.ParseResult) {
+func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, callerName string, callerKind string, classStack []string, packageName string, lambdaCounter *int, result *model.ParseResult) {
 	var receiverExpression string
 	var calledName string
 	var argumentCount int
@@ -925,7 +1017,7 @@ func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, 
 
 	if calledName == "" {
 		if navigationNode != nil {
-			extractCalls(navigationNode, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
+			extractCalls(navigationNode, content, filePath, callerName, callerKind, classStack, packageName, lambdaCounter, result)
 		}
 		return
 	}
@@ -935,7 +1027,7 @@ func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, 
 	result.Calls = append(result.Calls, model.RawCall{
 		CalledName:   calledName,
 		CallerName:   callerName,
-		CallerKind:   constants.KindFunction,
+		CallerKind:   callerKind,
 		ReceiverExpr: receiverExpression,
 		FilePath:     filePath,
 		Line:         line,
@@ -965,7 +1057,7 @@ func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, 
 		result.Calls = append(result.Calls, model.RawCall{
 			CalledName:          lambdaQualifiedName,
 			CallerName:          callerName,
-			CallerKind:          constants.KindFunction,
+			CallerKind:          callerKind,
 			FilePath:            filePath,
 			Line:                int(lambdaNode.StartPosition().Row) + 1,
 			IsPreResolved:       true,
@@ -983,17 +1075,17 @@ func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, 
 			}
 		}
 		if lambdaLiteral != nil {
-			extractCalls(lambdaLiteral, content, filePath, lambdaQualifiedName, classStack, packageName, lambdaCounter, result)
+			extractCalls(lambdaLiteral, content, filePath, lambdaQualifiedName, constants.KindFunction, classStack, packageName, lambdaCounter, result)
 		}
 
 		// Also recurse into navigation expression for chained calls (e.g. repo.getUser(id).also { })
 		if navigationNode != nil {
-			extractCalls(navigationNode, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
+			extractCalls(navigationNode, content, filePath, callerName, callerKind, classStack, packageName, lambdaCounter, result)
 		}
 	} else {
 		// No trailing lambda — recurse into the navigation expression for nested calls (chain)
 		if navigationNode != nil {
-			extractCalls(navigationNode, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
+			extractCalls(navigationNode, content, filePath, callerName, callerKind, classStack, packageName, lambdaCounter, result)
 		}
 	}
 }
@@ -1096,7 +1188,7 @@ func extractLambdasInArguments(node *tree_sitter.Node, content []byte, filePath 
 						Language:      "kotlin",
 					})
 
-					extractCalls(argChild, content, filePath, lambdaQualifiedName, classStack, packageName, lambdaCounter, result)
+					extractCalls(argChild, content, filePath, lambdaQualifiedName, constants.KindFunction, classStack, packageName, lambdaCounter, result)
 				}
 			}
 		}

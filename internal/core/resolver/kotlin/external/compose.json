@@ -1,0 +1,33 @@
+{
+  "androidx.compose.runtime.State": "T",
+  "androidx.compose.runtime.MutableState": "T",
+
+  "androidx.compose.runtime.remember(Function)": "T",
+  "androidx.compose.runtime.mutableStateOf(T)": "MutableState<T>",
+  "androidx.compose.runtime.derivedStateOf(Function)": "State<T>",
+  "androidx.compose.runtime.rememberCoroutineScope()": "CoroutineScope",
+  "androidx.compose.runtime.collectAsState()": "State<T>",
+
+  "androidx.lifecycle.compose.collectAsStateWithLifecycle()": "State<T>",
+
+  "androidx.hilt.navigation.compose.hiltViewModel()": "T",
+
+  "androidx.compose.ui.Modifier.padding()": "Modifier",
+  "androidx.compose.ui.Modifier.fillMaxWidth()": "Modifier",
+  "androidx.compose.ui.Modifier.fillMaxHeight()": "Modifier",
+  "androidx.compose.ui.Modifier.fillMaxSize()": "Modifier",
+  "androidx.compose.ui.Modifier.width()": "Modifier",
+  "androidx.compose.ui.Modifier.height()": "Modifier",
+  "androidx.compose.ui.Modifier.size()": "Modifier",
+  "androidx.compose.ui.Modifier.clickable(Function)": "Modifier",
+  "androidx.compose.ui.Modifier.background()": "Modifier",
+  "androidx.compose.ui.Modifier.clip()": "Modifier",
+  "androidx.compose.ui.Modifier.border()": "Modifier",
+  "androidx.compose.ui.Modifier.offset()": "Modifier",
+  "androidx.compose.ui.Modifier.weight(float)": "Modifier",
+  "androidx.compose.ui.Modifier.align()": "Modifier",
+  "androidx.compose.ui.Modifier.wrapContentSize()": "Modifier",
+  "androidx.compose.ui.Modifier.testTag(String)": "Modifier",
+  "androidx.compose.ui.Modifier.semantics(Function)": "Modifier",
+  "androidx.compose.ui.Modifier.then(Modifier)": "Modifier"
+}
