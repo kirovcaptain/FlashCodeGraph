@@ -186,6 +186,27 @@ def check_edges(debug_dir, id_to_kind):
                     if target_kind and not to_ok:
                         type_mismatches.append((filename, line_number, edge_type, "target", target_id, target_kind, expected_to_kind))
 
+    # Check annotation edges: source_id must be a valid symbol with supported kind
+    ANNOTATION_VALID_KINDS = {"Function", "Class", "Interface", "Variable"}
+    annotations_path = os.path.join(debug_dir, "annotations.csv")
+    if os.path.exists(annotations_path):
+        with open(annotations_path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            if header:
+                # source_id is the last column
+                source_id_col = header.index("source_id") if "source_id" in header else len(header) - 1
+                for line_number, row in enumerate(reader, start=2):
+                    if len(row) <= source_id_col:
+                        continue
+                    source_id = row[source_id_col]
+                    if source_id and source_id not in id_to_kind:
+                        orphans.append(("annotations.csv", line_number, "source", source_id))
+                    elif source_id:
+                        actual_kind = id_to_kind.get(source_id)
+                        if actual_kind and actual_kind not in ANNOTATION_VALID_KINDS:
+                            type_mismatches.append(("annotations.csv", line_number, "HAS_ANNOTATION", "source", source_id, actual_kind, tuple(ANNOTATION_VALID_KINDS)))
+
     return orphans, type_mismatches
 
 
