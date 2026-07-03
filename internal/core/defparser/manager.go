@@ -12,7 +12,7 @@ type DefParser interface {
 	Detect(content []byte) bool
 
 	// Parse extracts data from the file content.
-	Parse(content []byte, relPath string) *model.ParseResult
+	Parse(input model.DefParseInput) *model.ParseResult
 }
 
 // Manager manages a set of DefParsers and provides unified access.
@@ -26,15 +26,15 @@ func NewManager() *Manager {
 }
 
 // Register adds a parser to the manager.
-func (m *Manager) Register(p DefParser) {
-	m.parsers = append(m.parsers, p)
+func (manager *Manager) Register(p DefParser) {
+	manager.parsers = append(manager.parsers, p)
 }
 
 // Extensions returns all file extensions from registered parsers (deduplicated).
-func (m *Manager) Extensions() []string {
+func (manager *Manager) Extensions() []string {
 	seen := make(map[string]bool)
 	var exts []string
-	for _, p := range m.parsers {
+	for _, p := range manager.parsers {
 		for _, ext := range p.Extensions() {
 			if !seen[ext] {
 				seen[ext] = true
@@ -46,16 +46,16 @@ func (m *Manager) Extensions() []string {
 }
 
 // Parse tries each registered parser: Detect then Parse. Returns nil if no parser matches.
-func (m *Manager) Parse(content []byte, relPath string) *model.ParseResult {
-	for _, p := range m.parsers {
-		if p.Detect(content) {
-			return p.Parse(content, relPath)
+func (manager *Manager) Parse(input model.DefParseInput) *model.ParseResult {
+	for _, registeredParser := range manager.parsers {
+		if registeredParser.Detect(input.Content) {
+			return registeredParser.Parse(input)
 		}
 	}
 	return nil
 }
 
 // HasParsers returns true if any parsers are registered.
-func (m *Manager) HasParsers() bool {
-	return len(m.parsers) > 0
+func (manager *Manager) HasParsers() bool {
+	return len(manager.parsers) > 0
 }

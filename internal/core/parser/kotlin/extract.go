@@ -50,6 +50,7 @@ func Extract(rootNode *tree_sitter.Node, content []byte, file scanner.ScannedFil
 		return true
 	})
 
+	ExtractComposeRoutes(result)
 }
 
 // extractPackageName extracts the package name from a package_header node.
@@ -961,6 +962,11 @@ func extractCalls(node *tree_sitter.Node, content []byte, filePath string, calle
 		case "navigation_expression":
 			// A navigation_expression without call (e.g. user?.name) — skip
 			return true
+		case "binary_expression":
+			if tryExtractComposeTypeSafe(child, content, filePath, callerName, callerKind, classStack, packageName, lambdaCounter, result) {
+				return false // handled as Compose type-safe call, don't recurse
+			}
+			return true // not a Compose pattern, recurse normally
 		}
 		return true
 	})
@@ -971,6 +977,7 @@ func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, 
 	var receiverExpression string
 	var calledName string
 	var argumentCount int
+	var argumentExpressions []string
 	var lambdaNode *tree_sitter.Node
 	var navigationNode *tree_sitter.Node
 	var innerCallNode *tree_sitter.Node
@@ -989,7 +996,7 @@ func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, 
 				calledName = child.Utf8Text(content)
 			}
 		case "value_arguments":
-			argumentCount = countArguments(child)
+			argumentCount, argumentExpressions = extractArguments(child, content)
 			extractLambdasInArguments(child, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
 		case "annotated_lambda":
 			lambdaNode = child
@@ -1009,7 +1016,7 @@ func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, 
 					calledName = child.Utf8Text(content)
 				}
 			case "value_arguments":
-				argumentCount = countArguments(child)
+				argumentCount, argumentExpressions = extractArguments(child, content)
 				extractLambdasInArguments(child, content, filePath, callerName, classStack, packageName, lambdaCounter, result)
 			}
 		}
@@ -1033,6 +1040,7 @@ func extractSingleCall(node *tree_sitter.Node, content []byte, filePath string, 
 		Line:         line,
 		Language:     "kotlin",
 		ArgCount:     argumentCount,
+		ArgExprs:     argumentExpressions,
 	})
 
 	// Handle trailing lambda
@@ -1142,15 +1150,121 @@ func extractNavigationExpression(node *tree_sitter.Node, content []byte) (receiv
 	return receiverExpression, calledName
 }
 
-// countArguments counts the number of value_argument nodes in a value_arguments node.
-func countArguments(node *tree_sitter.Node) int {
-	count := 0
+// extractArguments counts value_argument nodes and collects their text expressions.
+func extractArguments(node *tree_sitter.Node, content []byte) (int, []string) {
+	var count int
+	var argumentExpressions []string
 	for i := uint(0); i < node.ChildCount(); i++ {
-		if node.Child(i).Kind() == "value_argument" {
+		child := node.Child(i)
+		if child.Kind() == "value_argument" {
 			count++
+			argumentExpressions = append(argumentExpressions, child.Utf8Text(content))
 		}
 	}
-	return count
+	return count, argumentExpressions
+}
+
+// composeNavFunctionNames lists function names that define Compose Navigation routes (for type-safe heuristic).
+var composeNavFunctionNames = map[string]bool{
+	"composable":  true,
+	"dialog":      true,
+	"bottomSheet": true,
+	"navigation":  true,
+}
+
+// tryExtractComposeTypeSafe detects tree-sitter's mis-parsed composable<Type> { ... } pattern
+// (parsed as binary_expression instead of call_expression with type_arguments) and extracts
+// the route definition + lambda scope correctly.
+func tryExtractComposeTypeSafe(node *tree_sitter.Node, content []byte, filePath string, callerName string, callerKind string, classStack []string, packageName string, lambdaCounter *int, result *model.ParseResult) bool {
+	// Step 1: Verify top-level is binary_expression with right child = lambda_literal
+	if node.ChildCount() < 3 {
+		return false
+	}
+	rightChild := node.Child(node.ChildCount() - 1)
+	if rightChild.Kind() != "lambda_literal" {
+		return false
+	}
+
+	// Step 2: Verify left child is binary_expression (the "composable < Detail" part)
+	leftChild := node.Child(0)
+	if leftChild.Kind() != "binary_expression" {
+		return false
+	}
+
+	// Step 3: Verify left.left is identifier in known Compose function list
+	if leftChild.ChildCount() < 3 {
+		return false
+	}
+	functionNameNode := leftChild.Child(0)
+	if functionNameNode.Kind() != "identifier" {
+		return false
+	}
+	functionName := functionNameNode.Utf8Text(content)
+	if !composeNavFunctionNames[functionName] {
+		return false
+	}
+
+	// Step 4: Verify left.right is identifier (the class/type name)
+	classNameNode := leftChild.Child(leftChild.ChildCount() - 1)
+	if classNameNode.Kind() != "identifier" {
+		return false
+	}
+	className := classNameNode.Utf8Text(content)
+
+	// Step 5: Create lambda scope and recursively extract calls inside lambda
+	*lambdaCounter++
+	lambdaName := fmt.Sprintf("lambda$%d", *lambdaCounter)
+	lambdaQualifiedName := callerName + "." + lambdaName
+	lambdaSymbolID := astutil.GenerateSymbolID(filePath, lambdaQualifiedName, int(rightChild.StartPosition().Row)+1)
+
+	result.Symbols = append(result.Symbols, model.Symbol{
+		ID:            lambdaSymbolID,
+		Name:          lambdaName,
+		QualifiedName: lambdaQualifiedName,
+		Kind:          constants.KindFunction,
+		FilePath:      filePath,
+		StartLine:     int(rightChild.StartPosition().Row) + 1,
+		EndLine:       int(rightChild.EndPosition().Row) + 1,
+		IsLambda:      true,
+		LambdaContext: callerName,
+	})
+
+	// Generate call relation: caller → lambda
+	result.Calls = append(result.Calls, model.RawCall{
+		CalledName:        lambdaQualifiedName,
+		CallerName:        callerName,
+		CallerKind:        callerKind,
+		FilePath:          filePath,
+		Line:              int(rightChild.StartPosition().Row) + 1,
+		IsPreResolved:     true,
+		LambdaOwnerMethod: functionName,
+		Language:          "kotlin",
+	})
+
+	// Recursively extract calls inside lambda (with lambdaQualifiedName as caller)
+	extractCalls(rightChild, content, filePath, lambdaQualifiedName, constants.KindFunction, classStack, packageName, lambdaCounter, result)
+
+	// Step 6: Generate RawRoute with handler (now that lambda contents are extracted)
+	var handlers []string
+	for _, call := range result.Calls {
+		if call.CallerName == lambdaQualifiedName &&
+			call.ReceiverExpr == "" &&
+			len(call.CalledName) > 0 &&
+			call.CalledName[0] >= 'A' && call.CalledName[0] <= 'Z' {
+			handlers = []string{call.CalledName}
+			break
+		}
+	}
+	result.Routes = append(result.Routes, model.RawRoute{
+		Method:      "NAVIGATE",
+		PathPattern: className,
+		Handlers:    handlers,
+		Framework:   "compose-navigation-typesafe",
+		FilePath:    filePath,
+		Line:        int(node.StartPosition().Row) + 1,
+	})
+
+	return true
 }
 
 // extractLambdasInArguments extracts lambda expressions inside value_arguments (non-trailing).

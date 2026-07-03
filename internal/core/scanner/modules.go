@@ -4,8 +4,26 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+var namespacePattern = regexp.MustCompile(`namespace\s*=?\s*"([^"]+)"`)
+
+// extractModulePackage reads namespace from a module's build.gradle.kts or build.gradle.
+func extractModulePackage(root string, moduleRoot string) string {
+	for _, buildFile := range []string{"build.gradle.kts", "build.gradle"} {
+		buildPath := filepath.Join(root, moduleRoot, buildFile)
+		content, err := os.ReadFile(buildPath)
+		if err != nil {
+			continue
+		}
+		if matches := namespacePattern.FindSubmatch(content); len(matches) > 1 {
+			return string(matches[1])
+		}
+	}
+	return ""
+}
 
 // detectMavenModules reads pom.xml for <modules> entries.
 func (scanner *Scanner) detectMavenModules(root string, info *ProjectInfo) {
@@ -77,9 +95,10 @@ func (scanner *Scanner) detectGradleModules(root string, info *ProjectInfo) {
 					moduleRoot := filepath.Join(root, part)
 					sourceDirectory := filepath.Join(part, "src", "main", "java")
 					info.SubModules = append(info.SubModules, SubModule{
-						Name:    part,
-						RootDir: moduleRoot,
-						SrcDir:  sourceDirectory,
+						Name:          part,
+						RootDir:       moduleRoot,
+						SrcDir:        sourceDirectory,
+						ModulePackage: extractModulePackage(root, part),
 					})
 					info.SourceDirs[part] = sourceDirectory
 					// Also register src/main/kotlin if it exists

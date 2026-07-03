@@ -10,21 +10,21 @@ import (
 // MybatisParser parses MyBatis XML mapper files.
 type MybatisParser struct{}
 
-func (p *MybatisParser) Extensions() []string {
+func (parser *MybatisParser) Extensions() []string {
 	return []string{".xml"}
 }
 
-func (p *MybatisParser) Detect(content []byte) bool {
+func (parser *MybatisParser) Detect(content []byte) bool {
 	return bytes.Contains(content, []byte("<mapper"))
 }
 
-func (p *MybatisParser) Parse(content []byte, relPath string) *model.ParseResult {
-	queries := java.ExtractMybatisMapper(content, relPath)
+func (parser *MybatisParser) Parse(input model.DefParseInput) *model.ParseResult {
+	queries := java.ExtractMybatisMapper(input.Content, input.RelPath)
 	if len(queries) == 0 {
 		return nil
 	}
 	return &model.ParseResult{
-		FilePath: relPath,
+		FilePath: input.RelPath,
 		Language: "xml",
 		Queries:  queries,
 	}

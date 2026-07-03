@@ -46,6 +46,7 @@ type Symbol struct {
 	Complexity      int    `json:"complexity,omitempty"`
 	EntryPointScore float64 `json:"entry_point_score,omitempty"`
 	EntryType       string `json:"entry_type,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"` // Kind-specific extension properties
 }
 
 // StructuredAnnotation represents a parsed annotation with name and parameters.

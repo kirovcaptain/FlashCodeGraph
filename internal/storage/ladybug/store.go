@@ -931,6 +931,16 @@ func (store *Store) QueryAllEdges(_ context.Context, relKind model.RelationKind,
 			{"FILE_CONTAINS_IFACE", constants.KindFile, constants.KindInterface},
 			{"CLASS_CONTAINS_FUNC", constants.KindClass, constants.KindFunction},
 			{"IFACE_CONTAINS_FUNC", constants.KindInterface, constants.KindFunction},
+			{"LAYOUT_CONTAINS", constants.KindLayout, constants.KindWidget},
+		},
+		model.RelIncludes:         {{"INCLUDES", constants.KindLayout, constants.KindLayout}},
+		model.RelNavigatesTo:     {{"NAVIGATES_TO", constants.KindWidget, constants.KindWidget}, {"NAVIGATES_TO", constants.KindFunction, constants.KindRoute}},
+		model.RelReferences: {
+			{"REFERENCES", constants.KindAppComponent, constants.KindClass},
+			{"REFERENCES", constants.KindFunction, constants.KindWidget},
+			{"REFERENCES", constants.KindFunction, constants.KindLayout},
+			{"REFERENCES", constants.KindLayout, constants.KindClass},
+			{"REFERENCES", constants.KindWidget, constants.KindClass},
 		},
 		model.RelRemoteCallsRoute: {{"REMOTE_CALLS_ROUTE", constants.KindFunction, constants.KindRoute}},
 		model.RelRemoteCallsExt:   {{"REMOTE_CALLS_EXT", constants.KindFunction, constants.KindExternalService}},
@@ -1652,7 +1662,8 @@ func (store *Store) GetStats(_ context.Context) (*model.GraphStats, error) {
 
 	// Edge counts
 	edgeTypes := []string{"CALLS", "EXTENDS", "IMPLEMENTS", "OVERRIDES", "IMPORTS",
-		"HANDLES", "EXECUTES", "CONTAINS"}
+		"HANDLES", "EXECUTES", "REMOTE_CALLS", "CONTAINS", "HAS_ANNOTATION", "STEP", "UNRESOLVED_CALL", "USES",
+		"REFERENCES", "INCLUDES", "LAYOUT_CONTAINS", "NAVIGATES_TO"}
 	for _, rel := range edgeTypes {
 		result, err := store.conn.Query(fmt.Sprintf("MATCH ()-[r:%s]->() RETURN count(r)", rel))
 		if err != nil {
@@ -1826,6 +1837,8 @@ func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLa
 			return "FILE_CONTAINS_IFACE", constants.KindFile, constants.KindInterface
 		case constants.SourceKindFileVar:
 			return "FILE_CONTAINS_VAR", constants.KindFile, constants.KindVariable
+		case constants.KindLayout:
+			return "LAYOUT_CONTAINS", constants.KindLayout, constants.KindWidget
 		default:
 			return "CONTAINS", constants.KindRepository, constants.KindFile
 		}
@@ -1852,6 +1865,19 @@ func mapRelation(kind model.RelationKind, sourceKind string) (relTable, sourceLa
 		return "UNRESOLVED_CALL", constants.KindFunction, constants.KindFunction
 	case model.RelUses:
 		return "USES", constants.KindFunction, constants.KindVariable
+	case model.RelIncludes:
+		return "INCLUDES", constants.KindLayout, constants.KindLayout
+	case model.RelNavigatesTo:
+		if sourceKind == constants.KindFunction {
+			return "NAVIGATES_TO", constants.KindFunction, constants.KindRoute
+		}
+		return "NAVIGATES_TO", constants.KindWidget, constants.KindWidget
+	case model.RelReferences:
+		sourceLabel := sourceKind
+		if sourceLabel == "" {
+			sourceLabel = constants.KindFunction
+		}
+		return "REFERENCES", sourceLabel, constants.KindWidget
 	case model.RelHasAnnotation:
 		switch sourceKind {
 		case constants.KindClass:

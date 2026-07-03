@@ -24,6 +24,8 @@ type DumpManager interface {
 	OnStructuralNodes(nodes []model.Node, edges []model.Edge)
 	OnExternalNodes(nodes []model.Node)
 	OnUnresolvedEdges(edges []model.Edge)
+	OnLayoutEdges(edges []model.Edge)
+	OnResourceReferences(relations []model.ResolvedRelation)
 }
 
 // NopDumpManager does nothing (debug=false).
@@ -41,6 +43,8 @@ func (NopDumpManager) OnSymbolNodes([]model.Node)                               
 func (NopDumpManager) OnStructuralNodes([]model.Node, []model.Edge)               {}
 func (NopDumpManager) OnExternalNodes([]model.Node)                               {}
 func (NopDumpManager) OnUnresolvedEdges([]model.Edge)                              {}
+func (NopDumpManager) OnLayoutEdges([]model.Edge)                                  {}
+func (NopDumpManager) OnResourceReferences([]model.ResolvedRelation)               {}
 
 // FileDumpManager writes CSV files to .fcg/debug/.
 type FileDumpManager struct {
@@ -416,3 +420,39 @@ func (d *FileDumpManager) OnUnresolvedEdges(edges []model.Edge) {
 	log.Printf("[debug] dumped %d unresolved edges to .fcg/debug/unresolved_edges.csv", len(edges))
 }
 
+
+func (d *FileDumpManager) OnLayoutEdges(edges []model.Edge) {
+	if len(edges) == 0 {
+		return
+	}
+	header := []string{"source_id", "target_id", "kind", "source_kind", "target_kind", "ref_kind"}
+	writer, file := d.createCSV("layout_edges.csv", header)
+	if writer == nil {
+		return
+	}
+	for _, edge := range edges {
+		refKind, _ := edge.Properties["ref_kind"].(string)
+		writer.Write([]string{edge.SourceID, edge.TargetID, string(edge.Kind), edge.SourceKind, edge.TargetKind, refKind})
+	}
+	writer.Flush()
+	file.Close()
+	log.Printf("[debug] dumped %d layout edges to .fcg/debug/layout_edges.csv", len(edges))
+}
+
+func (d *FileDumpManager) OnResourceReferences(relations []model.ResolvedRelation) {
+	if len(relations) == 0 {
+		return
+	}
+	header := []string{"source_id", "target_id", "source_kind", "target_kind", "ref_kind", "line"}
+	writer, file := d.createCSV("resource_references.csv", header)
+	if writer == nil {
+		return
+	}
+	for _, relation := range relations {
+		refKind := relation.Metadata["ref_kind"]
+		writer.Write([]string{relation.SourceID, relation.TargetID, relation.SourceKind, relation.TargetKind, refKind, strconv.Itoa(relation.Line)})
+	}
+	writer.Flush()
+	file.Close()
+	log.Printf("[debug] dumped %d resource references to .fcg/debug/resource_references.csv", len(relations))
+}

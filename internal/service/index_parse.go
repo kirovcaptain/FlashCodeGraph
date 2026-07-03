@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/kirovcaptain/FlashCodeGraph/internal/constants"
@@ -32,6 +33,9 @@ func (indexer *Indexer) parseAllFiles(ctx context.Context, scanCtx *scanContext,
 	if len(defFiles) > 0 {
 		indexer.progress.EmitSub(PhaseParsing, SubParseDefFiles, "")
 		defResults := indexer.parseDefFiles(scanCtx, defFiles)
+		for _, defResult := range defResults {
+			symbolTable.AddBatch(defResult.Symbols)
+		}
 		parseResults = append(parseResults, defResults...)
 		indexer.progress.EmitSub(PhaseParsing, SubParseDefFiles, fmt.Sprintf("%d files", len(defResults)))
 	}
@@ -49,9 +53,16 @@ func (indexer *Indexer) parseDefFiles(scanCtx *scanContext, files []scanner.Scan
 		var result *model.ParseResult
 		switch file.Category {
 		case constants.FileQueryDef:
-			result = scanCtx.ormManager.Parse(content, file.RelPath)
+			result = scanCtx.ormManager.Parse(model.DefParseInput{
+				Content:       content,
+				RelPath:       file.RelPath,
+				ModulePackage: findModulePackage(scanCtx.projectInfo.SubModules, file.RelPath),
+			})
 		case constants.FileSchemaDef:
-			result = scanCtx.schemaManager.Parse(content, file.RelPath)
+			result = scanCtx.schemaManager.Parse(model.DefParseInput{
+				Content: content,
+				RelPath: file.RelPath,
+			})
 		}
 		if result != nil {
 			results = append(results, *result)
@@ -215,4 +226,18 @@ func clearParseResultsPhase2(parseResults []model.ParseResult) {
 		parseResults[i].PendingRemoteCalls = nil
 	}
 	runtime.GC()
+}
+
+// findModulePackage returns the ModulePackage for the given file path by matching against SubModules.
+func findModulePackage(modules []scanner.SubModule, relPath string) string {
+	var bestPackage string
+	bestLen := 0
+	for _, module := range modules {
+		// SubModule.Name is the relative module path (e.g. "app", "feature/profile")
+		if strings.HasPrefix(relPath, module.Name+"/") && len(module.Name) > bestLen {
+			bestPackage = module.ModulePackage
+			bestLen = len(module.Name)
+		}
+	}
+	return bestPackage
 }

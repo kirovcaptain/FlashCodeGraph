@@ -15,6 +15,9 @@ const (
 	KindProcess         = "Process"
 	KindAnnotation      = "Annotation"
 	KindExternalService = "ExternalService"
+	KindLayout          = "Layout"
+	KindWidget          = "Widget"
+	KindAppComponent    = "AppComponent"
 )
 
 // AllNodeKinds is the complete list of all node kinds in the graph.
@@ -23,6 +26,7 @@ var AllNodeKinds = []string{
 	KindFile, KindDirectory, KindRepository,
 	KindRoute, KindQueryNode, KindCommunity, KindProcess,
 	KindAnnotation, KindExternalService,
+	KindLayout, KindWidget, KindAppComponent,
 }
 
 // BaseSymbolKinds is the list of base code symbol kinds (Function, Class, Interface).

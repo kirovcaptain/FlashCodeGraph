@@ -152,6 +152,24 @@ var NodeColumns = map[string][]ColumnDef{
 		{"discovered_by", "STRING"},
 		{"file_path", "STRING"},
 	},
+	"Layout": {
+		{"name", "STRING"},
+		{"file_path", "STRING"},
+	},
+	"Widget": {
+		{"name", "STRING"},
+		{"widget_type", "STRING"},
+		{"file_path", "STRING"},
+		{"line", "INT32"},
+	},
+	"AppComponent": {
+		{"name", "STRING"},
+		{"qualified_name", "STRING"},
+		{"component_type", "STRING"},
+		{"is_launcher", "BOOLEAN"},
+		{"deep_links", "STRING"},
+		{"file_path", "STRING"},
+	},
 }
 
 // ColumnNames returns the column names for a node kind (for query generation).
@@ -296,6 +314,13 @@ var EdgeColumns = map[string]EdgeTableDef{
 	"HAS_ANNOTATION_CLASS": {EdgePairs: []EdgePair{{"Class", "Annotation"}}, Columns: nil},
 	"HAS_ANNOTATION_IFACE": {EdgePairs: []EdgePair{{"Interface", "Annotation"}}, Columns: nil},
 	"HAS_ANNOTATION_VAR":   {EdgePairs: []EdgePair{{"Variable", "Annotation"}}, Columns: nil},
+	"INCLUDES":             {EdgePairs: []EdgePair{{"Layout", "Layout"}}, Columns: nil},
+	"LAYOUT_CONTAINS":      {EdgePairs: []EdgePair{{"Layout", "Widget"}}, Columns: nil},
+	"NAVIGATES_TO":         {EdgePairs: []EdgePair{{"Widget", "Widget"}, {"Function", "Route"}}, Columns: nil},
+	"REFERENCES":           {EdgePairs: []EdgePair{{"AppComponent", "Class"}, {"Function", "Widget"}, {"Function", "Layout"}, {"Layout", "Class"}, {"Widget", "Class"}}, Columns: []ColumnDef{
+		{"ref_kind", "STRING"},
+		{"line", "INT32"},
+	}},
 	"UNRESOLVED_CALL": {EdgePairs: []EdgePair{{"Function", "Function"}, {"Function", "Class"}}, Columns: []ColumnDef{
 		{"hint_type", "STRING"},
 		{"line", "INT32"},

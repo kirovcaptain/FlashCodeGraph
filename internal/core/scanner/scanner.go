@@ -56,9 +56,10 @@ type ProjectInfo struct {
 
 // SubModule represents a detected sub-module.
 type SubModule struct {
-	Name    string
-	RootDir string
-	SrcDir  string
+	Name          string
+	RootDir       string
+	SrcDir        string
+	ModulePackage string // Android namespace from build.gradle.kts (e.g. "com.example.app")
 }
 
 // New creates a Scanner with the given config.

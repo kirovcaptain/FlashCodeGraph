@@ -26,33 +26,33 @@ type ProtoRPC struct {
 // ProtoParser parses .proto files to extract gRPC service and rpc definitions.
 type ProtoParser struct{}
 
-func (p *ProtoParser) Extensions() []string {
+func (parser *ProtoParser) Extensions() []string {
 	return []string{".proto"}
 }
 
-func (p *ProtoParser) Detect(content []byte) bool {
+func (parser *ProtoParser) Detect(content []byte) bool {
 	return bytes.Contains(content, []byte("service ")) && bytes.Contains(content, []byte("rpc "))
 }
 
-func (p *ProtoParser) Parse(content []byte, relPath string) *model.ParseResult {
-	services := ParseProtoServices(string(content))
+func (parser *ProtoParser) Parse(input model.DefParseInput) *model.ParseResult {
+	services := ParseProtoServices(string(input.Content))
 	if len(services) == 0 {
 		return nil
 	}
-	pr := &model.ParseResult{FilePath: relPath, Language: "proto"}
-	for _, svc := range services {
-		for _, rpc := range svc.Methods {
-			pr.Routes = append(pr.Routes, model.RawRoute{
+	result := &model.ParseResult{FilePath: input.RelPath, Language: "proto"}
+	for _, service := range services {
+		for _, rpc := range service.Methods {
+			result.Routes = append(result.Routes, model.RawRoute{
 				Method:      rpc.Name,
-				PathPattern: svc.Name,
+				PathPattern: service.Name,
 				Framework:   "grpc",
-				Handlers: []string{svc.Name + "." + rpc.Name},
-				FilePath:    relPath,
+				Handlers:    []string{service.Name + "." + rpc.Name},
+				FilePath:    input.RelPath,
 				Line:        rpc.Line,
 			})
 		}
 	}
-	return pr
+	return result
 }
 
 var (

@@ -29,6 +29,9 @@ const (
 	RelHasAnnotation RelationKind = "HAS_ANNOTATION"
 	RelUnresolvedCall RelationKind = "UNRESOLVED_CALL"
 	RelUses           RelationKind = "USES"
+	RelIncludes       RelationKind = "INCLUDES"
+	RelReferences     RelationKind = "REFERENCES"
+	RelNavigatesTo    RelationKind = "NAVIGATES_TO"
 )
 
 // Direction for graph traversal.

@@ -23,6 +23,7 @@ type resolvedRelations struct {
 	Overrides  []model.ResolvedRelation
 	Implements []model.ResolvedRelation
 	Uses       []model.ResolvedRelation
+	References []model.ResolvedRelation
 	Hints      []model.UnresolvedHint
 }
 
@@ -216,12 +217,16 @@ func (indexer *Indexer) resolveCallsAndHeritage(
 		usesRelations = resolverInstance.ResolveConstRefs(allConstRefs, envs)
 	}
 
+	resourceReferences := resolverInstance.ResolveResourceReferences(allCalls)
+	indexer.dump.OnResourceReferences(resourceReferences)
+
 	return resolvedRelations{
-		Calls:    callRelations,
-		Heritage: heritageRelations,
-		Overrides: overrideRelations,
-		Uses:     usesRelations,
-		Hints:    callHints,
+		Calls:      callRelations,
+		Heritage:   heritageRelations,
+		Overrides:  overrideRelations,
+		Uses:       usesRelations,
+		References: resourceReferences,
+		Hints:      callHints,
 	}, nil
 }
 

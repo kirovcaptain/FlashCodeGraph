@@ -21,4 +21,5 @@ const (
 	Httpx      = "httpx"
 	Axios      = "axios"
 	Strawberry = "strawberry"
+	Android    = "android"
 )

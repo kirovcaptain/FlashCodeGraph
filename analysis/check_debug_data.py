@@ -43,6 +43,10 @@ EDGE_SCHEMA = {
     "HAS_ANNOTATION_IFACE": ("Interface", "Annotation"),
     "UNRESOLVED_CALL": (("Function", "Class", "Variable"), ("Function", "Class")),
     "USES": ("Function", "Variable"),
+    "INCLUDES": ("Layout", "Layout"),
+    "LAYOUT_CONTAINS": ("Layout", "Widget"),
+    "NAVIGATES_TO": (("Widget", "Function"), ("Widget", "Route")),
+    "REFERENCES": (("AppComponent", "Function", "Layout", "Widget"), ("Class", "Widget", "Layout")),
 }
 
 # Maps CONTAINS + source_kind to the actual edge schema for type checking
@@ -124,7 +128,13 @@ def check_edges(debug_dir, id_to_kind):
         ("overrides.csv", 0, 1, 2),      # source col 0, target col 1, kind col 2
         ("implements.csv", 0, 1, 2),     # source col 0, target col 1, kind col 2
         ("unresolved_edges.csv", 0, 1, 2), # source col 0, target col 1, kind col 2
+        ("layout_edges.csv", 0, 1, 2, 3),   # source col 0, target col 1, kind col 2, source_kind col 3
     ]
+
+    # resource_references.csv: source_id, target_id, source_kind, target_kind, ref_kind, line
+    resource_refs_path = os.path.join(debug_dir, "resource_references.csv")
+    if os.path.exists(resource_refs_path):
+        edge_files.append(("resource_references.csv", 0, 1, None))  # kind inferred as REFERENCES
 
     # calls_*.csv: resolved_by, confidence, candidates, source_id, target_id, ...
     for filename in os.listdir(debug_dir):
@@ -146,6 +156,8 @@ def check_edges(debug_dir, id_to_kind):
         inferred_edge_type = None
         if filename.startswith("calls_"):
             inferred_edge_type = "CALLS"
+        elif filename == "resource_references.csv":
+            inferred_edge_type = "REFERENCES"
 
         with open(filepath, "r", encoding="utf-8") as f:
             reader = csv.reader(f)

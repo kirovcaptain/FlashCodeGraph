@@ -48,6 +48,10 @@ func (indexer *Indexer) writeSemanticNodes(ctx context.Context, scanCtx *scanCon
 	}
 	indexer.progress.EmitSub(PhaseWriting, SubRemoteCallEdges, fmt.Sprintf("%d calls", scanCtx.result.RelationsByKind["REMOTE_CALLS_ROUTE"]+scanCtx.result.RelationsByKind["REMOTE_CALLS_EXT"]))
 
+	if err := indexer.writeParseEdges(ctx, parseResults, symbolTable); err != nil {
+		return fmt.Errorf("indexer: write parse edges: %w", err)
+	}
+
 	return nil
 }
 
@@ -136,11 +140,12 @@ func (indexer *Indexer) writeReferencedCrossProjectNodes(
 	referencedIDs := make(map[string]bool)
 
 	// Collect from all relation types
-	allRelations := make([]model.ResolvedRelation, 0, len(relations.Calls)+len(relations.Heritage)+len(relations.Overrides)+len(relations.Implements))
+	allRelations := make([]model.ResolvedRelation, 0, len(relations.Calls)+len(relations.Heritage)+len(relations.Overrides)+len(relations.Implements)+len(relations.References))
 	allRelations = append(allRelations, relations.Calls...)
 	allRelations = append(allRelations, relations.Heritage...)
 	allRelations = append(allRelations, relations.Overrides...)
 	allRelations = append(allRelations, relations.Implements...)
+	allRelations = append(allRelations, relations.References...)
 	for _, relation := range allRelations {
 		if strings.HasPrefix(relation.SourceID, "cross-project:") {
 			referencedIDs[relation.SourceID] = true
@@ -214,11 +219,12 @@ func (indexer *Indexer) writeResolvedRelations(
 	}
 	indexer.progress.EmitSub(PhaseResolving, SubExternalNodes, fmt.Sprintf("%d nodes", len(externalNodes)))
 
-	// Step 2: Write all resolved relation edges (CALLS + EXTENDS + IMPLEMENTS + OVERRIDES + USES).
+	// Step 2: Write all resolved relation edges (CALLS + EXTENDS + IMPLEMENTS + OVERRIDES + USES + REFERENCES).
 	allRelations := append(relations.Calls, relations.Heritage...)
 	allRelations = append(allRelations, relations.Overrides...)
 	allRelations = append(allRelations, relations.Implements...)
 	allRelations = append(allRelations, relations.Uses...)
+	allRelations = append(allRelations, relations.References...)
 	indexer.dump.OnAllRelations(relations.Heritage, relations.Overrides, relations.Implements)
 
 	indexer.progress.EmitSub(PhaseResolving, SubRelationEdges, "")
@@ -359,6 +365,28 @@ func (indexer *Indexer) writeSymbolNodes(ctx context.Context, parseResults []mod
 					"file_path":      symbol.FilePath,
 					"start_line":     symbol.StartLine,
 					"end_line":       symbol.EndLine,
+				}
+				if kind == constants.KindWidget {
+					props = map[string]any{
+						"name":        symbol.Name,
+						"widget_type": symbol.ClassType,
+						"file_path":   symbol.FilePath,
+						"line":        symbol.StartLine,
+					}
+				} else if kind == constants.KindLayout {
+					props = map[string]any{
+						"name":      symbol.Name,
+						"file_path": symbol.FilePath,
+					}
+				} else if kind == constants.KindAppComponent {
+					props = map[string]any{
+						"name":           symbol.Name,
+						"qualified_name": symbol.QualifiedName,
+						"component_type": symbol.ClassType,
+						"is_launcher":    symbol.Metadata["is_launcher"] == "true",
+						"deep_links":     symbol.Metadata["deep_links"],
+						"file_path":      symbol.FilePath,
+					}
 				}
 			}
 
@@ -544,7 +572,7 @@ func buildStructuralData(repoID, repoName, absPath string, frameworks []string, 
 	dirs := make(map[string]bool)
 	dirFiles := make(map[string][]string)
 	for _, file := range files {
-		if file.Category != constants.FileSource {
+		if file.Category != constants.FileSource && file.Category != constants.FileQueryDef {
 			continue
 		}
 		fileID := fmt.Sprintf("file:%s", file.RelPath)
@@ -587,6 +615,10 @@ func buildStructuralData(repoID, repoName, absPath string, frameworks []string, 
 	for _, parseResult := range parseResults {
 		fileID := fmt.Sprintf("file:%s", parseResult.FilePath)
 		for _, symbol := range parseResult.Symbols {
+			// Skip XML-specific kinds — their CONTAINS edges are handled in writeParseEdges
+			if symbol.Kind == constants.KindLayout || symbol.Kind == constants.KindWidget || symbol.Kind == constants.KindAppComponent {
+				continue
+			}
 			sourceKind := constants.SourceKindFile
 			switch symbol.Kind {
 			case constants.KindClass:
@@ -705,6 +737,14 @@ func (indexer *Indexer) writeRouteNodes(ctx context.Context, parseResults []mode
 	}
 	if len(edges) > 0 {
 		if err := indexer.graphStore.CreateEdges(ctx, edges); err != nil {
+			return err
+		}
+	}
+
+	// Generate NAVIGATES_TO edges from navigate() calls to Route nodes
+	navigationEdges := indexer.buildNavigationEdges(parseResults, symbolTable, nodes, result)
+	if len(navigationEdges) > 0 {
+		if err := indexer.graphStore.CreateEdges(ctx, navigationEdges); err != nil {
 			return err
 		}
 	}
@@ -943,6 +983,90 @@ func (indexer *Indexer) writeAnnotationNodes(ctx context.Context, parseResults [
 	return nil
 }
 
+
+// buildNavigationEdges creates NAVIGATES_TO edges from navigate() calls to matching Route nodes.
+func (indexer *Indexer) buildNavigationEdges(parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, routeNodes []model.Node, result *model.IndexResult) []model.Edge {
+	// Build pathPattern → routeID mapping from route nodes
+	routePathToID := make(map[string]string)
+	for _, node := range routeNodes {
+		if pathPattern, ok := node.Properties["path_pattern"].(string); ok && pathPattern != "" {
+			routePathToID[pathPattern] = node.ID
+		}
+	}
+	if len(routePathToID) == 0 {
+		return nil
+	}
+
+	var navigationEdges []model.Edge
+	for _, parseResult := range parseResults {
+		for _, navigation := range parseResult.Navigations {
+			callerID := resolveHandlerFunction(symbolTable, navigation.CallerName, navigation.FilePath)
+			if callerID == "" {
+				continue
+			}
+			targetRouteID := matchNavigationTarget(navigation.TargetRoute, routePathToID)
+			if targetRouteID == "" {
+				continue
+			}
+			navigationEdges = append(navigationEdges, model.Edge{
+				SourceID:   callerID,
+				TargetID:   targetRouteID,
+				Kind:       model.RelNavigatesTo,
+				SourceKind: constants.KindFunction,
+				TargetKind: constants.KindRoute,
+				Properties: map[string]any{"line": navigation.Line},
+			})
+			result.RelationsByKind["NAVIGATES_TO"]++
+			result.RelationsCreated++
+		}
+	}
+	return navigationEdges
+}
+
+// matchNavigationTarget finds the Route ID matching a navigation target string.
+func matchNavigationTarget(targetRoute string, routePathToID map[string]string) string {
+	// 1. Exact match
+	if routeID, exists := routePathToID[targetRoute]; exists {
+		return routeID
+	}
+
+	// 2. Prefix match (dynamic route: "detail/123" matches "detail/{itemId}")
+	staticPrefix := extractStaticRoutePrefix(targetRoute)
+	if staticPrefix != "" && staticPrefix != targetRoute {
+		for pathPattern, routeID := range routePathToID {
+			routePrefix := extractStaticRoutePrefix(pathPattern)
+			if routePrefix == staticPrefix {
+				return routeID
+			}
+		}
+	}
+
+	// 3. Type-safe match ("Detail(itemId = \"123\")" → extract "Detail")
+	if parenthesisIndex := strings.Index(targetRoute, "("); parenthesisIndex > 0 {
+		className := targetRoute[:parenthesisIndex]
+		if routeID, exists := routePathToID[className]; exists {
+			return routeID
+		}
+	}
+
+	return ""
+}
+
+// extractStaticRoutePrefix extracts the static part of a route before any dynamic segment.
+// "detail/$id" → "detail/", "detail/{itemId}" → "detail/", "settings" → "settings"
+func extractStaticRoutePrefix(route string) string {
+	for i, character := range route {
+		if character == '$' || character == '{' {
+			lastSlashIndex := strings.LastIndex(route[:i], "/")
+			if lastSlashIndex >= 0 {
+				return route[:lastSlashIndex+1]
+			}
+			return ""
+		}
+	}
+	return route
+}
+
 func (indexer *Indexer) writeRemoteCallEdges(ctx context.Context, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable, result *model.IndexResult) error {
 	// Collect all Route nodes for matching
 	allRoutes, _ := indexer.graphStore.QueryAllByKind(ctx, constants.KindRoute, 100000)
@@ -1012,4 +1136,34 @@ func (indexer *Indexer) writeRemoteCallEdges(ctx context.Context, parseResults [
 		return indexer.graphStore.CreateEdges(ctx, edges)
 	}
 	return nil
+}
+
+// writeParseEdges writes direct edges produced by parsers (e.g. INCLUDES, LAYOUT_CONTAINS, REFERENCES from XML parsing).
+func (indexer *Indexer) writeParseEdges(ctx context.Context, parseResults []model.ParseResult, symbolTable *resolver.SymbolTable) error {
+	var edges []model.Edge
+	for _, parseResult := range parseResults {
+		for _, edge := range parseResult.Edges {
+			// REFERENCES edges with TargetKind=Class store QualifiedName as TargetID — resolve to actual ID
+			if edge.Kind == model.RelReferences && edge.TargetKind == constants.KindClass {
+				classSymbols := symbolTable.FindByQualifiedName(edge.TargetID)
+				found := false
+				for _, symbol := range classSymbols {
+					if symbol.Kind == constants.KindClass {
+						edge.TargetID = symbol.ID
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+			edges = append(edges, edge)
+		}
+	}
+	if len(edges) == 0 {
+		return nil
+	}
+	indexer.dump.OnLayoutEdges(edges)
+	return indexer.graphStore.CreateEdges(ctx, edges)
 }

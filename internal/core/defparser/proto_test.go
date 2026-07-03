@@ -1,6 +1,10 @@
 package defparser
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/kirovcaptain/FlashCodeGraph/internal/model"
+)
 
 func TestParseProtoServices_Basic(t *testing.T) {
 	content := `syntax = "proto3";
@@ -139,7 +143,7 @@ service PaymentService {
   rpc Pay(PayRequest) returns (PayResponse);
   rpc Query(QueryRequest) returns (QueryResponse);
 }`)
-	result := p.Parse(content, "proto/payment.proto")
+	result := p.Parse(model.DefParseInput{Content: content, RelPath: "proto/payment.proto"})
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}

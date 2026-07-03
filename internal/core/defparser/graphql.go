@@ -8,29 +8,28 @@ import (
 // GraphQLSchemaParser parses .graphql/.gql schema files.
 type GraphQLSchemaParser struct{}
 
-func (p *GraphQLSchemaParser) Extensions() []string {
+func (parser *GraphQLSchemaParser) Extensions() []string {
 	return []string{".graphql", ".gql"}
 }
 
-func (p *GraphQLSchemaParser) Detect(content []byte) bool {
-	// GraphQL schemas contain type definitions
-	return len(content) > 0 // extension-based filtering is sufficient
+func (parser *GraphQLSchemaParser) Detect(content []byte) bool {
+	return len(content) > 0
 }
 
-func (p *GraphQLSchemaParser) Parse(content []byte, relPath string) *model.ParseResult {
-	ops := gqlParser.ParseSchema(string(content))
-	if len(ops) == 0 {
+func (parser *GraphQLSchemaParser) Parse(input model.DefParseInput) *model.ParseResult {
+	operations := gqlParser.ParseSchema(string(input.Content))
+	if len(operations) == 0 {
 		return nil
 	}
-	pr := &model.ParseResult{FilePath: relPath, Language: "graphql"}
-	for _, op := range ops {
-		pr.Routes = append(pr.Routes, model.RawRoute{
-			Method:      op.Field,
-			PathPattern: op.Type,
+	result := &model.ParseResult{FilePath: input.RelPath, Language: "graphql"}
+	for _, operation := range operations {
+		result.Routes = append(result.Routes, model.RawRoute{
+			Method:      operation.Field,
+			PathPattern: operation.Type,
 			Framework:   "graphql",
-			Handlers: []string{op.Type + "." + op.Field},
-			FilePath:    relPath,
+			Handlers:    []string{operation.Type + "." + operation.Field},
+			FilePath:    input.RelPath,
 		})
 	}
-	return pr
+	return result
 }

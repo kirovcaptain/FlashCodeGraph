@@ -441,6 +441,28 @@ func edgeLabels(kind model.RelationKind, sourceKind, targetKind string) (string,
 		default:
 			return constants.KindFunction, constants.KindAnnotation
 		}
+	case model.RelIncludes:
+		return constants.KindLayout, constants.KindLayout
+	case model.RelNavigatesTo:
+		sourceLabel := sourceKind
+		targetLabel := targetKind
+		if sourceLabel == "" {
+			sourceLabel = constants.KindWidget
+		}
+		if targetLabel == "" {
+			targetLabel = constants.KindWidget
+		}
+		return sourceLabel, targetLabel
+	case model.RelReferences:
+		sourceLabel := sourceKind
+		targetLabel := targetKind
+		if sourceLabel == "" {
+			sourceLabel = constants.KindFunction
+		}
+		if targetLabel == "" {
+			targetLabel = constants.KindWidget
+		}
+		return sourceLabel, targetLabel
 	case model.RelContains:
 		switch sourceKind {
 		case constants.KindDirectory:
@@ -451,6 +473,8 @@ func edgeLabels(kind model.RelationKind, sourceKind, targetKind string) (string,
 			return constants.KindInterface, constants.KindFunction
 		case constants.SourceKindFile, constants.SourceKindFileClass, constants.SourceKindFileInterface, constants.SourceKindFileVar:
 			return constants.KindFile, constants.KindFunction // FalkorDB doesn't need exact target label
+		case constants.KindLayout:
+			return constants.KindLayout, constants.KindWidget
 		default:
 			return constants.KindRepository, constants.KindFile
 		}
@@ -1569,7 +1593,8 @@ func (store *Store) GetStats(ctx context.Context) (*model.GraphStats, error) {
 
 	// Edge counts
 	edgeTypes := []string{"CALLS", "EXTENDS", "IMPLEMENTS", "OVERRIDES", "IMPORTS",
-		"HANDLES", "EXECUTES", "REMOTE_CALLS", "CONTAINS", "HAS_ANNOTATION", "STEP", "UNRESOLVED_CALL", "USES"}
+		"HANDLES", "EXECUTES", "REMOTE_CALLS", "CONTAINS", "HAS_ANNOTATION", "STEP", "UNRESOLVED_CALL", "USES",
+		"REFERENCES", "INCLUDES", "LAYOUT_CONTAINS", "NAVIGATES_TO"}
 	for _, rel := range edgeTypes {
 		rows, err := store.query(ctx, "MATCH ()-[r:"+rel+"]->() RETURN count(r)")
 		if err != nil {

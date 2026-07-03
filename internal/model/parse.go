@@ -56,6 +56,14 @@ type RawRoute struct {
 	Line        int      `json:"line"`
 }
 
+// RawNavigation represents a navigate() call extracted from Compose Navigation code.
+type RawNavigation struct {
+	CallerName  string `json:"caller_name"`  // QualifiedName of the function calling navigate()
+	TargetRoute string `json:"target_route"` // Target route string (already stripped of quotes)
+	FilePath    string `json:"file_path"`
+	Line        int    `json:"line"`
+}
+
 // RawRemoteCall represents an HTTP/RPC client call extracted from AST.
 type RawRemoteCall struct {
 	Method            string  `json:"method"`                        // GET/POST/PUT/DELETE/UNKNOWN
@@ -151,7 +159,16 @@ type ParseResult struct {
 	PendingAssignments  []PendingAssignment  `json:"pending_assignments,omitempty"`
 	ScopeParents        map[string]string    `json:"scope_parents,omitempty"` // childScope → parentScope
 	ConstRefs           []RawConstRef        `json:"const_refs,omitempty"`
+	Edges               []Edge               `json:"edges,omitempty"` // Direct edges from XML parsing (INCLUDES, LAYOUT_CONTAINS, etc.)
+	Navigations         []RawNavigation      `json:"navigations,omitempty"` // Compose Navigation navigate() calls
 	Errors      []ParseError    `json:"errors,omitempty"`
+}
+
+// DefParseInput contains all inputs for DefParser.Parse.
+type DefParseInput struct {
+	Content       []byte
+	RelPath       string
+	ModulePackage string // Module package name (e.g. "com.example.app" from build.gradle namespace)
 }
 
 // ParseError records a non-fatal parse error.
