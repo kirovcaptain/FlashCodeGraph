@@ -99,6 +99,19 @@ func ExtractLayout(content []byte, relPath string, result *model.ParseResult) {
 					Properties: map[string]any{"ref_kind": "custom_view"},
 				})
 			}
+
+			// REFERENCES edge for NavHostFragment → navigation graph
+			navGraphReference := extractNavGraphRef(getAttr(startElement, "navGraph"))
+			if navGraphReference != "" {
+				result.Edges = append(result.Edges, model.Edge{
+					SourceID:   widgetSymbolID,
+					TargetID:   "nav:" + navGraphReference,
+					Kind:       model.RelReferences,
+					SourceKind: constants.KindWidget,
+					TargetKind: constants.KindWidget,
+					Properties: map[string]any{"ref_kind": "nav_graph"},
+				})
+			}
 		} else if androidName != "" && strings.Contains(androidName, ".") {
 			// Fragment without id but with android:name — create reference symbol + REFERENCES edge
 			refID := astutil.GenerateSymbolID(relPath, "ref:"+androidName, 1)
@@ -156,4 +169,12 @@ func extractLayoutRef(value string) string {
 // Android resources are globally unique by name across all modules.
 func generateLayoutID(layoutName string) string {
 	return astutil.GenerateSymbolID("", layoutName, 1)
+}
+
+// extractNavGraphRef extracts the navigation graph name from "@navigation/nav_graph".
+func extractNavGraphRef(value string) string {
+	if strings.HasPrefix(value, "@navigation/") {
+		return value[len("@navigation/"):]
+	}
+	return ""
 }

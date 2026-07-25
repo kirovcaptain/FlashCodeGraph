@@ -1158,6 +1158,23 @@ func (indexer *Indexer) writeParseEdges(ctx context.Context, parseResults []mode
 					continue
 				}
 			}
+			// REFERENCES edges with ref_kind="nav_graph" store "nav:graphName" as TargetID — resolve to Widget
+			if edge.Kind == model.RelReferences && edge.TargetKind == constants.KindWidget {
+				if refKind, ok := edge.Properties["ref_kind"].(string); ok && refKind == "nav_graph" {
+					navWidgets := symbolTable.FindByQualifiedName(edge.TargetID)
+					found := false
+					for _, symbol := range navWidgets {
+						if symbol.Kind == constants.KindWidget {
+							edge.TargetID = symbol.ID
+							found = true
+							break
+						}
+					}
+					if !found {
+						continue
+					}
+				}
+			}
 			edges = append(edges, edge)
 		}
 	}
